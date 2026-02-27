@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #f7f8fb;
+  --bg-2: #eef1f7;
+  --panel: rgba(255, 255, 255, 0.72);
+  --panel-border: rgba(154, 167, 191, 0.28);
+  --text: #0f172a;
+  --muted-text: #475569;
+  --accent: #1247f5;
+  --accent-2: #f97316;
+  --radius-lg: 16px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --shadow-soft: 0 8px 22px rgba(15, 23, 42, 0.07);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 0% 0%, #ffffff 0%, transparent 35%),
+    radial-gradient(circle at 100% 100%, #e2ebff 0%, transparent 32%),
+    linear-gradient(160deg, var(--bg) 0%, var(--bg-2) 100%);
+  font-family: "SF Pro Text", "Helvetica Neue", Helvetica, sans-serif;
+}
+
+.panel-shell {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-soft);
+}
+
+.mobile-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.mobile-tabs button {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted-text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mobile-tabs button.active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(90deg, var(--accent) 0%, #4169ff 75%, var(--accent-2) 120%);
+}
+
+@media (max-width: 767px) {
+  .panel-shell {
+    min-height: calc(100vh - 130px);
+  }
+}
