@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import shlex
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,30 +15,15 @@ from .policy import PermissionLevel
 class TerminalTool:
     root_dir: Path
     timeout_seconds: int = 30
+    max_timeout_seconds: int = 300
     output_char_limit: int = 5000
+    shell_mode: bool = True
     deny_fragments: tuple[str, ...] = (
         "rm -rf /",
         "mkfs",
         "shutdown",
         "reboot",
         ":(){ :|:& };:",
-    )
-    allow_commands: set[str] = field(
-        default_factory=lambda: {
-            "ls",
-            "pwd",
-            "cat",
-            "echo",
-            "rg",
-            "find",
-            "head",
-            "tail",
-            "wc",
-            "python3",
-            "pip",
-            "npm",
-            "node",
-        }
     )
 
     name: str = "terminal"
@@ -67,46 +51,44 @@ class TerminalTool:
                 details={"command": raw_command},
             )
 
-        try:
-            parts = shlex.split(raw_command)
-        except ValueError as exc:
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_INVALID_ARGS",
-                message=f"Invalid command syntax: {exc}",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-
-        if not parts:
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_INVALID_ARGS",
-                message="Command parsed to empty argv",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
-
-        if parts[0] not in self.allow_commands:
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_POLICY_DENIED",
-                message=f"Command '{parts[0]}' is not allowlisted",
-                duration_ms=int((time.monotonic() - started) * 1000),
-            )
+        requested_timeout = args.get("timeout")
+        effective_timeout = self.timeout_seconds
+        if requested_timeout is not None:
+            try:
+                requested = int(requested_timeout)
+            except (TypeError, ValueError):
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_INVALID_ARGS",
+                    message="'timeout' must be an integer number of seconds",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            effective_timeout = max(1, min(requested, self.max_timeout_seconds))
 
         try:
-            result = subprocess.run(
-                parts,
-                cwd=str(self.root_dir),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout_seconds,
-                check=False,
-            )
+            if self.shell_mode:
+                result = subprocess.run(
+                    raw_command,
+                    cwd=str(self.root_dir),
+                    shell=True,
+                    executable="/bin/bash",
+                    capture_output=True,
+                    text=True,
+                    timeout=effective_timeout,
+                    check=False,
+                )
+            else:
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_INTERNAL",
+                    message="Only shell execution mode is supported",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
         except subprocess.TimeoutExpired:
             return ToolResult.failure(
                 tool_name=self.name,
                 code="E_TIMEOUT",
-                message=f"Command timed out after {self.timeout_seconds}s",
+                message=f"Command timed out after {effective_timeout}s",
                 duration_ms=int((time.monotonic() - started) * 1000),
                 retryable=True,
             )
@@ -128,6 +110,7 @@ class TerminalTool:
                 "stderr": stderr[: self.output_char_limit],
                 "combined": combined,
                 "truncated": truncated,
+                "timeout_seconds": effective_timeout,
             },
             duration_ms=int((time.monotonic() - started) * 1000),
             truncated=truncated,

@@ -26,6 +26,7 @@ from .policy import PermissionLevel
 class FetchUrlTool:
     timeout_seconds: int = 15
     output_char_limit: int = 5000
+    max_output_char_limit: int = 100000
     allow_hosts: tuple[str, ...] = ()
 
     name: str = "fetch_url"
@@ -36,6 +37,29 @@ class FetchUrlTool:
         _ = context
         started = time.monotonic()
         url = str(args.get("url", "")).strip()
+        extract_mode = str(args.get("extractMode", args.get("extract_mode", "markdown"))).strip().lower() or "markdown"
+        if extract_mode not in {"markdown", "text", "html"}:
+            return ToolResult.failure(
+                tool_name=self.name,
+                code="E_INVALID_ARGS",
+                message="extractMode must be one of: markdown, text, html",
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        max_chars_arg = args.get("maxChars", args.get("max_chars"))
+        max_chars = self.output_char_limit
+        if max_chars_arg is not None:
+            try:
+                max_chars = int(max_chars_arg)
+            except (TypeError, ValueError):
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_INVALID_ARGS",
+                    message="maxChars must be an integer",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            max_chars = max(256, min(max_chars, self.max_output_char_limit))
+
         if not url:
             return ToolResult.failure(
                 tool_name=self.name,
@@ -84,10 +108,18 @@ class FetchUrlTool:
                 parsed_json = json.loads(decoded)
                 text = json.dumps(parsed_json, ensure_ascii=False, indent=2)
             elif "text/html" in content_type:
-                if BeautifulSoup is not None and html2text is not None:
+                if extract_mode == "html":
+                    text = decoded
+                elif extract_mode == "text" and BeautifulSoup is not None:
+                    soup = BeautifulSoup(decoded, "html.parser")
+                    text = soup.get_text(separator="\n", strip=True)
+                elif BeautifulSoup is not None and html2text is not None:
                     soup = BeautifulSoup(decoded, "html.parser")
                     cleaned = str(soup)
                     text = html2text.html2text(cleaned)
+                elif BeautifulSoup is not None:
+                    soup = BeautifulSoup(decoded, "html.parser")
+                    text = soup.get_text(separator="\n", strip=True)
                 else:
                     text = decoded
             else:
@@ -96,13 +128,20 @@ class FetchUrlTool:
             text = raw.decode("utf-8", errors="replace")
 
         truncated = False
-        if len(text) > self.output_char_limit:
-            text = text[: self.output_char_limit] + "\n...[truncated]"
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n...[truncated]"
             truncated = True
 
         return ToolResult.success(
             tool_name=self.name,
-            data={"status": status, "url": url, "content": text, "truncated": truncated},
+            data={
+                "status": status,
+                "url": url,
+                "content": text,
+                "truncated": truncated,
+                "extract_mode": extract_mode,
+                "max_chars": max_chars,
+            },
             duration_ms=int((time.monotonic() - started) * 1000),
             truncated=truncated,
         )
