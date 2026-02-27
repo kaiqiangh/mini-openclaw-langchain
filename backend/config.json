@@ -1,0 +1,37 @@
+{
+  "rag_mode": false,
+  "injection_mode": "every_turn",
+  "bootstrap_max_chars": 20000,
+  "bootstrap_total_max_chars": 150000,
+  "tool_timeouts": {
+    "terminal_seconds": 30,
+    "python_repl_seconds": 30,
+    "fetch_url_seconds": 15
+  },
+  "tool_output_limits": {
+    "terminal_chars": 5000,
+    "fetch_url_chars": 5000,
+    "read_file_chars": 10000
+  },
+  "autonomous_tools": {
+    "heartbeat_enabled_tools": [],
+    "cron_enabled_tools": []
+  },
+  "heartbeat": {
+    "enabled": false,
+    "interval_seconds": 300,
+    "timezone": "UTC",
+    "active_start_hour": 9,
+    "active_end_hour": 21,
+    "session_id": "__heartbeat__"
+  },
+  "cron": {
+    "enabled": true,
+    "poll_interval_seconds": 20,
+    "timezone": "UTC",
+    "max_failures": 8,
+    "retry_base_seconds": 30,
+    "retry_max_seconds": 3600,
+    "failure_retention": 200
+  }
+}
