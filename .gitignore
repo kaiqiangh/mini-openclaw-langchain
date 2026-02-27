@@ -219,3 +219,6 @@ frontend/coverage/
 backend/.env
 backend/SKILLS_SNAPSHOT.md
 backend/workspaces/*
+# Keep application source libs tracked.
+!frontend/src/lib/
+!frontend/src/lib/**
