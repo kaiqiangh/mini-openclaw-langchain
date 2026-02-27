@@ -7,6 +7,7 @@ import { InspectorPanel } from "@/components/editor/InspectorPanel";
 import { Navbar } from "@/components/layout/Navbar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { TabButton, TabsList } from "@/components/ui/primitives";
 
 type MobilePanel = "sidebar" | "chat" | "inspector";
 
@@ -14,31 +15,34 @@ export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
+    <main id="main-content" className="app-main flex h-screen flex-col overflow-hidden">
       <Navbar />
 
-      <div className="mobile-tabs md:hidden">
-        <button
-          className={mobilePanel === "sidebar" ? "active" : ""}
+      <TabsList className="mobile-tabs md:hidden">
+        <TabButton
+          type="button"
+          active={mobilePanel === "sidebar"}
           onClick={() => setMobilePanel("sidebar")}
         >
           Sessions
-        </button>
-        <button
-          className={mobilePanel === "chat" ? "active" : ""}
+        </TabButton>
+        <TabButton
+          type="button"
+          active={mobilePanel === "chat"}
           onClick={() => setMobilePanel("chat")}
         >
           Chat
-        </button>
-        <button
-          className={mobilePanel === "inspector" ? "active" : ""}
+        </TabButton>
+        <TabButton
+          type="button"
+          active={mobilePanel === "inspector"}
           onClick={() => setMobilePanel("inspector")}
         >
           Inspector
-        </button>
-      </div>
+        </TabButton>
+      </TabsList>
 
-      <section className="hidden h-full grid-cols-[280px_8px_1fr_8px_360px] gap-0 p-3 md:grid">
+      <section className="hidden h-full grid-cols-[280px_8px_minmax(0,1fr)_8px_360px] gap-0 p-3 md:grid">
         <Sidebar />
         <ResizeHandle />
         <ChatPanel />

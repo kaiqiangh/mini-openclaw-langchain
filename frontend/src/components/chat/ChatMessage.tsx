@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { memo } from "react";
 
 import { ChatDebugEvent, ChatToolCall, RetrievalItem } from "@/lib/store";
+import { Badge } from "@/components/ui/primitives";
 
 const RetrievalCard = dynamic(
   () => import("./RetrievalCard").then((mod) => mod.RetrievalCard),
@@ -30,14 +31,17 @@ type Props = {
 function ChatMessageComponent({ role, content, toolCalls, retrievals, debugEvents }: Props) {
   return (
     <article
-      className={`mb-3 rounded-xl border p-3 text-sm ${
+      className={`mb-3 rounded-md border p-3 text-sm ${
         role === "user"
-          ? "ml-8 border-blue-200/70 bg-blue-50/85"
-          : "mr-8 border-gray-200/80 bg-white/92"
+          ? "ml-8 border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+          : "mr-8 border-[var(--border)] bg-[var(--surface-3)]"
       }`}
     >
-      <div className="mb-1 text-[11px] uppercase text-gray-500">{role}</div>
-      <div className="whitespace-pre-wrap leading-6">{content}</div>
+      <div className="mb-2 flex items-center gap-2">
+        <Badge tone={role === "user" ? "accent" : "neutral"}>{role}</Badge>
+        <span className="ui-helper ui-mono">{role === "assistant" ? "agent-response" : "operator-input"}</span>
+      </div>
+      <div className="whitespace-pre-wrap break-words leading-6 text-[var(--text)]">{content}</div>
       {retrievals.length > 0 ? <RetrievalCard retrievals={retrievals} /> : null}
       {toolCalls.length > 0 ? <ThoughtChain calls={toolCalls} /> : null}
       {role === "assistant" && debugEvents.length > 0 ? <DebugTrace events={debugEvents} /> : null}

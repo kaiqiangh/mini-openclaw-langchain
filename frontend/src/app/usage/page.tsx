@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Navbar } from "@/components/layout/Navbar";
+import { Badge, Button, DataTable, Select, TableWrap } from "@/components/ui/primitives";
 import { getAgents, getUsageRecords, getUsageSummary, UsageRecord, UsageSummary } from "@/lib/api";
 
 const TIMEFRAME_OPTIONS = [
@@ -12,12 +13,21 @@ const TIMEFRAME_OPTIONS = [
   { label: "Last 30 days", value: 24 * 30 },
 ];
 
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 6,
+  maximumFractionDigits: 6,
+});
+
+const numberFormatter = new Intl.NumberFormat("en-US");
+
 function formatUsd(value: number): string {
-  return `$${value.toFixed(6)}`;
+  return usdFormatter.format(value);
 }
 
 function formatNumber(value: number): string {
-  return value.toLocaleString();
+  return numberFormatter.format(value);
 }
 
 export default function UsagePage() {
@@ -30,6 +40,7 @@ export default function UsagePage() {
   const [records, setRecords] = useState<UsageRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [copyState, setCopyState] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +102,14 @@ export default function UsagePage() {
     };
   }, [agentId, model, sinceHours, triggerType]);
 
+  useEffect(() => {
+    if (!copyState) return;
+    const timer = setTimeout(() => setCopyState(""), 1800);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [copyState]);
+
   const modelOptions = useMemo(() => {
     const items = new Set<string>();
     for (const row of summary?.by_model ?? []) {
@@ -110,164 +129,235 @@ export default function UsagePage() {
     estimated_cost_usd: 0,
   };
 
+  async function copyRunId(runId: string) {
+    try {
+      await navigator.clipboard.writeText(runId);
+      setCopyState(runId);
+    } catch {
+      setCopyState("");
+    }
+  }
+
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
+    <main id="main-content" className="app-main flex h-screen flex-col overflow-hidden">
       <Navbar />
-      <section className="flex h-full flex-col gap-3 p-3">
-        <div className="panel-shell grid gap-3 p-4 md:grid-cols-5">
-          <label className="text-xs text-gray-600">
-            Agent
-            <select
-              className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-2 text-xs"
-              value={agentId}
-              onChange={(event) => setAgentId(event.target.value)}
-            >
-              {agents.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
+      <section className="flex h-full min-h-0 flex-col gap-3 p-3">
+        <div className="panel-shell">
+          <div className="ui-panel-header">
+            <h1 className="ui-panel-title">Usage Analytics</h1>
+            <div className="flex flex-wrap items-center gap-2">
+              {loading ? <Badge tone="accent">Running</Badge> : <Badge tone="success">Ready</Badge>}
+              {error ? <Badge tone="danger">Error</Badge> : null}
+              <Badge tone="neutral">Records {records.length}</Badge>
+            </div>
+          </div>
 
-          <label className="text-xs text-gray-600">
-            Timeframe
-            <select
-              className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-2 text-xs"
-              value={String(sinceHours)}
-              onChange={(event) => setSinceHours(Number(event.target.value))}
-            >
-              {TIMEFRAME_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="grid gap-3 p-4 md:grid-cols-5">
+            <label className="min-w-0">
+              <span className="ui-label">Agent</span>
+              <Select
+                name="agent-filter"
+                className="mt-1 ui-mono text-xs"
+                value={agentId}
+                onChange={(event) => setAgentId(event.target.value)}
+              >
+                {agents.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </Select>
+            </label>
 
-          <label className="text-xs text-gray-600">
-            Model
-            <select
-              className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-2 text-xs"
-              value={model}
-              onChange={(event) => setModel(event.target.value)}
-            >
-              <option value="">All models</option>
-              {modelOptions.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
+            <label className="min-w-0">
+              <span className="ui-label">Timeframe</span>
+              <Select
+                name="timeframe-filter"
+                className="mt-1 text-xs"
+                value={String(sinceHours)}
+                onChange={(event) => setSinceHours(Number(event.target.value))}
+              >
+                {TIMEFRAME_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
 
-          <label className="text-xs text-gray-600">
-            Trigger
-            <select
-              className="mt-1 w-full rounded border border-gray-300 bg-white px-2 py-2 text-xs"
-              value={triggerType}
-              onChange={(event) => setTriggerType(event.target.value)}
-            >
-              <option value="">All triggers</option>
-              <option value="chat">chat</option>
-              <option value="heartbeat">heartbeat</option>
-              <option value="cron">cron</option>
-            </select>
-          </label>
+            <label className="min-w-0">
+              <span className="ui-label">Model</span>
+              <Select
+                name="model-filter"
+                className="mt-1 ui-mono text-xs"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+              >
+                <option value="">All models</option>
+                {modelOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </Select>
+            </label>
 
-          <div className="text-xs text-gray-500">
-            <div className="font-semibold text-gray-700">Status</div>
-            <div className="mt-2">{loading ? "Loading usage..." : `Records: ${records.length}`}</div>
-            {error ? <div className="mt-1 text-red-600">{error}</div> : null}
+            <label className="min-w-0">
+              <span className="ui-label">Trigger</span>
+              <Select
+                name="trigger-filter"
+                className="mt-1 ui-mono text-xs"
+                value={triggerType}
+                onChange={(event) => setTriggerType(event.target.value)}
+              >
+                <option value="">All triggers</option>
+                <option value="chat">chat</option>
+                <option value="heartbeat">heartbeat</option>
+                <option value="cron">cron</option>
+              </Select>
+            </label>
+
+            <div className="min-w-0">
+              <div className="ui-label">Status</div>
+              <div className="mt-1 flex min-h-[38px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
+                {loading ? <Badge tone="accent">Loading…</Badge> : <Badge tone="neutral">Loaded</Badge>}
+                {error ? <span className="truncate text-xs text-[var(--danger)]">{error}</span> : null}
+              </div>
+            </div>
           </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-5">
           <div className="panel-shell p-4">
-            <div className="text-xs text-gray-500">Estimated Cost</div>
-            <div className="mt-1 text-lg font-semibold">{formatUsd(totals.estimated_cost_usd)}</div>
+            <div className="ui-label">Estimated Cost</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">{formatUsd(totals.estimated_cost_usd)}</div>
           </div>
           <div className="panel-shell p-4">
-            <div className="text-xs text-gray-500">Input Tokens</div>
-            <div className="mt-1 text-lg font-semibold">{formatNumber(totals.input_tokens)}</div>
+            <div className="ui-label">Input Tokens</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.input_tokens)}</div>
           </div>
           <div className="panel-shell p-4">
-            <div className="text-xs text-gray-500">Cached Input</div>
-            <div className="mt-1 text-lg font-semibold">{formatNumber(totals.cached_input_tokens)}</div>
+            <div className="ui-label">Cached Input</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.cached_input_tokens)}</div>
           </div>
           <div className="panel-shell p-4">
-            <div className="text-xs text-gray-500">Output Tokens</div>
-            <div className="mt-1 text-lg font-semibold">{formatNumber(totals.output_tokens)}</div>
+            <div className="ui-label">Output Tokens</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.output_tokens)}</div>
           </div>
           <div className="panel-shell p-4">
-            <div className="text-xs text-gray-500">Reasoning / Total</div>
-            <div className="mt-1 text-lg font-semibold">
+            <div className="ui-label">Reasoning / Total</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
               {formatNumber(totals.reasoning_tokens)} / {formatNumber(totals.total_tokens)}
             </div>
           </div>
         </div>
 
         <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-2">
-          <div className="panel-shell min-h-0 overflow-auto p-4">
-            <h2 className="text-sm font-semibold">By Model</h2>
-            <table className="mt-3 w-full text-left text-xs">
-              <thead className="text-gray-500">
-                <tr>
-                  <th className="py-1">Model</th>
-                  <th className="py-1">Runs</th>
-                  <th className="py-1">Input</th>
-                  <th className="py-1">Cached</th>
-                  <th className="py-1">Output</th>
-                  <th className="py-1">Total</th>
-                  <th className="py-1">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(summary?.by_model ?? []).map((row) => (
-                  <tr key={row.model} className="border-t border-gray-100">
-                    <td className="py-2">{row.model}</td>
-                    <td className="py-2">{formatNumber(row.runs)}</td>
-                    <td className="py-2">{formatNumber(row.input_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.cached_input_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.output_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.total_tokens)}</td>
-                    <td className="py-2">{formatUsd(row.estimated_cost_usd)}</td>
+          <div className="panel-shell min-h-0">
+            <div className="ui-panel-header">
+              <h2 className="ui-panel-title">By Model</h2>
+              <Badge tone="neutral">{summary?.by_model.length ?? 0} models</Badge>
+            </div>
+            <TableWrap className="m-3 mt-0 max-h-full">
+              <DataTable>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Runs</th>
+                    <th>Input</th>
+                    <th>Cached</th>
+                    <th>Output</th>
+                    <th>Total</th>
+                    <th>Cost</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {(summary?.by_model ?? []).map((row) => (
+                    <tr key={row.model}>
+                      <td className="ui-mono">{row.model}</td>
+                      <td>{formatNumber(row.runs)}</td>
+                      <td>{formatNumber(row.input_tokens)}</td>
+                      <td>{formatNumber(row.cached_input_tokens)}</td>
+                      <td>{formatNumber(row.output_tokens)}</td>
+                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{formatUsd(row.estimated_cost_usd)}</td>
+                    </tr>
+                  ))}
+                  {(summary?.by_model ?? []).length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center text-[var(--muted)]">
+                        No model data for this filter.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </DataTable>
+            </TableWrap>
           </div>
 
-          <div className="panel-shell min-h-0 overflow-auto p-4">
-            <h2 className="text-sm font-semibold">Recent Runs</h2>
-            <table className="mt-3 w-full text-left text-xs">
-              <thead className="text-gray-500">
-                <tr>
-                  <th className="py-1">Time</th>
-                  <th className="py-1">Model</th>
-                  <th className="py-1">Input</th>
-                  <th className="py-1">Cached</th>
-                  <th className="py-1">Output</th>
-                  <th className="py-1">Reasoning</th>
-                  <th className="py-1">Total</th>
-                  <th className="py-1">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.map((row, index) => (
-                  <tr key={`${row.run_id}-${index}`} className="border-t border-gray-100">
-                    <td className="py-2">{new Date(row.timestamp_ms).toLocaleString()}</td>
-                    <td className="py-2">{row.model}</td>
-                    <td className="py-2">{formatNumber(row.input_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.cached_input_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.output_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.reasoning_tokens)}</td>
-                    <td className="py-2">{formatNumber(row.total_tokens)}</td>
-                    <td className="py-2">{formatUsd(row.estimated_cost_usd)}</td>
+          <div className="panel-shell min-h-0">
+            <div className="ui-panel-header">
+              <h2 className="ui-panel-title">Recent Runs</h2>
+              <Badge tone="neutral">last {records.length}</Badge>
+            </div>
+            <TableWrap className="m-3 mt-0 max-h-full">
+              <DataTable>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Time</th>
+                    <th>Model</th>
+                    <th>Input</th>
+                    <th>Cached</th>
+                    <th>Output</th>
+                    <th>Reasoning</th>
+                    <th>Total</th>
+                    <th>Cost</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {records.map((row, index) => (
+                    <tr key={`${row.run_id}-${index}`}>
+                      <td className="ui-mono">
+                        <div className="flex items-center gap-2">
+                          <span>{row.run_id.slice(0, 8)}</span>
+                          <Button
+                            type="button"
+                            className="min-h-[24px] px-2 text-[10px]"
+                            aria-label={`Copy run id ${row.run_id}`}
+                            onClick={() => {
+                              void copyRunId(row.run_id);
+                            }}
+                          >
+                            Copy
+                          </Button>
+                        </div>
+                        {copyState === row.run_id ? (
+                          <div className="mt-1 text-[10px] text-[var(--success)]" aria-live="polite">
+                            Copied
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>{new Date(row.timestamp_ms).toLocaleString()}</td>
+                      <td className="ui-mono">{row.model}</td>
+                      <td>{formatNumber(row.input_tokens)}</td>
+                      <td>{formatNumber(row.cached_input_tokens)}</td>
+                      <td>{formatNumber(row.output_tokens)}</td>
+                      <td>{formatNumber(row.reasoning_tokens)}</td>
+                      <td>{formatNumber(row.total_tokens)}</td>
+                      <td>{formatUsd(row.estimated_cost_usd)}</td>
+                    </tr>
+                  ))}
+                  {records.length === 0 ? (
+                    <tr>
+                      <td colSpan={9} className="text-center text-[var(--muted)]">
+                        No recent runs for this filter.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </DataTable>
+            </TableWrap>
           </div>
         </div>
       </section>

@@ -5,12 +5,17 @@ import { useEffect, useMemo, useState } from "react";
 
 import { listSkills, listWorkspaceFiles } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { Badge, Button, EmptyState, Select, Skeleton } from "@/components/ui/primitives";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => (
-    <div className="flex h-full min-h-[300px] items-center justify-center rounded-lg border border-gray-300 bg-white text-xs text-gray-500">
-      Loading editor...
+    <div className="flex h-full min-h-[300px] items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-4">
+      <div className="w-full space-y-2">
+        <Skeleton className="h-3 w-1/2" />
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-5/6" />
+      </div>
     </div>
   ),
 });
@@ -28,6 +33,7 @@ export function InspectorPanel() {
   const [skillFileOptions, setSkillFileOptions] = useState<string[]>([]);
   const [workspaceFileOptions, setWorkspaceFileOptions] = useState<string[]>(BASE_FILE_OPTIONS);
   const [workspaceRoot, setWorkspaceRoot] = useState<string>("");
+  const [editorTheme, setEditorTheme] = useState<"vs" | "vs-dark">("vs");
 
   const {
     currentAgentId,
@@ -89,6 +95,20 @@ export function InspectorPanel() {
     };
   }, [currentAgentId]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      setEditorTheme(query.matches ? "vs-dark" : "vs");
+    };
+
+    applyTheme();
+    query.addEventListener("change", applyTheme);
+    return () => {
+      query.removeEventListener("change", applyTheme);
+    };
+  }, []);
+
   const fileOptions = useMemo(() => {
     const merged = [...workspaceFileOptions, ...skillFileOptions];
     if (!merged.includes(selectedFilePath)) {
@@ -98,58 +118,77 @@ export function InspectorPanel() {
   }, [selectedFilePath, skillFileOptions, workspaceFileOptions]);
 
   return (
-    <aside className="panel-shell flex min-h-0 flex-col p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Inspector</h2>
-        <button
-          className="rounded-lg border border-gray-300 px-2 py-1 text-xs disabled:opacity-60"
+    <aside className="panel-shell flex min-h-0 flex-col">
+      <div className="ui-panel-header">
+        <h2 className="ui-panel-title">Inspector</h2>
+        <Button
+          type="button"
+          className="px-3 text-[11px]"
           disabled={!fileDirty}
           onClick={() => {
             void saveSelectedFile();
           }}
         >
           Save
-        </button>
+        </Button>
       </div>
 
-      <div className="mb-2 text-[11px] text-gray-500">
-        <div>Agent: {currentAgentId}</div>
-        <div className="truncate" title={workspaceRoot || `backend/workspaces/${currentAgentId}`}>
-          Root: {`backend/workspaces/${currentAgentId}`}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          <Badge tone="neutral">Agent {currentAgentId}</Badge>
+          <Badge tone="accent">Workspace</Badge>
+          <span
+            className="ui-helper ui-mono min-w-0 truncate"
+            title={workspaceRoot || `backend/workspaces/${currentAgentId}`}
+          >
+            {`backend/workspaces/${currentAgentId}`}
+          </span>
         </div>
-      </div>
 
-      <select
-        className="mb-3 rounded-lg border border-gray-300 px-2 py-2 text-xs"
-        value={selectedFilePath}
-        onChange={(event) => {
-          void setSelectedFilePath(event.target.value);
-        }}
-      >
-        {fileOptions.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
+        {fileOptions.length === 0 ? (
+          <EmptyState title="No Files" description="No workspace or skill files were found." />
+        ) : (
+          <>
+            <label className="ui-label" htmlFor="inspector-file-select">
+              File
+            </label>
+            <Select
+              id="inspector-file-select"
+              name="inspector-file-select"
+              className="ui-mono text-xs"
+              value={selectedFilePath}
+              onChange={(event) => {
+                void setSelectedFilePath(event.target.value);
+              }}
+            >
+              {fileOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </Select>
 
-      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-gray-300">
-        <MonacoEditor
-          height="100%"
-          language="markdown"
-          theme="vs"
-          value={selectedFileContent}
-          onChange={(value) => updateSelectedFileContent(value ?? "")}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            lineNumbers: "on",
-            wordWrap: "on",
-            smoothScrolling: true,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-          }}
-        />
+            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
+              <MonacoEditor
+                height="100%"
+                language="markdown"
+                theme={editorTheme}
+                value={selectedFileContent}
+                onChange={(value) => updateSelectedFileContent(value ?? "")}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: "on",
+                  wordWrap: "on",
+                  smoothScrolling: true,
+                  scrollBeyondLastLine: false,
+                  automaticLayout: true,
+                  fontFamily: "var(--font-mono)",
+                }}
+              />
+            </div>
+          </>
+        )}
       </div>
     </aside>
   );
