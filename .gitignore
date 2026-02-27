@@ -205,3 +205,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+docs/
+plan/
+
+# Node.js runtime artifacts
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+
+# Mini-OpenClaw runtime state
+backend/.env
+backend/SKILLS_SNAPSHOT.md
+backend/workspaces/*
