@@ -36,29 +36,6 @@ flowchart LR
   - `storage/` (indexes, audit, usage).
 - Shared code/config lives under `backend/`.
 
-## Legacy Root Folders (Migration)
-
-The old single-agent layout at backend root is deprecated:
-
-- `backend/workspace/`
-- `backend/memory/`
-- `backend/knowledge/`
-- `backend/sessions/`
-- `backend/storage/`
-
-Current runtime source of truth is:
-
-- `backend/workspaces/default/` (for default agent)
-- `backend/workspaces/<agent_id>/` (for additional agents)
-
-Startup includes a one-time compatibility migration into `workspaces/default` for legacy sessions/usage/knowledge when needed.
-
-Recommended cleanup flow:
-
-1. Verify active data exists under `backend/workspaces/default/`.
-2. Keep `backend/workspace-template/`.
-3. Remove legacy runtime folders when confirmed unused.
-
 ## Memory Search Strategy (Detailed)
 
 `MemoryIndexer` performs retrieval on each agent’s own `memory/MEMORY.md`:
@@ -86,8 +63,8 @@ Recommended cleanup flow:
 
 5. **Scoring**
    - Final score is blended:
-     - semantic `0.85`
-     - lexical `0.15`
+     - semantic `0.7`
+     - lexical `0.3`
    - Chunks with positive score are sorted descending.
    - Top-K (default 3) are returned.
 

@@ -1,4 +1,4 @@
-# Mini-OpenClaw LangChain MVP
+# Mini-OpenClaw (LangChain)
 
 Local-first multi-agent coding assistant with:
 
@@ -32,8 +32,6 @@ flowchart LR
 
 - `/backend`: API, agent orchestration, tools, retrieval, schedulers.
 - `/frontend`: UI, state store, streaming renderer, usage dashboard.
-- `/plan`: implementation plans and architecture docs.
-- `/docs`: reference PDFs (ignored from git).
 
 ## Quick Start
 

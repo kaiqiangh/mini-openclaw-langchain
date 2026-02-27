@@ -97,7 +97,7 @@ class MemoryIndexer:
             if query_embedding and idx < len(embeddings):
                 vector = cosine_similarity(query_embedding, embeddings[idx])
             # Favor semantic similarity, with lexical tie-breaker.
-            score = (vector * 0.85) + (lexical * 0.15)
+            score = (vector * 0.7) + (lexical * 0.3)
             if score > 0:
                 scored.append(RetrievalResult(text=chunk, score=score, source="memory/MEMORY.md"))
 

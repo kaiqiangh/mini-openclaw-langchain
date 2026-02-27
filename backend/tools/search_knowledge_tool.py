@@ -147,7 +147,7 @@ class SearchKnowledgeTool:
             vector = 0.0
             if query_embedding:
                 vector = cosine_similarity(query_embedding, row.get("embedding", []))
-            score = (vector * 0.85) + (lexical * 0.15)
+            score = (vector * 0.7) + (lexical * 0.3)
             if score > 0:
                 snippet = text[:300].replace("\n", " ")
                 scored.append((score, source, snippet))
