@@ -14,12 +14,16 @@ def test_workspace_seed_does_not_overwrite_existing_files(tmp_path: Path):
     (template_dir / "workspace").mkdir(parents=True, exist_ok=True)
     (template_dir / "memory").mkdir(parents=True, exist_ok=True)
     (template_dir / "knowledge").mkdir(parents=True, exist_ok=True)
+    (base_dir / "skills" / "get_weather").mkdir(parents=True, exist_ok=True)
     (template_dir / "workspace" / "IDENTITY.md").write_text("template-identity", encoding="utf-8")
     (template_dir / "workspace" / "USER.md").write_text("template-user", encoding="utf-8")
+    (base_dir / "skills" / "get_weather" / "SKILL.md").write_text("upstream-skill", encoding="utf-8")
 
     agent_root = workspaces_dir / agent_id
     (agent_root / "workspace").mkdir(parents=True, exist_ok=True)
     (agent_root / "workspace" / "IDENTITY.md").write_text("custom-identity", encoding="utf-8")
+    (agent_root / "skills" / "get_weather").mkdir(parents=True, exist_ok=True)
+    (agent_root / "skills" / "get_weather" / "SKILL.md").write_text("custom-skill", encoding="utf-8")
 
     manager = AgentManager()
     manager.base_dir = base_dir
@@ -31,3 +35,5 @@ def test_workspace_seed_does_not_overwrite_existing_files(tmp_path: Path):
     assert (agent_root / "workspace" / "IDENTITY.md").read_text(encoding="utf-8") == "custom-identity"
     # Missing file should still be seeded from template.
     assert (agent_root / "workspace" / "USER.md").read_text(encoding="utf-8") == "template-user"
+    # Skill directory is synced from backend root but must not overwrite workspace custom edits.
+    assert (agent_root / "skills" / "get_weather" / "SKILL.md").read_text(encoding="utf-8") == "custom-skill"

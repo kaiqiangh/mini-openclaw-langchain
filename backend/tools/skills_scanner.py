@@ -58,7 +58,8 @@ def scan_skills(base_dir: Path) -> list[SkillMeta]:
         name = frontmatter.get("name", skill_file.parent.name)
         description = frontmatter.get("description", "")
 
-        rel_path = f"./backend/skills/{skill_file.parent.name}/SKILL.md"
+        # Skill paths in snapshot must be workspace-relative because tools are sandboxed to workspace root.
+        rel_path = f"./skills/{skill_file.parent.name}/SKILL.md"
         found.append(SkillMeta(name=name, description=description, location=rel_path))
 
     snapshot_path = base_dir / "SKILLS_SNAPSHOT.md"

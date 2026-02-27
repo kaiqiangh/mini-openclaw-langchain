@@ -168,6 +168,16 @@ class AgentManager:
         elif not target.exists():
             target.write_text("<available_skills>\n</available_skills>\n", encoding="utf-8")
 
+    def _sync_skills_directory(self, workspace_root: Path) -> None:
+        if self.base_dir is None:
+            return
+        source = self.base_dir / "skills"
+        target = workspace_root / "skills"
+        if source.exists():
+            self._copy_tree_if_missing(source, target)
+        else:
+            target.mkdir(parents=True, exist_ok=True)
+
     def _ensure_workspace(self, agent_id: str) -> Path:
         if self.workspace_template_dir is None:
             raise RuntimeError("Workspace template directory is unavailable")
@@ -206,6 +216,7 @@ class AgentManager:
             if legacy_knowledge.exists() and not any(default_knowledge.rglob("*")):
                 shutil.copytree(legacy_knowledge, default_knowledge, dirs_exist_ok=True)
 
+        self._sync_skills_directory(root)
         self._sync_skills_snapshot(root)
         return root
 
