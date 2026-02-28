@@ -63,3 +63,24 @@ def test_tool_runner_does_not_block_different_arguments(tmp_path: Path):
     assert different.ok is False
     assert different.error is not None
     assert different.error.code == "E_EXEC"
+
+
+def test_tool_runner_respects_configured_repeat_limit(tmp_path: Path):
+    runner = ToolRunner(
+        policy_engine=ToolPolicyEngine(),
+        audit_file=tmp_path / "audit.jsonl",
+        repeat_identical_failure_limit=1,
+    )
+    context = ToolContext(
+        workspace_root=tmp_path,
+        trigger_type="chat",
+        run_id="run-3",
+        session_id="session-3",
+    )
+    tool = _FailingTool()
+
+    first = runner.run_tool(tool, args={"path": "x"}, context=context)
+    second = runner.run_tool(tool, args={"path": "x"}, context=context)
+
+    assert first.ok is False and first.error is not None and first.error.code == "E_EXEC"
+    assert second.ok is False and second.error is not None and second.error.code == "E_POLICY_DENIED"

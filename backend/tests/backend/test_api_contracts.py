@@ -37,9 +37,28 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
 
     rag_get = client.get("/api/config/rag-mode")
     assert rag_get.status_code == 200
+    assert rag_get.json()["data"]["agent_id"] == "default"
     rag_put = client.put("/api/config/rag-mode", json={"enabled": True})
     assert rag_put.status_code == 200
     assert rag_put.json()["data"]["enabled"] is True
+    assert rag_put.json()["data"]["agent_id"] == "default"
+
+    create_other_agent = client.post("/api/agents", json={"agent_id": "agent-rag"})
+    assert create_other_agent.status_code == 200
+
+    rag_other_before = client.get("/api/config/rag-mode", params={"agent_id": "agent-rag"})
+    assert rag_other_before.status_code == 200
+    assert rag_other_before.json()["data"]["enabled"] is False
+    assert rag_other_before.json()["data"]["agent_id"] == "agent-rag"
+
+    rag_other_put = client.put("/api/config/rag-mode?agent_id=agent-rag", json={"enabled": True})
+    assert rag_other_put.status_code == 200
+    assert rag_other_put.json()["data"]["enabled"] is True
+    assert rag_other_put.json()["data"]["agent_id"] == "agent-rag"
+
+    rag_default_after = client.get("/api/config/rag-mode")
+    assert rag_default_after.status_code == 200
+    assert rag_default_after.json()["data"]["enabled"] is True
 
     # compression error envelope for <4 messages
     compress_small = client.post(f"/api/sessions/{session_id}/compress")

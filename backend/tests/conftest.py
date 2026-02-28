@@ -17,6 +17,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from api import agents, chat, compress, config_api, files, sessions, tokens, usage  # noqa: E402
 from api.errors import ApiError, error_payload  # noqa: E402
+from config import RuntimeConfig, load_runtime_config  # noqa: E402
 from graph.memory_indexer import MemoryIndexer  # noqa: E402
 from graph.session_manager import SessionManager  # noqa: E402
 from storage.run_store import AuditStore  # noqa: E402
@@ -41,6 +42,7 @@ class FakeRuntime:
     memory_indexer: MemoryIndexer
     usage_store: UsageStore
     audit_store: AuditStore
+    runtime_config: RuntimeConfig
 
 
 class FakeAgentManager:
@@ -80,13 +82,17 @@ class FakeAgentManager:
             (root / "memory" / "MEMORY.md").write_text("memory content", encoding="utf-8")
             (root / "knowledge" / "note.md").write_text("knowledge alpha beta", encoding="utf-8")
             (root / "SKILLS_SNAPSHOT.md").write_text("<available_skills></available_skills>\n", encoding="utf-8")
+        if not (root / "config.json").exists():
+            (root / "config.json").write_text('{"rag_mode": false}\n', encoding="utf-8")
         return root
 
     def get_runtime(self, agent_id: str = "default") -> FakeRuntime:
+        root = self._ensure_agent_root(agent_id)
+        runtime_config = load_runtime_config(root / "config.json")
         runtime = self._runtimes.get(agent_id)
         if runtime is not None:
+            runtime.runtime_config = runtime_config
             return runtime
-        root = self._ensure_agent_root(agent_id)
         runtime = FakeRuntime(
             agent_id=agent_id,
             root_dir=root,
@@ -94,10 +100,15 @@ class FakeAgentManager:
             memory_indexer=MemoryIndexer(root),
             usage_store=UsageStore(root),
             audit_store=AuditStore(root),
+            runtime_config=runtime_config,
         )
         runtime.audit_store.ensure_schema_descriptor()
         self._runtimes[agent_id] = runtime
         return runtime
+
+    def get_agent_config_path(self, agent_id: str = "default") -> Path:
+        root = self._ensure_agent_root(agent_id)
+        return root / "config.json"
 
     def get_session_manager(self, agent_id: str = "default") -> SessionManager:
         return self.get_runtime(agent_id).session_manager
@@ -148,12 +159,12 @@ class FakeAgentManager:
         _ = rag_mode, is_first_turn, agent_id
         return "SYSTEM PROMPT"
 
-    async def generate_title(self, seed_text: str) -> str:
-        _ = seed_text
+    async def generate_title(self, seed_text: str, agent_id: str = "default") -> str:
+        _ = seed_text, agent_id
         return "Test Title"
 
-    async def summarize_messages(self, messages: list[dict[str, object]]) -> str:
-        _ = messages
+    async def summarize_messages(self, messages: list[dict[str, object]], agent_id: str = "default") -> str:
+        _ = messages, agent_id
         return "Compressed Summary"
 
     async def run_once(self, *, message: str, **kwargs):
@@ -247,7 +258,7 @@ def api_app(backend_base_dir: Path):
     files.set_dependencies(backend_base_dir, agent_manager)
     tokens.set_dependencies(backend_base_dir, agent_manager)
     compress.set_agent_manager(agent_manager)
-    config_api.set_base_dir(backend_base_dir)
+    config_api.set_dependencies(backend_base_dir, agent_manager)
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
 
