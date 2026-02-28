@@ -20,11 +20,17 @@ def set_agent_manager(agent_manager: AgentManager) -> None:
 
 def _require_store(agent_id: str) -> UsageStore:
     if _agent_manager is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Usage store is not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Usage store is not initialized",
+        )
     try:
         return _agent_manager.get_usage_store(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
 
 
 @router.get("/usage/records")

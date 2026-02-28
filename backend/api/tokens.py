@@ -38,7 +38,11 @@ def _token_count(text: str) -> int:
 
 def _require_deps() -> tuple[Path, AgentManager]:
     if _BASE_DIR is None or _AGENT_MANAGER is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Token dependencies are not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Token dependencies are not initialized",
+        )
     return _BASE_DIR, _AGENT_MANAGER
 
 
@@ -51,11 +55,15 @@ async def session_tokens(
     try:
         session_manager = agent_manager.get_session_manager(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
 
     session = session_manager.load_session(session_id)
     if agent_manager.config is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Agent config unavailable")
+        raise ApiError(
+            status_code=500, code="not_initialized", message="Agent config unavailable"
+        )
     runtime = agent_manager.get_runtime(agent_id)
 
     system_prompt = agent_manager.build_system_prompt(
@@ -89,7 +97,9 @@ async def file_tokens(
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
 
     items: list[dict[str, Any]] = []
     for rel_path in request.paths:

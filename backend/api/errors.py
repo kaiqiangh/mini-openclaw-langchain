@@ -14,7 +14,9 @@ class ApiError(Exception):
     details: dict[str, Any] | None = None
 
 
-def error_payload(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+def error_payload(
+    code: str, message: str, details: dict[str, Any] | None = None
+) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "error": {
             "code": code,

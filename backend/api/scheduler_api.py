@@ -63,7 +63,11 @@ def set_dependencies(
 
 def _require_manager() -> AgentManager:
     if _AGENT_MANAGER is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Scheduler API dependencies are not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Scheduler API dependencies are not initialized",
+        )
     return _AGENT_MANAGER
 
 
@@ -72,9 +76,15 @@ def _runtime(agent_id: str):
     try:
         runtime = manager.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     if not runtime.runtime_config.scheduler.api_enabled:
-        raise ApiError(status_code=403, code="scheduler_api_disabled", message="Scheduler API is disabled")
+        raise ApiError(
+            status_code=403,
+            code="scheduler_api_disabled",
+            message="Scheduler API is disabled",
+        )
     return manager, runtime
 
 
@@ -133,7 +143,9 @@ async def create_cron_job(
             prompt=request.prompt,
         )
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     if request.enabled is False:
         job.enabled = False
         job.next_run_ts = 0
@@ -153,8 +165,14 @@ async def update_cron_job(
         raise ApiError(status_code=404, code="not_found", message="Cron job not found")
 
     next_name = request.name if request.name is not None else current.name
-    next_type = request.schedule_type if request.schedule_type is not None else current.schedule_type
-    next_schedule = request.schedule if request.schedule is not None else current.schedule
+    next_type = (
+        request.schedule_type
+        if request.schedule_type is not None
+        else current.schedule_type
+    )
+    next_schedule = (
+        request.schedule if request.schedule is not None else current.schedule
+    )
     next_prompt = request.prompt if request.prompt is not None else current.prompt
     next_enabled = request.enabled if request.enabled is not None else current.enabled
 
@@ -167,7 +185,9 @@ async def update_cron_job(
                 prompt=next_prompt,
             )
         except ValueError as exc:
-            raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+            raise ApiError(
+                status_code=400, code="invalid_request", message=str(exc)
+            ) from exc
         current.schedule_type = refreshed.schedule_type
         current.schedule = refreshed.schedule
         current.next_run_ts = refreshed.next_run_ts
@@ -224,7 +244,9 @@ async def list_cron_runs(
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)
     scheduler = _cron_scheduler(agent_id)
-    rows = scheduler.query_runs(limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit)
+    rows = scheduler.query_runs(
+        limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit
+    )
     return {"data": {"agent_id": agent_id, "runs": rows}}
 
 
@@ -235,7 +257,9 @@ async def list_cron_failures(
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)
     scheduler = _cron_scheduler(agent_id)
-    rows = scheduler.query_failures(limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit)
+    rows = scheduler.query_failures(
+        limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit
+    )
     return {"data": {"agent_id": agent_id, "failures": rows}}
 
 
@@ -310,5 +334,7 @@ async def list_heartbeat_runs(
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)
     scheduler = _heartbeat_scheduler(agent_id)
-    rows = scheduler.query_runs(limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit)
+    rows = scheduler.query_runs(
+        limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit
+    )
     return {"data": {"agent_id": agent_id, "runs": rows}}

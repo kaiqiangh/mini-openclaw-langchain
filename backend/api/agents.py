@@ -24,7 +24,11 @@ def set_agent_manager(agent_manager: AgentManager) -> None:
 
 def _require_agent_manager() -> AgentManager:
     if _agent_manager is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Agent manager is not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Agent manager is not initialized",
+        )
     return _agent_manager
 
 
@@ -40,7 +44,9 @@ async def create_agent(req: CreateAgentRequest) -> dict[str, Any]:
     try:
         created = manager.create_agent(req.agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     return {"data": created}
 
 
@@ -50,7 +56,9 @@ async def delete_agent(agent_id: str) -> dict[str, Any]:
     try:
         deleted = manager.delete_agent(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
     return {"data": {"deleted": True, "agent_id": agent_id}}

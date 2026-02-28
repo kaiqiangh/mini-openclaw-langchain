@@ -30,7 +30,11 @@ def set_agent_manager(agent_manager: AgentManager) -> None:
 
 def _require_agent_manager() -> AgentManager:
     if _agent_manager is None or _agent_manager.session_manager is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Agent manager is not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Agent manager is not initialized",
+        )
     return _agent_manager
 
 
@@ -41,7 +45,9 @@ async def chat(request: ChatRequest) -> Any:
         runtime = agent.get_runtime(request.agent_id)
         session_manager = runtime.session_manager
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
 
     session = session_manager.load_session(request.session_id)
     is_first_turn = len(session.get("messages", [])) == 0
@@ -116,12 +122,15 @@ async def chat(request: ChatRequest) -> Any:
                 if current_content.strip() or current_tool_calls:
                     assistant_segments.append(
                         {
-                            "content": current_content.strip() or str(data.get("content", "")).strip(),
+                            "content": current_content.strip()
+                            or str(data.get("content", "")).strip(),
                             "tool_calls": list(current_tool_calls),
                         }
                     )
 
-                session_manager.save_message(request.session_id, "user", request.message)
+                session_manager.save_message(
+                    request.session_id, "user", request.message
+                )
                 if runtime.audit_store is not None:
                     runtime.audit_store.append_message_link(
                         run_id=None,
@@ -136,7 +145,9 @@ async def chat(request: ChatRequest) -> Any:
                     if not content:
                         continue
                     tool_calls = segment.get("tool_calls") or None
-                    session_manager.save_message(request.session_id, "assistant", content, tool_calls=tool_calls)
+                    session_manager.save_message(
+                        request.session_id, "assistant", content, tool_calls=tool_calls
+                    )
                     if runtime.audit_store is not None:
                         runtime.audit_store.append_message_link(
                             run_id=None,
@@ -148,7 +159,9 @@ async def chat(request: ChatRequest) -> Any:
                         )
 
                 if is_first_turn:
-                    title = await agent.generate_title(request.message, agent_id=request.agent_id)
+                    title = await agent.generate_title(
+                        request.message, agent_id=request.agent_id
+                    )
                     session_manager.update_title(request.session_id, title)
                     pending_title = title
 
@@ -161,7 +174,11 @@ async def chat(request: ChatRequest) -> Any:
                 yield {
                     "event": "title",
                     "data": json.dumps(
-                        {"session_id": request.session_id, "agent_id": request.agent_id, "title": pending_title},
+                        {
+                            "session_id": request.session_id,
+                            "agent_id": request.agent_id,
+                            "title": pending_title,
+                        },
                         ensure_ascii=False,
                     ),
                 }

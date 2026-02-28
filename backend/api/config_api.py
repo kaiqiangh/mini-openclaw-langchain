@@ -48,7 +48,11 @@ def set_dependencies(base_dir: Path, agent_manager: AgentManager) -> None:
 
 def _require_base_dir() -> Path:
     if _BASE_DIR is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Config base directory is unavailable")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Config base directory is unavailable",
+        )
     return _BASE_DIR
 
 
@@ -63,8 +67,15 @@ async def get_rag_mode(
     try:
         runtime = _AGENT_MANAGER.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
-    return {"data": {"enabled": runtime.runtime_config.rag_mode, "agent_id": runtime.agent_id}}
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+    return {
+        "data": {
+            "enabled": runtime.runtime_config.rag_mode,
+            "agent_id": runtime.agent_id,
+        }
+    }
 
 
 @router.put("/config/rag-mode")
@@ -85,8 +96,15 @@ async def set_rag_mode(
         save_runtime_config_to_path(agent_config_path, runtime)
         refreshed = _AGENT_MANAGER.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
-    return {"data": {"enabled": refreshed.runtime_config.rag_mode, "agent_id": refreshed.agent_id}}
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+    return {
+        "data": {
+            "enabled": refreshed.runtime_config.rag_mode,
+            "agent_id": refreshed.agent_id,
+        }
+    }
 
 
 @router.get("/config/runtime")
@@ -96,12 +114,24 @@ async def get_runtime_config(
     base_dir = _require_base_dir()
     if _AGENT_MANAGER is None:
         config = load_config(base_dir)
-        return {"data": {"agent_id": "default", "config": runtime_to_payload(config.runtime)}}
+        return {
+            "data": {
+                "agent_id": "default",
+                "config": runtime_to_payload(config.runtime),
+            }
+        }
     try:
         runtime = _AGENT_MANAGER.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
-    return {"data": {"agent_id": runtime.agent_id, "config": runtime_to_payload(runtime.runtime_config)}}
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+    return {
+        "data": {
+            "agent_id": runtime.agent_id,
+            "config": runtime_to_payload(runtime.runtime_config),
+        }
+    }
 
 
 @router.put("/config/runtime")
@@ -113,16 +143,32 @@ async def set_runtime_config(
     try:
         parsed_runtime = runtime_from_payload(request.config)
     except Exception as exc:  # noqa: BLE001
-        raise ApiError(status_code=422, code="validation_error", message="Invalid runtime config payload") from exc
+        raise ApiError(
+            status_code=422,
+            code="validation_error",
+            message="Invalid runtime config payload",
+        ) from exc
 
     if _AGENT_MANAGER is None:
         save_runtime_config(base_dir, parsed_runtime)
-        return {"data": {"agent_id": "default", "config": runtime_to_payload(parsed_runtime)}}
+        return {
+            "data": {
+                "agent_id": "default",
+                "config": runtime_to_payload(parsed_runtime),
+            }
+        }
 
     try:
         config_path = _AGENT_MANAGER.get_agent_config_path(agent_id)
         save_runtime_config_to_path(config_path, parsed_runtime)
         refreshed = _AGENT_MANAGER.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
-    return {"data": {"agent_id": refreshed.agent_id, "config": runtime_to_payload(refreshed.runtime_config)}}
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+    return {
+        "data": {
+            "agent_id": refreshed.agent_id,
+            "config": runtime_to_payload(refreshed.runtime_config),
+        }
+    }

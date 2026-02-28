@@ -30,7 +30,11 @@ class RenameSessionRequest(BaseModel):
 
 def _require_agent_manager() -> AgentManager:
     if _agent_manager is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Agent manager not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Agent manager not initialized",
+        )
     return _agent_manager
 
 
@@ -39,7 +43,9 @@ def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManage
     try:
         session_manager = manager.get_session_manager(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     return manager, session_manager
 
 
@@ -65,7 +71,9 @@ async def create_session(
         payload["title"] = request.title.strip()
         manager.save_session(session_id, payload)
 
-    return {"data": {"session_id": session_id, "title": payload.get("title", "New Session")}}
+    return {
+        "data": {"session_id": session_id, "title": payload.get("title", "New Session")}
+    }
 
 
 @router.put("/sessions/{session_id}")
@@ -116,7 +124,9 @@ async def restore_session(
     _, manager = _resolve_session_manager(agent_id)
     restored = manager.restore_session(session_id)
     if not restored:
-        raise ApiError(status_code=404, code="not_found", message="Archived session not found")
+        raise ApiError(
+            status_code=404, code="not_found", message="Archived session not found"
+        )
     return {"data": {"restored": True, "session_id": session_id}}
 
 
@@ -133,7 +143,11 @@ async def get_messages(
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     if agent.config is None:
-        raise ApiError(status_code=500, code="not_initialized", message="Agent config is unavailable")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Agent config is unavailable",
+        )
     runtime = agent.get_runtime(agent_id)
 
     system_prompt = agent.build_system_prompt(
@@ -198,7 +212,11 @@ async def generate_title(
         seed = str(session.get("compressed_context", "")).strip()
 
     if not seed:
-        raise ApiError(status_code=400, code="invalid_state", message="Cannot generate title for empty session")
+        raise ApiError(
+            status_code=400,
+            code="invalid_state",
+            message="Cannot generate title for empty session",
+        )
 
     title = await agent.generate_title(seed, agent_id=agent_id)
     manager.update_title(session_id, title)

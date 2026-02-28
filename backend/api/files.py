@@ -36,7 +36,11 @@ def set_dependencies(base_dir: Path, agent_manager: AgentManager) -> None:
 
 def _require_deps() -> tuple[Path, AgentManager]:
     if _BASE_DIR is None or _AGENT_MANAGER is None:
-        raise ApiError(status_code=500, code="not_initialized", message="File API dependencies are not initialized")
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="File API dependencies are not initialized",
+        )
     return _BASE_DIR, _AGENT_MANAGER
 
 
@@ -97,11 +101,18 @@ async def read_file(
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     target = _resolve_allowed_path(base_dir, runtime.root_dir, path)
 
     if not target.exists() or not target.is_file():
-        raise ApiError(status_code=404, code="not_found", message="File not found", details={"path": path})
+        raise ApiError(
+            status_code=404,
+            code="not_found",
+            message="File not found",
+            details={"path": path},
+        )
 
     content = target.read_text(encoding="utf-8", errors="replace")
     return {"data": {"path": path, "content": content}}
@@ -116,7 +127,9 @@ async def save_file(
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     target = _resolve_allowed_path(base_dir, runtime.root_dir, request.path)
 
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -125,7 +138,9 @@ async def save_file(
     tmp_path.replace(target)
 
     if request.path == "memory/MEMORY.md":
-        runtime.memory_indexer.rebuild_index(settings=runtime.runtime_config.retrieval.memory)
+        runtime.memory_indexer.rebuild_index(
+            settings=runtime.runtime_config.retrieval.memory
+        )
 
     return {"data": {"path": request.path, "saved": True}}
 
@@ -153,7 +168,9 @@ async def list_workspace_files(
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
     return {
         "data": {
             "agent_id": agent_id,
