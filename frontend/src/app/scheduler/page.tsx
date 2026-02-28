@@ -17,15 +17,12 @@ import {
   deleteCronJob,
   getAgents,
   getHeartbeatConfig,
-  getTracingConfig,
   HeartbeatConfig,
   listCronFailures,
   listCronJobs,
   listCronRuns,
   listHeartbeatRuns,
   runCronJob,
-  setTracingConfig,
-  TracingConfig,
   updateCronJob,
   updateHeartbeatConfig,
 } from "@/lib/api";
@@ -73,13 +70,6 @@ export default function SchedulerPage() {
   const [heartbeatRuns, setHeartbeatRuns] = useState<
     Array<Record<string, unknown>>
   >([]);
-  const [tracing, setTracing] = useState<TracingConfig>({
-    provider: "langsmith",
-    config_key: "OBS_TRACING_ENABLED",
-    enabled: false,
-  });
-  const [tracingSaving, setTracingSaving] = useState(false);
-  const [tracingError, setTracingError] = useState("");
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig>({
     enabled: false,
     interval_seconds: 300,
@@ -98,28 +88,17 @@ export default function SchedulerPage() {
     try {
       const [jobRows, runRows, failureRows, heartbeatConfig, heartbeatRunRows] =
         await Promise.all([
-        listCronJobs(nextAgentId),
-        listCronRuns(nextAgentId, 100),
-        listCronFailures(nextAgentId, 100),
-        getHeartbeatConfig(nextAgentId),
-        listHeartbeatRuns(nextAgentId, 100),
-      ]);
+          listCronJobs(nextAgentId),
+          listCronRuns(nextAgentId, 100),
+          listCronFailures(nextAgentId, 100),
+          getHeartbeatConfig(nextAgentId),
+          listHeartbeatRuns(nextAgentId, 100),
+        ]);
       setJobs(jobRows);
       setRuns(runRows);
       setFailures(failureRows);
       setHeartbeat(heartbeatConfig);
       setHeartbeatRuns(heartbeatRunRows);
-      try {
-        const tracingConfig = await getTracingConfig();
-        setTracing(tracingConfig);
-        setTracingError("");
-      } catch (err) {
-        setTracingError(
-          err instanceof Error
-            ? err.message
-            : "Tracing config is unavailable",
-        );
-      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load scheduler data",
@@ -226,57 +205,8 @@ export default function SchedulerPage() {
               )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Agent {agentId}</Badge>
-              <button
-                type="button"
-                aria-label="Toggle LangSmith tracing"
-                title={
-                  tracingError
-                    ? "Tracing config unavailable"
-                    : "Toggle LangSmith tracing"
-                }
-                disabled={tracingSaving}
-                onClick={async () => {
-                  setTracingSaving(true);
-                  setError("");
-                  try {
-                    const next = await setTracingConfig(!tracing.enabled);
-                    setTracing(next);
-                    setTracingError("");
-                  } catch (err) {
-                    const message =
-                      err instanceof Error
-                        ? err.message
-                        : "Failed to update tracing config";
-                    setTracingError(message);
-                    setError(message);
-                  } finally {
-                    setTracingSaving(false);
-                  }
-                }}
-                className={`relative inline-flex h-7 w-14 items-center rounded-full border transition-colors ${
-                  tracing.enabled
-                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-                    : "border-[var(--border-strong)] bg-[var(--surface-3)]"
-                } ${tracingSaving ? "cursor-not-allowed opacity-60" : ""}`}
-              >
-                <span
-                  className={`inline-block h-5 w-5 rounded-full border bg-[var(--surface)] transition-transform ${
-                    tracing.enabled
-                      ? "translate-x-8 border-[var(--accent-strong)]"
-                      : "translate-x-1 border-[var(--border-strong)]"
-                  }`}
-                />
-              </button>
-              <Badge tone={tracing.enabled ? "accent" : "neutral"}>
-                Trace {tracing.enabled ? "ON" : "OFF"}
-              </Badge>
             </div>
           </div>
-          {tracingError ? (
-            <div className="px-4 pb-2 text-[11px] text-[var(--warn)]">
-              Tracing toggle warning: {tracingError}
-            </div>
-          ) : null}
           <div className="grid gap-3 p-4 md:grid-cols-5">
             <label className="min-w-0">
               <span className="ui-label">Agent</span>
