@@ -104,9 +104,6 @@ async def lifespan(_: FastAPI):
         raise RuntimeError(f"Missing required secrets: {joined}")
 
     agent_manager.initialize(BASE_DIR)
-    if agent_manager.memory_indexer is not None:
-        agent_manager.memory_indexer.rebuild_index()
-
     if agent_manager.session_manager is None or agent_manager.memory_indexer is None:
         raise RuntimeError("AgentManager dependencies not initialized")
 
@@ -115,11 +112,13 @@ async def lifespan(_: FastAPI):
     files.set_dependencies(BASE_DIR, agent_manager)
     tokens.set_dependencies(BASE_DIR, agent_manager)
     compress.set_agent_manager(agent_manager)
-    config_api.set_base_dir(BASE_DIR)
+    config_api.set_dependencies(BASE_DIR, agent_manager)
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
 
     default_runtime = agent_manager.get_runtime("default")
+    if agent_manager.memory_indexer is not None:
+        agent_manager.memory_indexer.rebuild_index(settings=default_runtime.runtime_config.retrieval.memory)
 
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=default_runtime.root_dir,

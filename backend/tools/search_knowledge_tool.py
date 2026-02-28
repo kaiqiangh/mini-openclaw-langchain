@@ -21,6 +21,10 @@ class SearchKnowledgeTool:
     root_dir: Path
     config_base_dir: Path | None = None
     default_top_k: int = 3
+    semantic_weight: float = 0.7
+    lexical_weight: float = 0.3
+    chunk_size: int = 400
+    chunk_overlap: int = 80
 
     name: str = "search_knowledge_base"
     description: str = "Search local knowledge files with lexical scoring"
@@ -35,7 +39,7 @@ class SearchKnowledgeTool:
         return self._index_dir / "index.json"
 
     @staticmethod
-    def _chunk(text: str, size: int = 400, overlap: int = 80) -> list[str]:
+    def _chunk(text: str, size: int, overlap: int) -> list[str]:
         if not text:
             return []
         chunks: list[str] = []
@@ -44,20 +48,22 @@ class SearchKnowledgeTool:
             chunks.append(text[start : start + size])
         return chunks
 
-    def _knowledge_digest(self, files: list[Path]) -> str:
+    def _knowledge_digest(self, files: list[Path], *, chunk_size: int, chunk_overlap: int) -> str:
         hasher = hashlib.sha256()
         for file_path in sorted(files):
             stat = file_path.stat()
             hasher.update(str(file_path.relative_to(self.root_dir)).encode("utf-8"))
             hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
             hasher.update(str(stat.st_size).encode("utf-8"))
+        hasher.update(str(chunk_size).encode("utf-8"))
+        hasher.update(str(chunk_overlap).encode("utf-8"))
         return hasher.hexdigest()
 
-    def _build_index(self, files: list[Path], digest: str) -> dict[str, Any]:
+    def _build_index(self, files: list[Path], digest: str, *, chunk_size: int, chunk_overlap: int) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         for file_path in files:
             text = file_path.read_text(encoding="utf-8", errors="replace")
-            for chunk in self._chunk(text):
+            for chunk in self._chunk(text, chunk_size, chunk_overlap):
                 rows.append(
                     {
                         "source": str(file_path.relative_to(self.root_dir)),
@@ -87,21 +93,23 @@ class SearchKnowledgeTool:
 
         return {
             "digest": digest,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
             "embedding_provider": provider,
             "embedding_model": model,
             "embedding_error": embedding_error,
             "rows": rows,
         }
 
-    def _load_or_rebuild_index(self, files: list[Path]) -> dict[str, Any]:
-        digest = self._knowledge_digest(files)
+    def _load_or_rebuild_index(self, files: list[Path], *, chunk_size: int, chunk_overlap: int) -> dict[str, Any]:
+        digest = self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         if self._index_file.exists():
             payload = json.loads(self._index_file.read_text(encoding="utf-8"))
             if payload.get("digest") == digest:
                 return payload
 
         self._index_dir.mkdir(parents=True, exist_ok=True)
-        payload = self._build_index(files, digest)
+        payload = self._build_index(files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         self._index_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
         return payload
 
@@ -109,7 +117,9 @@ class SearchKnowledgeTool:
         _ = context
         started = time.monotonic()
         query = str(args.get("query", "")).strip().lower()
-        top_k = int(args.get("top_k", self.default_top_k))
+        top_k = max(1, int(args.get("top_k", self.default_top_k)))
+        chunk_size = max(64, int(self.chunk_size))
+        chunk_overlap = max(0, int(self.chunk_overlap))
 
         if not query:
             return ToolResult.failure(
@@ -121,7 +131,7 @@ class SearchKnowledgeTool:
 
         knowledge_dir = resolve_workspace_path(self.root_dir, "knowledge")
         files = [p for p in knowledge_dir.rglob("*") if p.is_file()]
-        payload = self._load_or_rebuild_index(files)
+        payload = self._load_or_rebuild_index(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         rows = payload.get("rows", [])
         if not isinstance(rows, list):
             rows = []
@@ -147,7 +157,7 @@ class SearchKnowledgeTool:
             vector = 0.0
             if query_embedding:
                 vector = cosine_similarity(query_embedding, row.get("embedding", []))
-            score = (vector * 0.7) + (lexical * 0.3)
+            score = (vector * float(self.semantic_weight)) + (lexical * float(self.lexical_weight))
             if score > 0:
                 snippet = text[:300].replace("\n", " ")
                 scored.append((score, source, snippet))

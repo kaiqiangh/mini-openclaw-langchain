@@ -147,7 +147,7 @@ async def chat(request: ChatRequest) -> Any:
                         )
 
                 if is_first_turn:
-                    title = await agent.generate_title(request.message)
+                    title = await agent.generate_title(request.message, agent_id=request.agent_id)
                     session_manager.update_title(request.session_id, title)
                     pending_title = title
 

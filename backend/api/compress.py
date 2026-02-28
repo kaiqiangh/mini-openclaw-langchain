@@ -47,7 +47,7 @@ async def compress_session(
     n = max(4, len(messages) // 2)
     n = min(n, len(messages))
 
-    summary = await agent_manager.summarize_messages(messages[:n])
+    summary = await agent_manager.summarize_messages(messages[:n], agent_id=agent_id)
     result = session_manager.compress_history(session_id=session_id, summary=summary, n=n)
     return {
         "data": {

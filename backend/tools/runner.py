@@ -18,10 +18,12 @@ class ToolRunner:
         policy_engine: ToolPolicyEngine,
         audit_file: Path | None = None,
         audit_store: AuditStore | None = None,
+        repeat_identical_failure_limit: int = 2,
     ) -> None:
         self.policy_engine = policy_engine
         self.audit_file = audit_file
         self.audit_store = audit_store
+        self.repeat_identical_failure_limit = max(1, int(repeat_identical_failure_limit))
         self._repeat_failure_counts: dict[tuple[str, str, str], int] = {}
 
     @staticmethod
@@ -115,7 +117,7 @@ class ToolRunner:
             self._args_fingerprint(args),
         )
         prior_failures = self._repeat_failure_counts.get(failure_key, 0)
-        if prior_failures >= 2:
+        if prior_failures >= self.repeat_identical_failure_limit:
             duration_ms = int((time.monotonic() - started) * 1000)
             reason = "Repeated identical tool failure; retry blocked for this run"
             self._write_audit(

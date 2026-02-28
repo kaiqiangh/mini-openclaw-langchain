@@ -125,7 +125,7 @@ async def save_file(
     tmp_path.replace(target)
 
     if request.path == "memory/MEMORY.md":
-        runtime.memory_indexer.rebuild_index()
+        runtime.memory_indexer.rebuild_index(settings=runtime.runtime_config.retrieval.memory)
 
     return {"data": {"path": request.path, "saved": True}}
 

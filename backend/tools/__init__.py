@@ -74,7 +74,15 @@ def get_all_tools(
             root_dir=base_dir,
             max_chars_default=runtime.tool_output_limits.read_file_chars,
         ),
-        SearchKnowledgeTool(root_dir=base_dir, config_base_dir=config_base_dir),
+        SearchKnowledgeTool(
+            root_dir=base_dir,
+            config_base_dir=config_base_dir,
+            default_top_k=runtime.retrieval.knowledge.top_k,
+            semantic_weight=runtime.retrieval.knowledge.semantic_weight,
+            lexical_weight=runtime.retrieval.knowledge.lexical_weight,
+            chunk_size=runtime.retrieval.knowledge.chunk_size,
+            chunk_overlap=runtime.retrieval.knowledge.chunk_overlap,
+        ),
         WebSearchTool(timeout_seconds=runtime.tool_timeouts.fetch_url_seconds),
         ApplyPatchTool(root_dir=base_dir, timeout_seconds=runtime.tool_timeouts.terminal_seconds),
     ]
@@ -94,11 +102,16 @@ def get_all_tools(
     return enabled
 
 
-def get_tool_runner(base_dir: Path, audit_store: AuditStore | None = None) -> ToolRunner:
+def get_tool_runner(
+    base_dir: Path,
+    audit_store: AuditStore | None = None,
+    repeat_identical_failure_limit: int = 2,
+) -> ToolRunner:
     return ToolRunner(
         policy_engine=ToolPolicyEngine(),
         audit_file=base_dir / "storage" / "tool_audit.jsonl",
         audit_store=audit_store,
+        repeat_identical_failure_limit=repeat_identical_failure_limit,
     )
 
 

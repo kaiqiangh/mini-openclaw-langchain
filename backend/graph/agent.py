@@ -12,7 +12,13 @@ from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from config import AppConfig, RuntimeConfig, load_config
+from config import (
+    AppConfig,
+    RuntimeConfig,
+    load_config,
+    load_effective_runtime_config,
+    runtime_config_digest,
+)
 from graph.callbacks import AuditCallbackHandler
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
@@ -36,6 +42,12 @@ class AgentRuntime:
     memory_indexer: MemoryIndexer
     audit_store: AuditStore
     usage_store: UsageStore
+    runtime_config: RuntimeConfig
+    runtime_config_digest: str
+    global_config_mtime_ns: int
+    agent_config_mtime_ns: int
+    llm: ChatOpenAI | None = None
+    llm_signature: tuple[float, int] | None = None
 
 
 class AgentManager:
@@ -50,9 +62,6 @@ class AgentManager:
         self.audit_store: AuditStore | None = None
         self.usage_store: UsageStore | None = None
         self.prompt_builder = PromptBuilder()
-        self._llm: ChatOpenAI | None = None
-        self.max_steps = 20
-        self.max_retries = 1
         self.default_agent_id = "default"
         self._runtimes: dict[str, AgentRuntime] = {}
 
@@ -64,8 +73,6 @@ class AgentManager:
         self.workspace_template_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = load_config(base_dir)
-        self._llm = self._build_llm(self.config)
-
         self._ensure_workspace_template()
         self._ensure_workspace(self.default_agent_id)
         default_runtime = self.get_runtime(self.default_agent_id)
@@ -75,13 +82,13 @@ class AgentManager:
         self.usage_store = default_runtime.usage_store
 
     @staticmethod
-    def _build_llm(config: AppConfig) -> ChatOpenAI:
+    def _build_llm(config: AppConfig, runtime: RuntimeConfig) -> ChatOpenAI:
         return ChatOpenAI(
             model=config.secrets.deepseek_model,
             api_key=config.secrets.deepseek_api_key,
             base_url=config.secrets.deepseek_base_url,
-            temperature=0.2,
-            timeout=60,
+            temperature=runtime.llm_runtime.temperature,
+            timeout=runtime.llm_runtime.timeout_seconds,
         )
 
     def _require_initialized(self) -> tuple[Path, Path]:
@@ -100,6 +107,23 @@ class AgentManager:
     def _workspace_root(self, agent_id: str) -> Path:
         _, workspaces_dir = self._require_initialized()
         return workspaces_dir / agent_id
+
+    def _global_config_path(self) -> Path:
+        base_dir, _ = self._require_initialized()
+        return base_dir / "config.json"
+
+    @staticmethod
+    def _config_mtime_ns(path: Path) -> int:
+        if not path.exists():
+            return -1
+        return path.stat().st_mtime_ns
+
+    def _runtime_config_paths(self, workspace_root: Path) -> tuple[Path, Path]:
+        return self._global_config_path(), workspace_root / "config.json"
+
+    def get_agent_config_path(self, agent_id: str = "default") -> Path:
+        runtime = self.get_runtime(agent_id)
+        return runtime.root_dir / "config.json"
 
     def _copy_text_if_missing(self, source: Path | None, target: Path, default_text: str = "") -> None:
         if target.exists():
@@ -218,12 +242,17 @@ class AgentManager:
 
         self._sync_skills_directory(root)
         self._sync_skills_snapshot(root)
+        if self.base_dir is not None:
+            self._copy_text_if_missing(self.base_dir / "config.json", root / "config.json", default_text="{}\n")
         return root
 
     def _build_runtime(self, agent_id: str) -> AgentRuntime:
         if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
         workspace_root = self._ensure_workspace(agent_id)
+        global_config_path, agent_config_path = self._runtime_config_paths(workspace_root)
+        effective_runtime = load_effective_runtime_config(global_config_path, agent_config_path)
+        effective_digest = runtime_config_digest(effective_runtime)
         runtime = AgentRuntime(
             agent_id=agent_id,
             root_dir=workspace_root,
@@ -231,17 +260,54 @@ class AgentManager:
             memory_indexer=MemoryIndexer(workspace_root, config_base_dir=self.base_dir),
             audit_store=AuditStore(workspace_root),
             usage_store=UsageStore(workspace_root),
+            runtime_config=effective_runtime,
+            runtime_config_digest=effective_digest,
+            global_config_mtime_ns=self._config_mtime_ns(global_config_path),
+            agent_config_mtime_ns=self._config_mtime_ns(agent_config_path),
         )
         runtime.audit_store.ensure_schema_descriptor()
         return runtime
 
+    def _refresh_runtime_config(self, runtime: AgentRuntime) -> None:
+        workspace_root = self._ensure_workspace(runtime.agent_id)
+        runtime.root_dir = workspace_root
+        global_config_path, agent_config_path = self._runtime_config_paths(workspace_root)
+        global_mtime = self._config_mtime_ns(global_config_path)
+        agent_mtime = self._config_mtime_ns(agent_config_path)
+        if (
+            runtime.global_config_mtime_ns == global_mtime
+            and runtime.agent_config_mtime_ns == agent_mtime
+            and runtime.runtime_config_digest
+        ):
+            return
+
+        effective_runtime = load_effective_runtime_config(global_config_path, agent_config_path)
+        runtime.runtime_config = effective_runtime
+        runtime.runtime_config_digest = runtime_config_digest(effective_runtime)
+        runtime.global_config_mtime_ns = global_mtime
+        runtime.agent_config_mtime_ns = agent_mtime
+
+    def _get_runtime_llm(self, runtime: AgentRuntime) -> ChatOpenAI:
+        if self.config is None:
+            raise RuntimeError("AgentManager is not initialized")
+        signature = (
+            runtime.runtime_config.llm_runtime.temperature,
+            runtime.runtime_config.llm_runtime.timeout_seconds,
+        )
+        if runtime.llm is not None and runtime.llm_signature == signature:
+            return runtime.llm
+        runtime.llm = self._build_llm(self.config, runtime.runtime_config)
+        runtime.llm_signature = signature
+        return runtime.llm
+
     def get_runtime(self, agent_id: str = "default") -> AgentRuntime:
         normalized = self._normalize_agent_id(agent_id)
         runtime = self._runtimes.get(normalized)
-        if runtime is not None:
+        if runtime is None:
+            runtime = self._build_runtime(normalized)
+            self._runtimes[normalized] = runtime
             return runtime
-        runtime = self._build_runtime(normalized)
-        self._runtimes[normalized] = runtime
+        self._refresh_runtime_config(runtime)
         return runtime
 
     def get_session_manager(self, agent_id: str = "default") -> SessionManager:
@@ -282,7 +348,7 @@ class AgentManager:
         if root.exists():
             raise ValueError(f"Agent already exists: {normalized}")
         runtime = self.get_runtime(normalized)
-        runtime.memory_indexer.rebuild_index()
+        runtime.memory_indexer.rebuild_index(settings=runtime.runtime_config.retrieval.memory)
         for row in self.list_agents():
             if row.get("agent_id") == normalized:
                 return row
@@ -321,6 +387,7 @@ class AgentManager:
     def _build_agent(
         self,
         *,
+        llm: ChatOpenAI,
         runtime: RuntimeConfig,
         system_prompt: str,
         trigger_type: str,
@@ -330,7 +397,7 @@ class AgentManager:
         runtime_audit_store: AuditStore,
         response_format: Any | None = None,
     ) -> Any:
-        if self.base_dir is None or self._llm is None:
+        if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
 
         mini_tools = get_all_tools(
@@ -340,7 +407,11 @@ class AgentManager:
             config_base_dir=self.base_dir,
         )
         explicit_enabled_tools = get_explicit_enabled_tools(runtime, trigger_type)
-        runner = get_tool_runner(runtime_root, runtime_audit_store)
+        runner = get_tool_runner(
+            runtime_root,
+            runtime_audit_store,
+            repeat_identical_failure_limit=runtime.tool_retry_guard.repeat_identical_failure_limit,
+        )
         langchain_tools = build_langchain_tools(
             tools=mini_tools,
             runner=runner,
@@ -355,13 +426,13 @@ class AgentManager:
 
         if response_format is None:
             return create_agent(
-                model=self._llm,
+                model=llm,
                 tools=langchain_tools,
                 system_prompt=system_prompt,
             )
 
         return create_agent(
-            model=self._llm,
+            model=llm,
             tools=langchain_tools,
             system_prompt=system_prompt,
             response_format=response_format,
@@ -562,9 +633,11 @@ class AgentManager:
         built.append(HumanMessage(content=message))
         return built
 
-    async def generate_title(self, seed_text: str) -> str:
-        if self._llm is None:
+    async def generate_title(self, seed_text: str, agent_id: str = "default") -> str:
+        if self.config is None:
             return seed_text[:10] or "New Session"
+        runtime = self.get_runtime(agent_id)
+        llm = self._get_runtime_llm(runtime)
 
         prompt = (
             "Generate a short session title in plain English, at most 10 words. "
@@ -572,17 +645,19 @@ class AgentManager:
             f"Content: {seed_text[:200]}"
         )
         try:
-            response = await self._llm.ainvoke(prompt)
+            response = await llm.ainvoke(prompt)
             first_line = str(getattr(response, "content", "")).strip().splitlines()[0]
             title = " ".join(first_line.split()[:10])[:80].strip()
             return title or (seed_text[:40] or "New Session")
         except Exception:  # noqa: BLE001
             return seed_text[:40] or "New Session"
 
-    async def summarize_messages(self, messages: list[dict[str, Any]]) -> str:
-        if self._llm is None:
+    async def summarize_messages(self, messages: list[dict[str, Any]], agent_id: str = "default") -> str:
+        if self.config is None:
             joined = "\n".join(f"{m.get('role','user')}: {m.get('content','')[:80]}" for m in messages)
             return joined[:500]
+        runtime = self.get_runtime(agent_id)
+        llm = self._get_runtime_llm(runtime)
 
         corpus = "\n".join(
             f"{m.get('role', 'user')}: {str(m.get('content', ''))[:200]}" for m in messages
@@ -593,20 +668,19 @@ class AgentManager:
             f"{corpus[:4000]}"
         )
         try:
-            response = await self._llm.ainvoke(prompt)
+            response = await llm.ainvoke(prompt)
             summary = str(getattr(response, "content", "")).strip()
             return summary[:500]
         except Exception:  # noqa: BLE001
             return corpus[:500]
 
     def build_system_prompt(self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default") -> str:
-        if self.base_dir is None or self.config is None:
+        if self.config is None:
             raise RuntimeError("AgentManager is not initialized")
         runtime = self.get_runtime(agent_id)
-        self.config = load_config(self.base_dir)
         pack = self.prompt_builder.build_system_prompt(
             base_dir=runtime.root_dir,
-            runtime=self.config.runtime,
+            runtime=runtime.runtime_config,
             rag_mode=rag_mode,
             is_first_turn=is_first_turn,
         )
@@ -624,12 +698,16 @@ class AgentManager:
     ) -> dict[str, Any]:
         if self.base_dir is None or self.config is None:
             raise RuntimeError("AgentManager must be initialized before run_once().")
-        runtime = self.get_runtime(agent_id)
-        self.config = load_config(self.base_dir)
+        runtime_state = self.get_runtime(agent_id)
+        effective_runtime = runtime_state.runtime_config
+        llm = self._get_runtime_llm(runtime_state)
 
         rag_context = None
-        if self.config.runtime.rag_mode:
-            results = runtime.memory_indexer.retrieve(message, top_k=3)
+        if effective_runtime.rag_mode:
+            results = runtime_state.memory_indexer.retrieve(
+                message,
+                settings=effective_runtime.retrieval.memory,
+            )
             if results:
                 rag_context = "[Memory Retrieval Results]\n" + "\n".join(
                     f"- ({item['score']}) {item['text']}" for item in results
@@ -637,7 +715,7 @@ class AgentManager:
 
         messages = self._build_messages(history=history, message=message, rag_context=rag_context)
         system_prompt = self.build_system_prompt(
-            rag_mode=self.config.runtime.rag_mode,
+            rag_mode=effective_runtime.rag_mode,
             is_first_turn=False,
             agent_id=agent_id,
         )
@@ -653,24 +731,25 @@ class AgentManager:
 
         run_id = str(uuid.uuid4())
         agent = self._build_agent(
-            runtime=self.config.runtime,
+            llm=llm,
+            runtime=effective_runtime,
             system_prompt=system_prompt,
             trigger_type=trigger_type,
             run_id=run_id,
             session_id=session_id,
-            runtime_root=runtime.root_dir,
-            runtime_audit_store=runtime.audit_store,
+            runtime_root=runtime_state.root_dir,
+            runtime_audit_store=runtime_state.audit_store,
             response_format=response_schema,
         )
 
         config = {
-            "recursion_limit": self.max_steps,
+            "recursion_limit": effective_runtime.agent_runtime.max_steps,
             "callbacks": self._build_callbacks(
                 run_id=run_id,
                 session_id=session_id,
                 trigger_type=trigger_type,
-                runtime_root=runtime.root_dir,
-                runtime_audit_store=runtime.audit_store,
+                runtime_root=runtime_state.root_dir,
+                runtime_audit_store=runtime_state.audit_store,
             ),
             "configurable": {"thread_id": session_id},
         }
@@ -689,7 +768,7 @@ class AgentManager:
                         trigger_type=trigger_type,
                         model=self.config.secrets.deepseek_model,
                         agent_id=agent_id,
-                        usage_store=runtime.usage_store,
+                        usage_store=runtime_state.usage_store,
                     )
                     break
 
@@ -715,13 +794,17 @@ class AgentManager:
     ) -> AsyncGenerator[dict[str, Any], None]:
         if not self.base_dir or not self.config:
             raise RuntimeError("AgentManager must be initialized before astream().")
-        runtime = self.get_runtime(agent_id)
-        self.config = load_config(self.base_dir)
+        runtime_state = self.get_runtime(agent_id)
+        effective_runtime = runtime_state.runtime_config
+        llm = self._get_runtime_llm(runtime_state)
 
-        rag_mode = self.config.runtime.rag_mode
+        rag_mode = effective_runtime.rag_mode
         rag_context = None
         if rag_mode:
-            results = runtime.memory_indexer.retrieve(message, top_k=3)
+            results = runtime_state.memory_indexer.retrieve(
+                message,
+                settings=effective_runtime.retrieval.memory,
+            )
             yield {"type": "retrieval", "data": {"query": message, "results": results}}
             if results:
                 rag_context = "[Memory Retrieval Results]\n" + "\n".join(
@@ -748,28 +831,29 @@ class AgentManager:
         }
         usage_signature = ""
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(effective_runtime.agent_runtime.max_retries + 1):
             run_id = str(uuid.uuid4())
             try:
                 yield {"type": "run_start", "data": {"run_id": run_id, "attempt": attempt + 1}}
                 agent = self._build_agent(
-                    runtime=self.config.runtime,
+                    llm=llm,
+                    runtime=effective_runtime,
                     system_prompt=system_prompt,
                     trigger_type=trigger_type,
                     run_id=run_id,
                     session_id=session_id,
-                    runtime_root=runtime.root_dir,
-                    runtime_audit_store=runtime.audit_store,
+                    runtime_root=runtime_state.root_dir,
+                    runtime_audit_store=runtime_state.audit_store,
                 )
 
                 config = {
-                    "recursion_limit": self.max_steps,
+                    "recursion_limit": effective_runtime.agent_runtime.max_steps,
                     "callbacks": self._build_callbacks(
                         run_id=run_id,
                         session_id=session_id,
                         trigger_type=trigger_type,
-                        runtime_root=runtime.root_dir,
-                        runtime_audit_store=runtime.audit_store,
+                        runtime_root=runtime_state.root_dir,
+                        runtime_audit_store=runtime_state.audit_store,
                     ),
                     "configurable": {"thread_id": session_id},
                 }
@@ -931,7 +1015,7 @@ class AgentManager:
                         trigger_type=trigger_type,
                         model=self.config.secrets.deepseek_model,
                         agent_id=agent_id,
-                        usage_store=runtime.usage_store,
+                        usage_store=runtime_state.usage_store,
                     )
                 yield {
                     "type": "done",
@@ -947,7 +1031,7 @@ class AgentManager:
                 return
 
             except Exception as exc:  # noqa: BLE001
-                if attempt < self.max_retries:
+                if attempt < effective_runtime.agent_runtime.max_retries:
                     await asyncio.sleep(0.5 * (2**attempt))
                     continue
                 yield {

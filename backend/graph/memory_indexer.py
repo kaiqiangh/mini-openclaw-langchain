@@ -5,8 +5,9 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import load_config
+from config import RetrievalDomainConfig, load_config
 from graph.embedding_client import EmbeddingClient, cosine_similarity
+
 
 @dataclass
 class RetrievalResult:
@@ -22,9 +23,25 @@ class MemoryIndexer:
         self.memory_file = base_dir / "memory" / "MEMORY.md"
         self.index_dir = base_dir / "storage" / "memory_index"
         self.index_file = self.index_dir / "index.json"
-        self._last_hash: str | None = None
+        self._last_digest: str | None = None
 
-    def _chunk(self, text: str, size: int = 256, overlap: int = 32) -> list[str]:
+    @staticmethod
+    def _sanitize_settings(settings: RetrievalDomainConfig) -> RetrievalDomainConfig:
+        return RetrievalDomainConfig(
+            top_k=max(1, int(settings.top_k)),
+            semantic_weight=float(settings.semantic_weight),
+            lexical_weight=float(settings.lexical_weight),
+            chunk_size=max(64, int(settings.chunk_size)),
+            chunk_overlap=max(0, int(settings.chunk_overlap)),
+        )
+
+    def _resolve_settings(self, settings: RetrievalDomainConfig | None) -> RetrievalDomainConfig:
+        if settings is None:
+            settings = load_config(self.config_base_dir).runtime.retrieval.memory
+        return self._sanitize_settings(settings)
+
+    @staticmethod
+    def _chunk(text: str, *, size: int, overlap: int) -> list[str]:
         if not text:
             return []
         chunks: list[str] = []
@@ -33,18 +50,30 @@ class MemoryIndexer:
             chunks.append(text[start : start + size])
         return chunks
 
-    def rebuild_index(self) -> None:
+    @staticmethod
+    def _memory_digest(text: str, *, chunk_size: int, chunk_overlap: int) -> str:
+        payload = {
+            "memory_hash": hashlib.md5(text.encode("utf-8")).hexdigest(),
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+        }
+        encoded = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def rebuild_index(self, settings: RetrievalDomainConfig | None = None) -> None:
+        effective = self._resolve_settings(settings)
         self.index_dir.mkdir(parents=True, exist_ok=True)
         text = self.memory_file.read_text(encoding="utf-8") if self.memory_file.exists() else ""
-        digest = hashlib.md5(text.encode("utf-8")).hexdigest()
-        chunks = self._chunk(text)
+        digest = self._memory_digest(
+            text,
+            chunk_size=effective.chunk_size,
+            chunk_overlap=effective.chunk_overlap,
+        )
+        chunks = self._chunk(text, size=effective.chunk_size, overlap=effective.chunk_overlap)
+
         config = load_config(self.config_base_dir)
         provider = config.secrets.embedding_provider.value
-        model = (
-            config.secrets.embedding_model
-            if provider == "openai"
-            else config.secrets.google_embedding_model
-        )
+        model = config.secrets.embedding_model if provider == "openai" else config.secrets.google_embedding_model
 
         embeddings: list[list[float]] = []
         embedding_error = ""
@@ -57,6 +86,8 @@ class MemoryIndexer:
 
         payload = {
             "digest": digest,
+            "chunk_size": effective.chunk_size,
+            "chunk_overlap": effective.chunk_overlap,
             "chunks": chunks,
             "source": "memory/MEMORY.md",
             "embedding_provider": provider,
@@ -65,19 +96,41 @@ class MemoryIndexer:
             "embedding_error": embedding_error,
         }
         self.index_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-        self._last_hash = digest
+        self._last_digest = digest
 
-    def _maybe_rebuild(self) -> None:
+    def _load_or_rebuild_index(self, settings: RetrievalDomainConfig) -> dict[str, object]:
         text = self.memory_file.read_text(encoding="utf-8") if self.memory_file.exists() else ""
-        current_hash = hashlib.md5(text.encode("utf-8")).hexdigest()
-        if not self.index_file.exists() or self._last_hash != current_hash:
-            self.rebuild_index()
+        digest = self._memory_digest(
+            text,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
 
-    def retrieve(self, query: str, top_k: int = 3) -> list[dict[str, object]]:
-        self._maybe_rebuild()
-        payload = json.loads(self.index_file.read_text(encoding="utf-8")) if self.index_file.exists() else {"chunks": []}
-        chunks: list[str] = payload.get("chunks", [])
-        embeddings: list[list[float]] = payload.get("embeddings", [])
+        if self.index_file.exists():
+            payload = json.loads(self.index_file.read_text(encoding="utf-8"))
+            if payload.get("digest") == digest:
+                self._last_digest = digest
+                return payload
+
+        self.rebuild_index(settings=settings)
+        if self.index_file.exists():
+            payload = json.loads(self.index_file.read_text(encoding="utf-8"))
+            if payload.get("digest") == digest:
+                return payload
+        return {"chunks": [], "embeddings": []}
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int | None = None,
+        *,
+        settings: RetrievalDomainConfig | None = None,
+    ) -> list[dict[str, object]]:
+        effective = self._resolve_settings(settings)
+        effective_top_k = max(1, int(top_k if top_k is not None else effective.top_k))
+        payload = self._load_or_rebuild_index(effective)
+        chunks: list[str] = payload.get("chunks", []) if isinstance(payload.get("chunks"), list) else []
+        embeddings: list[list[float]] = payload.get("embeddings", []) if isinstance(payload.get("embeddings"), list) else []
 
         query_terms = {item for item in query.lower().split() if item}
         query_embedding: list[float] = []
@@ -96,10 +149,9 @@ class MemoryIndexer:
             vector = 0.0
             if query_embedding and idx < len(embeddings):
                 vector = cosine_similarity(query_embedding, embeddings[idx])
-            # Favor semantic similarity, with lexical tie-breaker.
-            score = (vector * 0.7) + (lexical * 0.3)
+            score = (vector * effective.semantic_weight) + (lexical * effective.lexical_weight)
             if score > 0:
                 scored.append(RetrievalResult(text=chunk, score=score, source="memory/MEMORY.md"))
 
         scored.sort(key=lambda item: item.score, reverse=True)
-        return [{"text": item.text, "score": item.score, "source": item.source} for item in scored[:top_k]]
+        return [{"text": item.text, "score": item.score, "source": item.source} for item in scored[:effective_top_k]]

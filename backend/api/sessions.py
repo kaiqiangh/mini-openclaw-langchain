@@ -134,9 +134,10 @@ async def get_messages(
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     if agent.config is None:
         raise ApiError(status_code=500, code="not_initialized", message="Agent config is unavailable")
+    runtime = agent.get_runtime(agent_id)
 
     system_prompt = agent.build_system_prompt(
-        rag_mode=agent.config.runtime.rag_mode,
+        rag_mode=runtime.runtime_config.rag_mode,
         is_first_turn=len(session.get("messages", [])) == 0,
         agent_id=agent_id,
     )
@@ -199,6 +200,6 @@ async def generate_title(
     if not seed:
         raise ApiError(status_code=400, code="invalid_state", message="Cannot generate title for empty session")
 
-    title = await agent.generate_title(seed)
+    title = await agent.generate_title(seed, agent_id=agent_id)
     manager.update_title(session_id, title)
     return {"data": {"session_id": session_id, "title": title}}
