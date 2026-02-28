@@ -1,0 +1,33 @@
+name: CLI Smoke
+
+on:
+  pull_request:
+    paths:
+      - 'oml'
+      - 'scripts/oml/**'
+      - 'tests/cli/**'
+      - 'docs/cli/**'
+      - 'README.md'
+      - '.github/workflows/cli-smoke.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'oml'
+      - 'scripts/oml/**'
+      - 'tests/cli/**'
+      - 'docs/cli/**'
+      - 'README.md'
+      - '.github/workflows/cli-smoke.yml'
+
+jobs:
+  cli-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate CLI smoke checks
+        run: bash tests/cli/test_oml_smoke.sh
