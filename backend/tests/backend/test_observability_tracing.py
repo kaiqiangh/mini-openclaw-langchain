@@ -7,7 +7,7 @@ from observability import tracing
 
 
 def test_build_optional_callbacks_disabled_by_langsmith_flag(monkeypatch):
-    monkeypatch.setenv("OBS_TRACING_PROVIDER", "langsmith")
+    monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
 
     callbacks = tracing.build_optional_callbacks(run_id="run-1")
@@ -15,7 +15,7 @@ def test_build_optional_callbacks_disabled_by_langsmith_flag(monkeypatch):
 
 
 def test_build_optional_callbacks_disabled_by_global_override(monkeypatch):
-    monkeypatch.setenv("OBS_TRACING_PROVIDER", "langsmith")
+    monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
     monkeypatch.setenv("OBS_TRACING_ENABLED", "0")
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
 
@@ -24,7 +24,7 @@ def test_build_optional_callbacks_disabled_by_global_override(monkeypatch):
 
 
 def test_build_optional_callbacks_disabled_by_langchain_v2_flag(monkeypatch):
-    monkeypatch.setenv("OBS_TRACING_PROVIDER", "langsmith")
+    monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
     monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
 
@@ -33,7 +33,7 @@ def test_build_optional_callbacks_disabled_by_langchain_v2_flag(monkeypatch):
 
 
 def test_build_optional_callbacks_langsmith_enabled_with_stub(monkeypatch):
-    monkeypatch.setenv("OBS_TRACING_PROVIDER", "langsmith")
+    monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
 
     fake_module = types.ModuleType("langchain_core.tracers")
@@ -50,3 +50,12 @@ def test_build_optional_callbacks_langsmith_enabled_with_stub(monkeypatch):
     assert len(callbacks) == 1
     tracer = callbacks[0]
     assert getattr(tracer, "run_name", "") == "run-4"
+
+
+def test_build_optional_callbacks_default_disabled(monkeypatch):
+    monkeypatch.delenv("OBS_TRACING_ENABLED", raising=False)
+    monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+
+    callbacks = tracing.build_optional_callbacks(run_id="run-5")
+    assert callbacks == []
