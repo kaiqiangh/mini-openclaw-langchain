@@ -25,7 +25,9 @@ export function ChatInput() {
         aria-label="Chat message"
         autoComplete="off"
         className="w-full"
-        placeholder={readOnly ? "Archived session (read-only)" : "Type a message…"}
+        placeholder={
+          readOnly ? "Archived session (read-only)" : "Type a message…"
+        }
         value={draft}
         disabled={isStreaming || readOnly}
         onChange={(event) => setDraft(event.target.value)}

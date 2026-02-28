@@ -57,7 +57,13 @@ describe("chat rendering components", () => {
     ].join("\n");
 
     const { container } = render(
-      <ChatMessage role="assistant" content={markdown} toolCalls={[]} retrievals={[]} debugEvents={[]} />,
+      <ChatMessage
+        role="assistant"
+        content={markdown}
+        toolCalls={[]}
+        retrievals={[]}
+        debugEvents={[]}
+      />,
     );
 
     expect(screen.getByText("Heading")).toBeInTheDocument();

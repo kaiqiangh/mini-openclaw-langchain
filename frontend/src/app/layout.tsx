@@ -16,10 +16,16 @@ export const viewport: Viewport = {
   ],
 };
 
-const activeTheme = process.env.NEXT_PUBLIC_UI_THEME === "legacy" ? "legacy" : "claude";
-const pixelTexture = process.env.NEXT_PUBLIC_UI_PIXEL_TEXTURE === "off" ? "off" : "on";
+const activeTheme =
+  process.env.NEXT_PUBLIC_UI_THEME === "legacy" ? "legacy" : "claude";
+const pixelTexture =
+  process.env.NEXT_PUBLIC_UI_PIXEL_TEXTURE === "off" ? "off" : "on";
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body data-theme={activeTheme} data-pixel-texture={pixelTexture}>

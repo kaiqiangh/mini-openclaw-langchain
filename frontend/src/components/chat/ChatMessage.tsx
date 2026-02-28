@@ -57,9 +57,11 @@ function CodeBlock({
 
 function extractText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map((item) => extractText(item)).join("");
+  if (Array.isArray(node))
+    return node.map((item) => extractText(item)).join("");
   if (node && typeof node === "object" && "props" in node) {
-    const children = (node as { props?: { children?: ReactNode } }).props?.children;
+    const children = (node as { props?: { children?: ReactNode } }).props
+      ?.children;
     return extractText(children ?? "");
   }
   return "";
@@ -96,7 +98,14 @@ function MarkdownBody({ content }: { content: string }) {
         rehypePlugins={[rehypeSanitize]}
         components={{
           a(props) {
-            return <a {...props} target="_blank" rel="noopener noreferrer" className="ui-md-link" />;
+            return (
+              <a
+                {...props}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ui-md-link"
+              />
+            );
           },
           pre(props) {
             return <PreBlock>{props.children}</PreBlock>;
@@ -104,10 +113,20 @@ function MarkdownBody({ content }: { content: string }) {
           code(props) {
             return (
               <CodeBlock
-                inline={"inline" in props ? (props as { inline?: boolean }).inline : false}
-                className={"className" in props ? (props as { className?: string }).className : undefined}
+                inline={
+                  "inline" in props
+                    ? (props as { inline?: boolean }).inline
+                    : false
+                }
+                className={
+                  "className" in props
+                    ? (props as { className?: string }).className
+                    : undefined
+                }
               >
-                {"children" in props ? (props as { children?: ReactNode }).children : null}
+                {"children" in props
+                  ? (props as { children?: ReactNode }).children
+                  : null}
               </CodeBlock>
             );
           },
@@ -119,7 +138,13 @@ function MarkdownBody({ content }: { content: string }) {
   );
 }
 
-function ChatMessageComponent({ role, content, toolCalls, retrievals, debugEvents }: Props) {
+function ChatMessageComponent({
+  role,
+  content,
+  toolCalls,
+  retrievals,
+  debugEvents,
+}: Props) {
   return (
     <article
       className={`mb-3 rounded-md border p-3 text-sm ${
@@ -130,14 +155,22 @@ function ChatMessageComponent({ role, content, toolCalls, retrievals, debugEvent
     >
       <div className="mb-2 flex items-center gap-2">
         <Badge tone={role === "user" ? "accent" : "neutral"}>{role}</Badge>
-        <span className="ui-helper ui-mono">{role === "assistant" ? "agent-response" : "operator-input"}</span>
+        <span className="ui-helper ui-mono">
+          {role === "assistant" ? "agent-response" : "operator-input"}
+        </span>
       </div>
       <div className="break-words leading-6 text-[var(--text)]">
-        {role === "assistant" ? <MarkdownBody content={content} /> : <div className="whitespace-pre-wrap">{content}</div>}
+        {role === "assistant" ? (
+          <MarkdownBody content={content} />
+        ) : (
+          <div className="whitespace-pre-wrap">{content}</div>
+        )}
       </div>
       {retrievals.length > 0 ? <RetrievalCard retrievals={retrievals} /> : null}
       {toolCalls.length > 0 ? <ThoughtChain calls={toolCalls} /> : null}
-      {role === "assistant" && debugEvents.length > 0 ? <DebugTrace events={debugEvents} /> : null}
+      {role === "assistant" && debugEvents.length > 0 ? (
+        <DebugTrace events={debugEvents} />
+      ) : null}
     </article>
   );
 }

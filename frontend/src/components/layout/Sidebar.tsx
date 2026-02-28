@@ -3,7 +3,14 @@
 import { useState } from "react";
 
 import { useAppStore } from "@/lib/store";
-import { Badge, Button, Input, Select, TabButton, TabsList } from "@/components/ui/primitives";
+import {
+  Badge,
+  Button,
+  Input,
+  Select,
+  TabButton,
+  TabsList,
+} from "@/components/ui/primitives";
 
 export function Sidebar() {
   const [agentDraft, setAgentDraft] = useState("");
@@ -50,7 +57,8 @@ export function Sidebar() {
           >
             {agents.map((agent) => (
               <option key={agent.agent_id} value={agent.agent_id}>
-                {agent.agent_id} ({agent.active_sessions}/{agent.archived_sessions})
+                {agent.agent_id} ({agent.active_sessions}/
+                {agent.archived_sessions})
               </option>
             ))}
           </Select>
@@ -212,7 +220,11 @@ export function Sidebar() {
         {initialized && sessions.length === 0 ? (
           <div className="ui-empty">
             <strong>No Sessions</strong>
-            <span>{sessionsScope === "active" ? "Create a new session to begin." : "No archived sessions."}</span>
+            <span>
+              {sessionsScope === "active"
+                ? "Create a new session to begin."
+                : "No archived sessions."}
+            </span>
           </div>
         ) : null}
       </div>

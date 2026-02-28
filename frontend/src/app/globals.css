@@ -4,8 +4,11 @@
 
 :root {
   color-scheme: light;
-  --font-ui: "Suisse Int'l", "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
-  --font-mono: "Iosevka", "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --font-ui:
+    "Suisse Int'l", "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  --font-mono:
+    "Iosevka", "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas,
+    monospace;
   --space-0: 0;
   --space-1: 4px;
   --space-2: 8px;
@@ -121,8 +124,16 @@ body {
   min-height: 100%;
   color: var(--text);
   background:
-    radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.12) 0%, transparent 34%),
-    radial-gradient(circle at 100% 100%, rgba(125, 211, 252, 0.12) 0%, transparent 32%),
+    radial-gradient(
+      circle at 0% 0%,
+      rgba(59, 130, 246, 0.12) 0%,
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 100% 100%,
+      rgba(125, 211, 252, 0.12) 0%,
+      transparent 32%
+    ),
     linear-gradient(160deg, var(--bg) 0%, var(--bg-alt) 100%);
   font-family: var(--font-ui);
   line-height: 1.5;
@@ -144,7 +155,9 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [role="button"]:focus-visible {
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--accent);
 }
 
 h1,
@@ -188,7 +201,11 @@ h4 {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-3);
-  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface-1) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--surface-2) 0%,
+    var(--surface-1) 100%
+  );
   box-shadow: var(--shadow-1);
 }
 
@@ -197,7 +214,11 @@ h4 {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-3);
-  background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface-1) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--surface-2) 0%,
+    var(--surface-1) 100%
+  );
   box-shadow: var(--shadow-1);
 }
 
@@ -338,7 +359,11 @@ h4 {
 
 .ui-btn-primary {
   border-color: var(--accent-strong);
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--accent) 0%,
+    var(--accent-strong) 100%
+  );
   color: #f8fafc;
 }
 
@@ -442,7 +467,11 @@ h4 {
 .ui-tab.active {
   color: #f8fafc;
   border-color: var(--accent-strong);
-  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+  background: linear-gradient(
+    180deg,
+    var(--accent) 0%,
+    var(--accent-strong) 100%
+  );
 }
 
 .ui-table-wrap {
@@ -553,7 +582,12 @@ h4 {
 
 .ui-skeleton {
   border-radius: var(--radius-1);
-  background: linear-gradient(90deg, var(--surface-3), var(--surface-header), var(--surface-3));
+  background: linear-gradient(
+    90deg,
+    var(--surface-3),
+    var(--surface-header),
+    var(--surface-3)
+  );
   background-size: 200% 100%;
   animation: ui-skeleton 1.2s var(--ease-standard) infinite;
 }

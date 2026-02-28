@@ -55,13 +55,22 @@ export default function Home() {
       const delta = event.clientX - startX;
       const width = host.getBoundingClientRect().width;
       if (target === "left") {
-        const maxLeft = Math.max(MIN_LEFT, width - startRight - MIN_CENTER - 16);
-        const nextLeft = Math.min(maxLeft, Math.max(MIN_LEFT, startLeft + delta));
+        const maxLeft = Math.max(
+          MIN_LEFT,
+          width - startRight - MIN_CENTER - 16,
+        );
+        const nextLeft = Math.min(
+          maxLeft,
+          Math.max(MIN_LEFT, startLeft + delta),
+        );
         setLayout((prev) => ({ ...prev, left: nextLeft }));
         return;
       }
       const maxRight = Math.max(MIN_RIGHT, width - startLeft - MIN_CENTER - 16);
-      const nextRight = Math.min(maxRight, Math.max(MIN_RIGHT, startRight - delta));
+      const nextRight = Math.min(
+        maxRight,
+        Math.max(MIN_RIGHT, startRight - delta),
+      );
       setLayout((prev) => ({ ...prev, right: nextRight }));
     };
 
@@ -76,7 +85,10 @@ export default function Home() {
   }
 
   return (
-    <main id="main-content" className="app-main flex h-screen flex-col overflow-hidden">
+    <main
+      id="main-content"
+      className="app-main flex h-screen flex-col overflow-hidden"
+    >
       <Navbar />
 
       <TabsList className="mobile-tabs md:hidden">
@@ -106,7 +118,9 @@ export default function Home() {
       <section
         ref={containerRef}
         className="hidden h-full gap-0 p-3 md:grid"
-        style={{ gridTemplateColumns: `${layout.left}px 8px minmax(0,1fr) 8px ${layout.right}px` }}
+        style={{
+          gridTemplateColumns: `${layout.left}px 8px minmax(0,1fr) 8px ${layout.right}px`,
+        }}
       >
         <Sidebar />
         <ResizeHandle

@@ -3,8 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Navbar } from "@/components/layout/Navbar";
-import { Badge, Button, DataTable, Select, TableWrap } from "@/components/ui/primitives";
-import { getAgents, getUsageRecords, getUsageSummary, UsageRecord, UsageSummary } from "@/lib/api";
+import {
+  Badge,
+  Button,
+  DataTable,
+  Select,
+  TableWrap,
+} from "@/components/ui/primitives";
+import {
+  getAgents,
+  getUsageRecords,
+  getUsageSummary,
+  UsageRecord,
+  UsageSummary,
+} from "@/lib/api";
 
 const TIMEFRAME_OPTIONS = [
   { label: "Last 1 hour", value: 1 },
@@ -36,8 +48,15 @@ function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
   const bucketMs = bucketHours * 60 * 60 * 1000;
   const now = Date.now();
   const start = now - sinceHours * 60 * 60 * 1000;
-  const buckets: Array<{ label: string; total_tokens: number; estimated_cost_usd: number }> = [];
-  const map = new Map<number, { total_tokens: number; estimated_cost_usd: number }>();
+  const buckets: Array<{
+    label: string;
+    total_tokens: number;
+    estimated_cost_usd: number;
+  }> = [];
+  const map = new Map<
+    number,
+    { total_tokens: number; estimated_cost_usd: number }
+  >();
 
   for (const row of records) {
     if (row.timestamp_ms < start) continue;
@@ -54,9 +73,10 @@ function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
     const ts = start + i * bucketMs;
     const row = map.get(ts) ?? { total_tokens: 0, estimated_cost_usd: 0 };
     buckets.push({
-      label: bucketHours === 1
-        ? new Date(ts).toISOString().slice(5, 13).replace("T", " ")
-        : new Date(ts).toISOString().slice(0, 10),
+      label:
+        bucketHours === 1
+          ? new Date(ts).toISOString().slice(5, 13).replace("T", " ")
+          : new Date(ts).toISOString().slice(0, 10),
       total_tokens: row.total_tokens,
       estimated_cost_usd: row.estimated_cost_usd,
     });
@@ -143,7 +163,12 @@ export default function UsagePage() {
       setError("");
       try {
         const [summaryData, recordsData] = await Promise.all([
-          getUsageSummary({ sinceHours, model: model || undefined, triggerType: triggerType || undefined, agentId }),
+          getUsageSummary({
+            sinceHours,
+            model: model || undefined,
+            triggerType: triggerType || undefined,
+            agentId,
+          }),
           getUsageRecords({
             sinceHours,
             model: model || undefined,
@@ -157,7 +182,9 @@ export default function UsagePage() {
         setRecords(recordsData);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load usage data");
+          setError(
+            err instanceof Error ? err.message : "Failed to load usage data",
+          );
         }
       } finally {
         if (!cancelled) {
@@ -199,8 +226,14 @@ export default function UsagePage() {
     estimated_cost_usd: 0,
   };
 
-  const trendBuckets = useMemo(() => buildTrendBuckets(records, sinceHours), [records, sinceHours]);
-  const maxTrend = useMemo(() => Math.max(1, ...trendBuckets.map((item) => item.total_tokens)), [trendBuckets]);
+  const trendBuckets = useMemo(
+    () => buildTrendBuckets(records, sinceHours),
+    [records, sinceHours],
+  );
+  const maxTrend = useMemo(
+    () => Math.max(1, ...trendBuckets.map((item) => item.total_tokens)),
+    [trendBuckets],
+  );
 
   async function copyRunId(runId: string) {
     try {
@@ -224,14 +257,21 @@ export default function UsagePage() {
   }
 
   return (
-    <main id="main-content" className="app-main flex h-screen flex-col overflow-hidden">
+    <main
+      id="main-content"
+      className="app-main flex h-screen flex-col overflow-hidden"
+    >
       <Navbar />
       <section className="flex h-full min-h-0 flex-col gap-3 p-3">
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h1 className="ui-panel-title">Usage Analytics</h1>
             <div className="flex flex-wrap items-center gap-2">
-              {loading ? <Badge tone="accent">Running</Badge> : <Badge tone="success">Ready</Badge>}
+              {loading ? (
+                <Badge tone="accent">Running</Badge>
+              ) : (
+                <Badge tone="success">Ready</Badge>
+              )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Records {records.length}</Badge>
               <Button
@@ -313,8 +353,16 @@ export default function UsagePage() {
             <div className="min-w-0">
               <div className="ui-label">Status</div>
               <div className="mt-1 flex min-h-[38px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
-                {loading ? <Badge tone="accent">Loading…</Badge> : <Badge tone="neutral">Loaded</Badge>}
-                {error ? <span className="truncate text-xs text-[var(--danger)]">{error}</span> : null}
+                {loading ? (
+                  <Badge tone="accent">Loading…</Badge>
+                ) : (
+                  <Badge tone="neutral">Loaded</Badge>
+                )}
+                {error ? (
+                  <span className="truncate text-xs text-[var(--danger)]">
+                    {error}
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
@@ -323,24 +371,33 @@ export default function UsagePage() {
         <div className="grid gap-3 md:grid-cols-5">
           <div className="panel-shell p-4">
             <div className="ui-label">Estimated Cost</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">{formatUsd(totals.estimated_cost_usd)}</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {formatUsd(totals.estimated_cost_usd)}
+            </div>
           </div>
           <div className="panel-shell p-4">
             <div className="ui-label">Input Tokens</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.input_tokens)}</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {formatNumber(totals.input_tokens)}
+            </div>
           </div>
           <div className="panel-shell p-4">
             <div className="ui-label">Cached Input</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.cached_input_tokens)}</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {formatNumber(totals.cached_input_tokens)}
+            </div>
           </div>
           <div className="panel-shell p-4">
             <div className="ui-label">Output Tokens</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">{formatNumber(totals.output_tokens)}</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {formatNumber(totals.output_tokens)}
+            </div>
           </div>
           <div className="panel-shell p-4">
             <div className="ui-label">Reasoning / Total</div>
             <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.reasoning_tokens)} / {formatNumber(totals.total_tokens)}
+              {formatNumber(totals.reasoning_tokens)} /{" "}
+              {formatNumber(totals.total_tokens)}
             </div>
           </div>
         </div>
@@ -352,7 +409,11 @@ export default function UsagePage() {
           </div>
           <div className="p-4">
             <div className="h-32 w-full">
-              <svg viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`} preserveAspectRatio="none" className="h-full w-full">
+              <svg
+                viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`}
+                preserveAspectRatio="none"
+                className="h-full w-full"
+              >
                 {trendBuckets.map((bucket, index) => {
                   const height = (bucket.total_tokens / maxTrend) * 92;
                   const y = 96 - height;
@@ -373,11 +434,16 @@ export default function UsagePage() {
               </svg>
             </div>
             <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--muted)]">
-              {trendBuckets.slice(Math.max(0, trendBuckets.length - 6)).map((bucket) => (
-                <span key={bucket.label} className="rounded border border-[var(--border)] px-2 py-0.5">
-                  {bucket.label}: {formatNumber(bucket.total_tokens)}
-                </span>
-              ))}
+              {trendBuckets
+                .slice(Math.max(0, trendBuckets.length - 6))
+                .map((bucket) => (
+                  <span
+                    key={bucket.label}
+                    className="rounded border border-[var(--border)] px-2 py-0.5"
+                  >
+                    {bucket.label}: {formatNumber(bucket.total_tokens)}
+                  </span>
+                ))}
             </div>
           </div>
         </div>
@@ -386,7 +452,9 @@ export default function UsagePage() {
           <div className="panel-shell min-h-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">By Model</h2>
-              <Badge tone="neutral">{summary?.by_model.length ?? 0} models</Badge>
+              <Badge tone="neutral">
+                {summary?.by_model.length ?? 0} models
+              </Badge>
             </div>
             <TableWrap className="m-3 mt-0 max-h-full">
               <DataTable>
@@ -415,7 +483,10 @@ export default function UsagePage() {
                   ))}
                   {(summary?.by_model ?? []).length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="text-center text-[var(--muted)]">
+                      <td
+                        colSpan={7}
+                        className="text-center text-[var(--muted)]"
+                      >
                         No model data for this filter.
                       </td>
                     </tr>
@@ -463,7 +534,10 @@ export default function UsagePage() {
                           </Button>
                         </div>
                         {copyState === row.run_id ? (
-                          <div className="mt-1 text-[10px] text-[var(--success)]" aria-live="polite">
+                          <div
+                            className="mt-1 text-[10px] text-[var(--success)]"
+                            aria-live="polite"
+                          >
                             Copied
                           </div>
                         ) : null}
@@ -480,7 +554,10 @@ export default function UsagePage() {
                   ))}
                   {records.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="text-center text-[var(--muted)]">
+                      <td
+                        colSpan={9}
+                        className="text-center text-[var(--muted)]"
+                      >
                         No recent runs for this filter.
                       </td>
                     </tr>

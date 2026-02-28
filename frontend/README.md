@@ -4,11 +4,11 @@ Next.js App Router frontend for Mini-OpenClaw.
 
 ## Route Map
 
-| Route | Purpose |
-| --- | --- |
-| `/` | Main workspace UI (agents/sessions + chat + inspector). |
-| `/usage` | Usage analytics, trend chart, CSV export. |
-| `/scheduler` | Cron + heartbeat control plane and run history. |
+| Route        | Purpose                                                 |
+| ------------ | ------------------------------------------------------- |
+| `/`          | Main workspace UI (agents/sessions + chat + inspector). |
+| `/usage`     | Usage analytics, trend chart, CSV export.               |
+| `/scheduler` | Cron + heartbeat control plane and run history.         |
 
 ## UI Model
 

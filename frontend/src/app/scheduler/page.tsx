@@ -67,7 +67,9 @@ export default function SchedulerPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [runs, setRuns] = useState<Array<Record<string, unknown>>>([]);
   const [failures, setFailures] = useState<Array<Record<string, unknown>>>([]);
-  const [heartbeatRuns, setHeartbeatRuns] = useState<Array<Record<string, unknown>>>([]);
+  const [heartbeatRuns, setHeartbeatRuns] = useState<
+    Array<Record<string, unknown>>
+  >([]);
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig>({
     enabled: false,
     interval_seconds: 300,
@@ -84,20 +86,23 @@ export default function SchedulerPage() {
     setLoading(true);
     setError("");
     try {
-      const [jobRows, runRows, failureRows, heartbeatConfig, heartbeatRunRows] = await Promise.all([
-        listCronJobs(nextAgentId),
-        listCronRuns(nextAgentId, 100),
-        listCronFailures(nextAgentId, 100),
-        getHeartbeatConfig(nextAgentId),
-        listHeartbeatRuns(nextAgentId, 100),
-      ]);
+      const [jobRows, runRows, failureRows, heartbeatConfig, heartbeatRunRows] =
+        await Promise.all([
+          listCronJobs(nextAgentId),
+          listCronRuns(nextAgentId, 100),
+          listCronFailures(nextAgentId, 100),
+          getHeartbeatConfig(nextAgentId),
+          listHeartbeatRuns(nextAgentId, 100),
+        ]);
       setJobs(jobRows);
       setRuns(runRows);
       setFailures(failureRows);
       setHeartbeat(heartbeatConfig);
       setHeartbeatRuns(heartbeatRunRows);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load scheduler data");
+      setError(
+        err instanceof Error ? err.message : "Failed to load scheduler data",
+      );
     } finally {
       setLoading(false);
     }
@@ -139,7 +144,10 @@ export default function SchedulerPage() {
 
   const recentRuns = useMemo(() => runs.slice(0, 10), [runs]);
   const recentFailures = useMemo(() => failures.slice(0, 10), [failures]);
-  const recentHeartbeat = useMemo(() => heartbeatRuns.slice(0, 10), [heartbeatRuns]);
+  const recentHeartbeat = useMemo(
+    () => heartbeatRuns.slice(0, 10),
+    [heartbeatRuns],
+  );
 
   async function handleSubmitJob() {
     if (!draft.prompt.trim() || !draft.schedule.trim()) {
@@ -180,14 +188,21 @@ export default function SchedulerPage() {
   }
 
   return (
-    <main id="main-content" className="app-main flex h-screen flex-col overflow-hidden">
+    <main
+      id="main-content"
+      className="app-main flex h-screen flex-col overflow-hidden"
+    >
       <Navbar />
       <section className="flex h-full min-h-0 flex-col gap-3 p-3">
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h1 className="ui-panel-title">Scheduler</h1>
             <div className="flex items-center gap-2">
-              {loading ? <Badge tone="accent">Loading</Badge> : <Badge tone="success">Ready</Badge>}
+              {loading ? (
+                <Badge tone="accent">Loading</Badge>
+              ) : (
+                <Badge tone="success">Ready</Badge>
+              )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Agent {agentId}</Badge>
             </div>
@@ -213,7 +228,10 @@ export default function SchedulerPage() {
                 className="mt-1 ui-mono text-xs"
                 value={draft.schedule_type}
                 onChange={(event) =>
-                  setDraft((prev) => ({ ...prev, schedule_type: event.target.value as ScheduleType }))
+                  setDraft((prev) => ({
+                    ...prev,
+                    schedule_type: event.target.value as ScheduleType,
+                  }))
                 }
               >
                 <option value="every">every (seconds)</option>
@@ -226,8 +244,19 @@ export default function SchedulerPage() {
               <Input
                 className="mt-1 ui-mono text-xs"
                 value={draft.schedule}
-                onChange={(event) => setDraft((prev) => ({ ...prev, schedule: event.target.value }))}
-                placeholder={draft.schedule_type === "every" ? "300" : draft.schedule_type === "cron" ? "*/5 * * * *" : "2026-03-01T10:00:00Z"}
+                onChange={(event) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    schedule: event.target.value,
+                  }))
+                }
+                placeholder={
+                  draft.schedule_type === "every"
+                    ? "300"
+                    : draft.schedule_type === "cron"
+                      ? "*/5 * * * *"
+                      : "2026-03-01T10:00:00Z"
+                }
               />
             </label>
             <label className="min-w-0 md:col-span-2">
@@ -235,7 +264,9 @@ export default function SchedulerPage() {
               <Input
                 className="mt-1 text-xs"
                 value={draft.prompt}
-                onChange={(event) => setDraft((prev) => ({ ...prev, prompt: event.target.value }))}
+                onChange={(event) =>
+                  setDraft((prev) => ({ ...prev, prompt: event.target.value }))
+                }
                 placeholder="Prompt executed when this cron job runs"
               />
             </label>
@@ -244,7 +275,9 @@ export default function SchedulerPage() {
               <Input
                 className="mt-1 text-xs"
                 value={draft.name}
-                onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
+                onChange={(event) =>
+                  setDraft((prev) => ({ ...prev, name: event.target.value }))
+                }
                 placeholder="optional job name"
               />
             </label>
@@ -252,22 +285,39 @@ export default function SchedulerPage() {
               <input
                 type="checkbox"
                 checked={draft.enabled}
-                onChange={(event) => setDraft((prev) => ({ ...prev, enabled: event.target.checked }))}
+                onChange={(event) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    enabled: event.target.checked,
+                  }))
+                }
               />
               Enabled
             </label>
             <div className="flex items-end gap-2 md:col-span-3">
-              <Button type="button" className="px-3 text-xs" onClick={() => void handleSubmitJob()}>
+              <Button
+                type="button"
+                className="px-3 text-xs"
+                onClick={() => void handleSubmitJob()}
+              >
                 {draft.id ? "Update Job" : "Create Job"}
               </Button>
               {draft.id ? (
-                <Button type="button" className="px-3 text-xs" onClick={() => setDraft(EMPTY_DRAFT)}>
+                <Button
+                  type="button"
+                  className="px-3 text-xs"
+                  onClick={() => setDraft(EMPTY_DRAFT)}
+                >
                   Cancel Edit
                 </Button>
               ) : null}
             </div>
           </div>
-          {error ? <div className="px-4 pb-4 text-xs text-[var(--danger)]">{error}</div> : null}
+          {error ? (
+            <div className="px-4 pb-4 text-xs text-[var(--danger)]">
+              {error}
+            </div>
+          ) : null}
         </div>
 
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-3">
@@ -291,7 +341,9 @@ export default function SchedulerPage() {
                 <tbody>
                   {jobs.map((job) => (
                     <tr key={job.id}>
-                      <td className="ui-mono">{job.name || job.id.slice(0, 8)}</td>
+                      <td className="ui-mono">
+                        {job.name || job.id.slice(0, 8)}
+                      </td>
                       <td className="ui-mono">
                         {job.schedule_type} {job.schedule}
                       </td>
@@ -343,7 +395,10 @@ export default function SchedulerPage() {
                   ))}
                   {jobs.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="text-center text-[var(--muted)]">
+                      <td
+                        colSpan={6}
+                        className="text-center text-[var(--muted)]"
+                      >
                         No cron jobs configured.
                       </td>
                     </tr>
@@ -356,14 +411,21 @@ export default function SchedulerPage() {
           <div className="panel-shell min-h-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Heartbeat</h2>
-              <Badge tone={heartbeat.enabled ? "success" : "warn"}>{heartbeat.enabled ? "Enabled" : "Disabled"}</Badge>
+              <Badge tone={heartbeat.enabled ? "success" : "warn"}>
+                {heartbeat.enabled ? "Enabled" : "Disabled"}
+              </Badge>
             </div>
             <div className="space-y-2 p-4">
               <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
                 <input
                   type="checkbox"
                   checked={heartbeat.enabled}
-                  onChange={(event) => setHeartbeat((prev) => ({ ...prev, enabled: event.target.checked }))}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      enabled: event.target.checked,
+                    }))
+                  }
                 />
                 Enabled
               </label>
@@ -373,7 +435,10 @@ export default function SchedulerPage() {
                   className="mt-1 ui-mono text-xs"
                   value={String(heartbeat.interval_seconds)}
                   onChange={(event) =>
-                    setHeartbeat((prev) => ({ ...prev, interval_seconds: Number(event.target.value || 0) }))
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      interval_seconds: Number(event.target.value || 0),
+                    }))
                   }
                 />
               </label>
@@ -382,7 +447,12 @@ export default function SchedulerPage() {
                 <Input
                   className="mt-1 ui-mono text-xs"
                   value={heartbeat.timezone}
-                  onChange={(event) => setHeartbeat((prev) => ({ ...prev, timezone: event.target.value }))}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      timezone: event.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="block">
@@ -391,7 +461,10 @@ export default function SchedulerPage() {
                   className="mt-1 ui-mono text-xs"
                   value={String(heartbeat.active_start_hour)}
                   onChange={(event) =>
-                    setHeartbeat((prev) => ({ ...prev, active_start_hour: Number(event.target.value || 0) }))
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      active_start_hour: Number(event.target.value || 0),
+                    }))
                   }
                 />
               </label>
@@ -401,7 +474,10 @@ export default function SchedulerPage() {
                   className="mt-1 ui-mono text-xs"
                   value={String(heartbeat.active_end_hour)}
                   onChange={(event) =>
-                    setHeartbeat((prev) => ({ ...prev, active_end_hour: Number(event.target.value || 0) }))
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      active_end_hour: Number(event.target.value || 0),
+                    }))
                   }
                 />
               </label>
@@ -410,7 +486,12 @@ export default function SchedulerPage() {
                 <Input
                   className="mt-1 ui-mono text-xs"
                   value={heartbeat.session_id}
-                  onChange={(event) => setHeartbeat((prev) => ({ ...prev, session_id: event.target.value }))}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      session_id: event.target.value,
+                    }))
+                  }
                 />
               </label>
               <Button
@@ -446,7 +527,9 @@ export default function SchedulerPage() {
                   {recentRuns.map((row, idx) => (
                     <tr key={idx}>
                       <td>{asRunTime(row.timestamp_ms)}</td>
-                      <td className="ui-mono">{String(row.name ?? row.job_id ?? "unknown")}</td>
+                      <td className="ui-mono">
+                        {String(row.name ?? row.job_id ?? "unknown")}
+                      </td>
                       <td>{String(row.status ?? "ok")}</td>
                     </tr>
                   ))}
@@ -472,7 +555,9 @@ export default function SchedulerPage() {
                   {recentFailures.map((row, idx) => (
                     <tr key={idx}>
                       <td>{asRunTime(row.timestamp_ms)}</td>
-                      <td className="ui-mono">{String(row.name ?? row.job_id ?? "unknown")}</td>
+                      <td className="ui-mono">
+                        {String(row.name ?? row.job_id ?? "unknown")}
+                      </td>
                       <td>{String(row.error ?? "error")}</td>
                     </tr>
                   ))}
@@ -499,7 +584,15 @@ export default function SchedulerPage() {
                     <tr key={idx}>
                       <td>{asRunTime(row.timestamp_ms)}</td>
                       <td>{String(row.status ?? "unknown")}</td>
-                      <td>{String((row.details as { response_preview?: string } | undefined)?.response_preview ?? "")}</td>
+                      <td>
+                        {String(
+                          (
+                            row.details as
+                              | { response_preview?: string }
+                              | undefined
+                          )?.response_preview ?? "",
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

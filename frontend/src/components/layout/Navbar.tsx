@@ -17,11 +17,17 @@ export function Navbar() {
   return (
     <header className="z-20 flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-2)] px-4 backdrop-blur-md">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[var(--text)]">mini OpenClaw</div>
+        <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[var(--text)]">
+          mini OpenClaw
+        </div>
         <Badge tone="neutral" className="max-w-[220px] truncate">
           Agent: {currentAgentId}
         </Badge>
-        {isStreaming ? <Badge tone="accent">Running</Badge> : <Badge tone="success">Idle</Badge>}
+        {isStreaming ? (
+          <Badge tone="accent">Running</Badge>
+        ) : (
+          <Badge tone="success">Idle</Badge>
+        )}
         <nav className="flex items-center gap-2 text-xs">
           <Link
             href="/"
