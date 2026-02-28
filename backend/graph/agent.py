@@ -510,8 +510,9 @@ class AgentManager:
         runtime_audit_store: AuditStore,
         response_format: Any | None = None,
     ) -> tuple[Any, str]:
-        if self.base_dir is None:
+        if self.base_dir is None or self.config is None:
             raise RuntimeError("AgentManager is not initialized")
+        config = self.config
 
         mini_tools = get_all_tools(
             runtime_root,
@@ -536,7 +537,7 @@ class AgentManager:
                 session_id=session_id,
             ),
         )
-        configured_model = str(self.config.secrets.deepseek_model)
+        configured_model = str(config.secrets.deepseek_model)
         selected_model = self._resolve_tool_loop_model(
             configured_model=configured_model,
             has_tools=bool(langchain_tools),
@@ -545,8 +546,8 @@ class AgentManager:
         if selected_model != configured_model:
             active_llm = ChatOpenAI(
                 model=selected_model,
-                api_key=SecretStr(self.config.secrets.deepseek_api_key),
-                base_url=self.config.secrets.deepseek_base_url,
+                api_key=SecretStr(config.secrets.deepseek_api_key),
+                base_url=config.secrets.deepseek_base_url,
                 temperature=runtime.llm_runtime.temperature,
                 timeout=runtime.llm_runtime.timeout_seconds,
             )
