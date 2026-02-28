@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from config import RuntimeConfig
+from tools import get_explicit_enabled_tools
 from tools.path_guard import InvalidPathError, resolve_workspace_path
 from tools.policy import PermissionLevel, ToolPolicyEngine
 
@@ -31,3 +33,17 @@ def test_autonomous_policy_defaults_to_low_authority():
         explicit_enabled_tools=["terminal"],
     )
     assert allowed.allowed is True
+
+
+def test_cron_tools_fallback_when_agent_config_is_empty():
+    runtime = RuntimeConfig()
+    runtime.autonomous_tools.cron_enabled_tools = []
+    assert get_explicit_enabled_tools(runtime, "cron") == [
+        "web_search",
+        "web_fetch",
+        "fetch_url",
+        "read",
+        "read_file",
+        "read_files",
+        "search_knowledge_base",
+    ]

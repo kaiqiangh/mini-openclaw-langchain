@@ -80,3 +80,33 @@ def test_heartbeat_config_update_roundtrip(client):
     assert updated.json()["data"]["config"]["enabled"] is True
     assert updated.json()["data"]["config"]["interval_seconds"] == 120
     assert updated.json()["data"]["config"]["session_id"] == "__heartbeat_test__"
+
+
+def test_cron_run_uses_tool_aware_prompt(client, api_app):
+    cron_scheduler = api_app["cron_scheduler"]
+    captured: dict[str, str] = {}
+
+    async def fake_run_once(*, message: str, **kwargs):  # type: ignore[no-untyped-def]
+        _ = kwargs
+        captured["message"] = message
+        return {"text": "ok"}
+
+    cron_scheduler.agent_manager.run_once = fake_run_once  # type: ignore[method-assign]
+
+    created = client.post(
+        "/api/scheduler/cron/jobs",
+        json={
+            "name": "prices",
+            "schedule_type": "every",
+            "schedule": "60",
+            "prompt": "Get BTC, ETH, and BNB real-time prices.",
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 200
+    job_id = created.json()["data"]["job"]["id"]
+
+    run_now = client.post(f"/api/scheduler/cron/jobs/{job_id}/run")
+    assert run_now.status_code == 200
+    assert "web_search" in captured["message"]
+    assert "web_fetch" in captured["message"]

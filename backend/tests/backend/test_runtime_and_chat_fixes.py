@@ -24,6 +24,9 @@ def test_runtime_config_endpoint_roundtrip(client):
     assert before.status_code == 200
     payload = before.json()["data"]["config"]
     assert payload["scheduler"]["api_enabled"] is True
+    cron_tools = payload["autonomous_tools"]["cron_enabled_tools"]
+    assert "web_search" in cron_tools
+    assert "web_fetch" in cron_tools
 
     payload["scheduler"]["runs_query_default_limit"] = 42
     payload["retrieval"]["storage"]["engine"] = "sqlite"
