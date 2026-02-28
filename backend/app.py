@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from api import agents, chat, compress, config_api, files, sessions, tokens, usage
+from api import agents, chat, compress, config_api, files, scheduler_api, sessions, tokens, usage
 from api.errors import ApiError, error_payload
 from config import load_config, validate_required_secrets
 from graph.agent import AgentManager
@@ -125,12 +125,20 @@ async def lifespan(_: FastAPI):
         config=loaded.runtime.heartbeat,
         agent_manager=agent_manager,
         session_manager=default_runtime.session_manager,
+        agent_id="default",
     )
     cron_scheduler = CronScheduler(
         base_dir=default_runtime.root_dir,
         config=loaded.runtime.cron,
         agent_manager=agent_manager,
         session_manager=default_runtime.session_manager,
+        agent_id="default",
+    )
+    scheduler_api.set_dependencies(
+        BASE_DIR,
+        agent_manager,
+        default_heartbeat_scheduler=heartbeat_scheduler,
+        default_cron_scheduler=cron_scheduler,
     )
     heartbeat_scheduler.start()
     cron_scheduler.start()
@@ -212,6 +220,7 @@ app.include_router(compress.router, prefix="/api")
 app.include_router(config_api.router, prefix="/api")
 app.include_router(usage.router, prefix="/api")
 app.include_router(agents.router, prefix="/api")
+app.include_router(scheduler_api.router, prefix="/api")
 
 
 @app.get("/api/health")

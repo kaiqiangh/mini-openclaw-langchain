@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -16,6 +17,19 @@ from graph.session_manager import SessionManager
 
 
 ScheduleType = Literal["at", "every", "cron"]
+
+_LOCK_REGISTRY_GUARD = threading.Lock()
+_FILE_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _lock_for(path: Path) -> threading.RLock:
+    key = str(path.resolve())
+    with _LOCK_REGISTRY_GUARD:
+        lock = _FILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _FILE_LOCKS[key] = lock
+        return lock
 
 
 @dataclass
@@ -128,15 +142,19 @@ class CronScheduler:
         config: CronRuntimeConfig,
         agent_manager: AgentManager,
         session_manager: SessionManager,
+        agent_id: str = "default",
     ) -> None:
         self.base_dir = base_dir
         self.config = config
         self.agent_manager = agent_manager
         self.session_manager = session_manager
+        self.agent_id = agent_id
 
         self.jobs_file = base_dir / "storage" / "cron_jobs.json"
         self.runs_file = base_dir / "storage" / "cron_runs.jsonl"
         self.failures_file = base_dir / "storage" / "cron_failures.jsonl"
+        self._file_lock = _lock_for(self.jobs_file)
+        self._async_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
 
@@ -147,42 +165,46 @@ class CronScheduler:
             return ZoneInfo("UTC")
 
     def _load_jobs(self) -> list[CronJob]:
-        if not self.jobs_file.exists():
-            return []
-        payload = json.loads(self.jobs_file.read_text(encoding="utf-8"))
-        rows = payload.get("jobs", [])
-        if not isinstance(rows, list):
-            return []
-        jobs: list[CronJob] = []
-        for item in rows:
-            if not isinstance(item, dict):
-                continue
-            try:
-                jobs.append(CronJob.from_dict(item))
-            except Exception:
-                continue
-        return jobs
+        with self._file_lock:
+            if not self.jobs_file.exists():
+                return []
+            payload = json.loads(self.jobs_file.read_text(encoding="utf-8"))
+            rows = payload.get("jobs", [])
+            if not isinstance(rows, list):
+                return []
+            jobs: list[CronJob] = []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    jobs.append(CronJob.from_dict(item))
+                except Exception:
+                    continue
+            return jobs
 
     def _save_jobs(self, jobs: list[CronJob]) -> None:
-        self.jobs_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {"jobs": [job.to_dict() for job in jobs]}
-        tmp = self.jobs_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.jobs_file)
+        with self._file_lock:
+            self.jobs_file.parent.mkdir(parents=True, exist_ok=True)
+            data = {"jobs": [job.to_dict() for job in jobs]}
+            tmp = self.jobs_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.replace(self.jobs_file)
 
     def _write_jsonl(self, file_path: Path, payload: dict[str, Any]) -> None:
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with file_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        with self._file_lock:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with file_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     def _trim_failures(self) -> None:
-        if not self.failures_file.exists():
-            return
-        rows = self.failures_file.read_text(encoding="utf-8").splitlines()
-        limit = max(1, int(self.config.failure_retention))
-        if len(rows) <= limit:
-            return
-        self.failures_file.write_text("\n".join(rows[-limit:]) + "\n", encoding="utf-8")
+        with self._file_lock:
+            if not self.failures_file.exists():
+                return
+            rows = self.failures_file.read_text(encoding="utf-8").splitlines()
+            limit = max(1, int(self.config.failure_retention))
+            if len(rows) <= limit:
+                return
+            self.failures_file.write_text("\n".join(rows[-limit:]) + "\n", encoding="utf-8")
 
     def _compute_next_run(self, job: CronJob, now_ts: float) -> float | None:
         zone = self._zone()
@@ -236,6 +258,70 @@ class CronScheduler:
             jobs.append(job)
         self._save_jobs(jobs)
 
+    def list_jobs(self) -> list[CronJob]:
+        return self._load_jobs()
+
+    def get_job(self, job_id: str) -> CronJob | None:
+        for job in self._load_jobs():
+            if job.id == job_id:
+                return job
+        return None
+
+    def create_and_store_job(self, *, name: str, schedule_type: ScheduleType, schedule: str, prompt: str) -> CronJob:
+        job = self.create_job(name=name, schedule_type=schedule_type, schedule=schedule, prompt=prompt)
+        self.upsert_job(job)
+        return job
+
+    def delete_job(self, job_id: str) -> bool:
+        jobs = self._load_jobs()
+        remaining = [job for job in jobs if job.id != job_id]
+        if len(remaining) == len(jobs):
+            return False
+        self._save_jobs(remaining)
+        return True
+
+    def query_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        max_rows = max(1, int(limit))
+        with self._file_lock:
+            if not self.runs_file.exists():
+                return []
+            lines = [line for line in self.runs_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows: list[dict[str, Any]] = []
+        for line in reversed(lines[-max_rows:]):
+            try:
+                value = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
+        return rows
+
+    def query_failures(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        max_rows = max(1, int(limit))
+        with self._file_lock:
+            if not self.failures_file.exists():
+                return []
+            lines = [line for line in self.failures_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows: list[dict[str, Any]] = []
+        for line in reversed(lines[-max_rows:]):
+            try:
+                value = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
+        return rows
+
+    async def run_job_now(self, job_id: str) -> CronJob | None:
+        async with self._async_lock:
+            jobs = self._load_jobs()
+            target = next((job for job in jobs if job.id == job_id), None)
+            if target is None:
+                return None
+            await self._run_job(target, time.time())
+            self.upsert_job(target)
+            return target
+
     async def _run_job(self, job: CronJob, now_ts: float) -> None:
         session_id = f"__cron__:{job.id}"
         history = self.session_manager.load_session_for_agent(session_id)
@@ -245,8 +331,10 @@ class CronScheduler:
                 message=job.prompt,
                 history=history,
                 session_id=session_id,
+                is_first_turn=len(history) == 0,
                 output_format="text",
                 trigger_type="cron",
+                agent_id=self.agent_id,
             )
             text = str(result.get("text", "")).strip()
             if text:
@@ -306,22 +394,23 @@ class CronScheduler:
             self._trim_failures()
 
     async def tick_once(self) -> None:
-        jobs = self._load_jobs()
-        if not jobs:
-            return
+        async with self._async_lock:
+            jobs = self._load_jobs()
+            if not jobs:
+                return
 
-        now_ts = time.time()
-        changed = False
-        for job in jobs:
-            if not job.enabled:
-                continue
-            if job.next_run_ts > now_ts:
-                continue
-            await self._run_job(job, now_ts)
-            changed = True
+            now_ts = time.time()
+            changed = False
+            for job in jobs:
+                if not job.enabled:
+                    continue
+                if job.next_run_ts > now_ts:
+                    continue
+                await self._run_job(job, now_ts)
+                changed = True
 
-        if changed:
-            self._save_jobs(jobs)
+            if changed:
+                self._save_jobs(jobs)
 
     async def run(self) -> None:
         while not self._stop_event.is_set():

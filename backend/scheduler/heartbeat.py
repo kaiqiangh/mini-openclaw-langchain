@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,13 +31,16 @@ class HeartbeatScheduler:
         config: HeartbeatRuntimeConfig,
         agent_manager: AgentManager,
         session_manager: SessionManager,
+        agent_id: str = "default",
     ) -> None:
         self.base_dir = base_dir
         self.config = config
         self.agent_manager = agent_manager
         self.session_manager = session_manager
+        self.agent_id = agent_id
         self.audit_file = base_dir / "storage" / "heartbeat_runs.jsonl"
         self.prompt_file = base_dir / "workspace" / "HEARTBEAT.md"
+        self._file_lock = threading.RLock()
         self._task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
 
@@ -64,16 +68,43 @@ class HeartbeatScheduler:
             return "Run a heartbeat check. Reply exactly HEARTBEAT_OK when healthy."
         return self.prompt_file.read_text(encoding="utf-8", errors="replace").strip()
 
+    @staticmethod
+    def _normalize_prompt(raw_prompt: str) -> str:
+        lines: list[str] = []
+        for raw_line in raw_prompt.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            lines.append(line)
+        return "\n".join(lines).strip()
+
     def _write_run(self, row: HeartbeatRun) -> None:
-        self.audit_file.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "timestamp_ms": row.timestamp_ms,
-            "status": row.status,
-            "timezone": row.timezone,
-            "details": row.details,
-        }
-        with self.audit_file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        with self._file_lock:
+            self.audit_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp_ms": row.timestamp_ms,
+                "status": row.status,
+                "timezone": row.timezone,
+                "details": row.details,
+            }
+            with self.audit_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def query_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        max_rows = max(1, int(limit))
+        with self._file_lock:
+            if not self.audit_file.exists():
+                return []
+            lines = [line for line in self.audit_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows: list[dict[str, Any]] = []
+        for line in reversed(lines[-max_rows:]):
+            try:
+                value = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
+        return rows
 
     async def _tick_once(self) -> None:
         now = self._now_local()
@@ -92,7 +123,17 @@ class HeartbeatScheduler:
             )
             return
 
-        prompt = self._read_prompt()
+        prompt = self._normalize_prompt(self._read_prompt())
+        if not prompt:
+            self._write_run(
+                HeartbeatRun(
+                    timestamp_ms=int(time.time() * 1000),
+                    status="skipped_no_prompt",
+                    timezone=self.config.timezone,
+                    details={"session_id": self.config.session_id},
+                )
+            )
+            return
         history = self.session_manager.load_session_for_agent(self.config.session_id)
 
         try:
@@ -100,8 +141,10 @@ class HeartbeatScheduler:
                 message=prompt,
                 history=history,
                 session_id=self.config.session_id,
+                is_first_turn=len(history) == 0,
                 output_format="text",
                 trigger_type="heartbeat",
+                agent_id=self.agent_id,
             )
             text = str(result.get("text", "")).strip()
             suppressed = text == "HEARTBEAT_OK"
