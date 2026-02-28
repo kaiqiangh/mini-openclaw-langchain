@@ -20,7 +20,7 @@ from config import (
     load_effective_runtime_config,
     runtime_config_digest,
 )
-from graph.callbacks import AuditCallbackHandler
+from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
 from graph.session_manager import SessionManager
@@ -469,7 +469,7 @@ class AgentManager:
         trigger_type: str,
         runtime_root: Path,
         runtime_audit_store: AuditStore,
-    ) -> list[Any]:
+    ) -> tuple[list[Any], UsageCaptureCallbackHandler]:
         callback = AuditCallbackHandler(
             audit_file=runtime_root / "storage" / "runs_events.jsonl",
             run_id=run_id,
@@ -477,8 +477,13 @@ class AgentManager:
             trigger_type=trigger_type,
             audit_store=runtime_audit_store,
         )
+        usage_capture = UsageCaptureCallbackHandler()
         # Internal audit callback is always enabled; external tracing is optional.
-        return [callback, *build_optional_callbacks(run_id=run_id)]
+        return [
+            callback,
+            usage_capture,
+            *build_optional_callbacks(run_id=run_id),
+        ], usage_capture
 
     def _build_agent(
         self,
@@ -630,15 +635,9 @@ class AgentManager:
             "total_tokens",
         )
 
-    def _merge_usage_state(
+    def _merge_usage_identity(
         self, usage_state: dict[str, Any], usage_candidate: dict[str, Any]
     ) -> None:
-        for field in self._usage_numeric_fields():
-            usage_state[field] = max(
-                self._as_int(usage_state.get(field, 0)),
-                self._as_int(usage_candidate.get(field, 0)),
-            )
-
         for field in ("provider", "model", "model_source", "usage_source"):
             value = str(usage_candidate.get(field, "")).strip()
             if not value:
@@ -646,7 +645,146 @@ class AgentManager:
             current = str(usage_state.get(field, "")).strip()
             if value.lower() == "unknown" and current and current.lower() != "unknown":
                 continue
+            if (
+                current
+                and current.lower() != "unknown"
+                and value.lower() != "unknown"
+                and current != value
+            ):
+                if field in {"provider", "model"}:
+                    usage_state[field] = "mixed"
+                    continue
+                # Keep existing source label when both are non-empty and disagree.
+                continue
             usage_state[field] = value
+
+    def _normalize_aggregated_usage(self, usage_state: dict[str, Any]) -> None:
+        input_tokens = self._as_int(usage_state.get("input_tokens", 0))
+        input_uncached_tokens = self._as_int(
+            usage_state.get("input_uncached_tokens", 0)
+        )
+        cache_read_tokens = self._as_int(
+            usage_state.get("input_cache_read_tokens", 0)
+        )
+        cache_write_5m_tokens = self._as_int(
+            usage_state.get("input_cache_write_tokens_5m", 0)
+        )
+        cache_write_1h_tokens = self._as_int(
+            usage_state.get("input_cache_write_tokens_1h", 0)
+        )
+        cache_write_unknown_tokens = self._as_int(
+            usage_state.get("input_cache_write_tokens_unknown", 0)
+        )
+        output_tokens = self._as_int(usage_state.get("output_tokens", 0))
+        reasoning_tokens = self._as_int(usage_state.get("reasoning_tokens", 0))
+        tool_input_tokens = self._as_int(usage_state.get("tool_input_tokens", 0))
+        total_tokens = self._as_int(usage_state.get("total_tokens", 0))
+
+        cache_write_total = (
+            cache_write_5m_tokens + cache_write_1h_tokens + cache_write_unknown_tokens
+        )
+
+        if input_tokens <= 0 and (
+            input_uncached_tokens > 0 or cache_read_tokens > 0 or cache_write_total > 0
+        ):
+            input_tokens = input_uncached_tokens + cache_read_tokens + cache_write_total
+
+        if input_uncached_tokens <= 0 and input_tokens > 0:
+            input_uncached_tokens = max(
+                0, input_tokens - cache_read_tokens - cache_write_total
+            )
+
+        if input_uncached_tokens > input_tokens:
+            input_uncached_tokens = input_tokens
+
+        computed_total = (
+            input_tokens + output_tokens + tool_input_tokens + reasoning_tokens
+        )
+        if total_tokens <= 0:
+            total_tokens = computed_total
+        else:
+            total_tokens = max(total_tokens, computed_total)
+
+        usage_state["input_tokens"] = input_tokens
+        usage_state["input_uncached_tokens"] = input_uncached_tokens
+        usage_state["input_cache_read_tokens"] = cache_read_tokens
+        usage_state["input_cache_write_tokens_5m"] = cache_write_5m_tokens
+        usage_state["input_cache_write_tokens_1h"] = cache_write_1h_tokens
+        usage_state["input_cache_write_tokens_unknown"] = cache_write_unknown_tokens
+        usage_state["output_tokens"] = output_tokens
+        usage_state["reasoning_tokens"] = reasoning_tokens
+        usage_state["tool_input_tokens"] = tool_input_tokens
+        usage_state["total_tokens"] = total_tokens
+
+    def _accumulate_usage_candidate(
+        self,
+        *,
+        usage_state: dict[str, Any],
+        usage_sources: dict[str, dict[str, int]],
+        source_id: str,
+        usage_candidate: dict[str, Any],
+    ) -> bool:
+        source_key = source_id.strip()
+        if not source_key:
+            return False
+
+        has_signal = False
+        for field in self._usage_numeric_fields():
+            if self._as_int(usage_candidate.get(field, 0)) > 0:
+                has_signal = True
+                break
+        if not has_signal:
+            return False
+
+        previous = usage_sources.get(
+            source_key, {field: 0 for field in self._usage_numeric_fields()}
+        )
+
+        changed = False
+        for field in self._usage_numeric_fields():
+            prior_value = self._as_int(previous.get(field, 0))
+            incoming_value = self._as_int(usage_candidate.get(field, 0))
+            next_value = max(prior_value, incoming_value)
+            if next_value <= prior_value:
+                continue
+            delta = next_value - prior_value
+            usage_state[field] = self._as_int(usage_state.get(field, 0)) + delta
+            previous[field] = next_value
+            changed = True
+
+        if changed:
+            usage_sources[source_key] = previous
+            self._normalize_aggregated_usage(usage_state)
+        self._merge_usage_identity(usage_state, usage_candidate)
+        return changed
+
+    def _accumulate_usage_from_messages(
+        self,
+        *,
+        usage_state: dict[str, Any],
+        usage_sources: dict[str, dict[str, int]],
+        messages: list[Any],
+        source_prefix: str,
+        source_offset: int = 0,
+    ) -> bool:
+        changed = False
+        for index, message in enumerate(messages):
+            candidate = self._extract_usage_from_message(message)
+            source_id = str(getattr(message, "id", "")).strip()
+            if source_id:
+                source_key = f"{source_prefix}:{source_id}"
+            else:
+                source_key = f"{source_prefix}:{source_offset + index}"
+            changed = (
+                self._accumulate_usage_candidate(
+                    usage_state=usage_state,
+                    usage_sources=usage_sources,
+                    source_id=source_key,
+                    usage_candidate=candidate,
+                )
+                or changed
+            )
+        return changed
 
     def _usage_signature(self, usage_state: dict[str, Any]) -> str:
         parts = [str(usage_state.get(field, "")) for field in self._usage_numeric_fields()]
@@ -883,34 +1021,72 @@ class AgentManager:
             response_format=response_schema,
         )
 
+        callbacks, usage_capture = self._build_callbacks(
+            run_id=run_id,
+            session_id=session_id,
+            trigger_type=trigger_type,
+            runtime_root=runtime_state.root_dir,
+            runtime_audit_store=runtime_state.audit_store,
+        )
         config = {
             "recursion_limit": effective_runtime.agent_runtime.max_steps,
-            "callbacks": self._build_callbacks(
-                run_id=run_id,
-                session_id=session_id,
-                trigger_type=trigger_type,
-                runtime_root=runtime_state.root_dir,
-                runtime_audit_store=runtime_state.audit_store,
-            ),
+            "callbacks": callbacks,
             "configurable": {"thread_id": session_id},
         }
 
         result = await agent.ainvoke({"messages": messages}, config=config)
         usage_payload: dict[str, Any] | None = None
+        default_provider = infer_provider(
+            self.config.secrets.deepseek_model,
+            base_url=self.config.secrets.deepseek_base_url,
+        )
+        usage_state: dict[str, Any] = {
+            "provider": default_provider,
+            "model": self.config.secrets.deepseek_model,
+            "model_source": "fallback_model",
+            "usage_source": "unknown",
+            "input_tokens": 0,
+            "input_uncached_tokens": 0,
+            "input_cache_read_tokens": 0,
+            "input_cache_write_tokens_5m": 0,
+            "input_cache_write_tokens_1h": 0,
+            "input_cache_write_tokens_unknown": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "tool_input_tokens": 0,
+            "total_tokens": 0,
+        }
+        usage_sources: dict[str, dict[str, int]] = {}
+
+        captured_messages = usage_capture.snapshot()
+        self._accumulate_usage_from_messages(
+            usage_state=usage_state,
+            usage_sources=usage_sources,
+            messages=captured_messages,
+            source_prefix=f"llm_end:{run_id}",
+        )
+
         output_messages = result.get("messages", [])
-        if isinstance(output_messages, list):
-            for message_obj in reversed(output_messages):
-                candidate = self._extract_usage_from_message(message_obj)
-                if self._as_int(candidate.get("total_tokens", 0)) > 0:
-                    usage_payload = self._record_usage(
-                        usage=candidate,
-                        run_id=run_id,
-                        session_id=session_id,
-                        trigger_type=trigger_type,
-                        agent_id=agent_id,
-                        usage_store=runtime_state.usage_store,
-                    )
-                    break
+        if isinstance(output_messages, list) and self._as_int(
+            usage_state.get("total_tokens", 0)
+        ) <= 0:
+            # Fallback for providers/environments where callback payloads are sparse.
+            self._accumulate_usage_from_messages(
+                usage_state=usage_state,
+                usage_sources=usage_sources,
+                messages=output_messages,
+                source_prefix=f"result:{run_id}",
+            )
+
+        if self._as_int(usage_state.get("total_tokens", 0)) > 0:
+            usage_payload = self._record_usage(
+                usage=usage_state,
+                run_id=run_id,
+                session_id=session_id,
+                trigger_type=trigger_type,
+                agent_id=agent_id,
+                usage_store=runtime_state.usage_store,
+            )
 
         if output_format == "json":
             return {
@@ -985,6 +1161,7 @@ class AgentManager:
             "tool_input_tokens": 0,
             "total_tokens": 0,
         }
+        usage_sources: dict[str, dict[str, int]] = {}
         usage_signature = ""
 
         for attempt in range(effective_runtime.agent_runtime.max_retries + 1):
@@ -1005,15 +1182,18 @@ class AgentManager:
                     runtime_audit_store=runtime_state.audit_store,
                 )
 
+                callbacks, usage_capture = self._build_callbacks(
+                    run_id=run_id,
+                    session_id=session_id,
+                    trigger_type=trigger_type,
+                    runtime_root=runtime_state.root_dir,
+                    runtime_audit_store=runtime_state.audit_store,
+                )
+                usage_capture_offset = 0
+
                 config = {
                     "recursion_limit": effective_runtime.agent_runtime.max_steps,
-                    "callbacks": self._build_callbacks(
-                        run_id=run_id,
-                        session_id=session_id,
-                        trigger_type=trigger_type,
-                        runtime_root=runtime_state.root_dir,
-                        runtime_audit_store=runtime_state.audit_store,
-                    ),
+                    "callbacks": callbacks,
                     "configurable": {"thread_id": session_id},
                 }
 
@@ -1103,79 +1283,6 @@ class AgentManager:
                                             },
                                         }
 
-                                usage_candidate = self._extract_usage_from_message(
-                                    latest
-                                )
-                                if (
-                                    self._as_int(usage_candidate.get("total_tokens", 0))
-                                    > 0
-                                ):
-                                    self._merge_usage_state(usage_state, usage_candidate)
-                                    signature = self._usage_signature(usage_state)
-                                    if signature != usage_signature:
-                                        usage_signature = signature
-                                        cost = calculate_cost_breakdown(
-                                            provider=str(
-                                                usage_state.get("provider", "unknown")
-                                            ),
-                                            model=str(
-                                                usage_state.get("model", "unknown")
-                                            ),
-                                            input_tokens=self._as_int(
-                                                usage_state.get("input_tokens", 0)
-                                            ),
-                                            input_uncached_tokens=self._as_int(
-                                                usage_state.get(
-                                                    "input_uncached_tokens", 0
-                                                )
-                                            ),
-                                            input_cache_read_tokens=self._as_int(
-                                                usage_state.get(
-                                                    "input_cache_read_tokens", 0
-                                                )
-                                            ),
-                                            input_cache_write_tokens_5m=self._as_int(
-                                                usage_state.get(
-                                                    "input_cache_write_tokens_5m", 0
-                                                )
-                                            ),
-                                            input_cache_write_tokens_1h=self._as_int(
-                                                usage_state.get(
-                                                    "input_cache_write_tokens_1h", 0
-                                                )
-                                            ),
-                                            input_cache_write_tokens_unknown=self._as_int(
-                                                usage_state.get(
-                                                    "input_cache_write_tokens_unknown",
-                                                    0,
-                                                )
-                                            ),
-                                            output_tokens=self._as_int(
-                                                usage_state.get("output_tokens", 0)
-                                            ),
-                                        )
-                                        yield {
-                                            "type": "usage",
-                                            "data": {
-                                                "run_id": run_id,
-                                                "agent_id": agent_id,
-                                                "provider": usage_state.get(
-                                                    "provider", "unknown"
-                                                ),
-                                                "model": usage_state.get(
-                                                    "model", "unknown"
-                                                ),
-                                                **usage_state,
-                                                "pricing": cost,
-                                                "priced": bool(
-                                                    cost.get("priced", False)
-                                                ),
-                                                "cost_usd": cost.get(
-                                                    "total_cost_usd"
-                                                ),
-                                            },
-                                        }
-
                             if node == "tools":
                                 for tool_msg in msgs:
                                     yield {
@@ -1237,9 +1344,82 @@ class AgentManager:
                                 "data": {"content": text, "source": "messages"},
                             }
 
-                        usage_candidate = self._extract_usage_from_message(token)
-                        if self._as_int(usage_candidate.get("total_tokens", 0)) > 0:
-                            self._merge_usage_state(usage_state, usage_candidate)
+                    captured_messages = usage_capture.snapshot()
+                    if usage_capture_offset < len(captured_messages):
+                        usage_changed = self._accumulate_usage_from_messages(
+                            usage_state=usage_state,
+                            usage_sources=usage_sources,
+                            messages=captured_messages[usage_capture_offset:],
+                            source_prefix=f"llm_end:{run_id}",
+                            source_offset=usage_capture_offset,
+                        )
+                        usage_capture_offset = len(captured_messages)
+                        if usage_changed:
+                            signature = self._usage_signature(usage_state)
+                            if signature != usage_signature:
+                                usage_signature = signature
+                                cost = calculate_cost_breakdown(
+                                    provider=str(
+                                        usage_state.get("provider", "unknown")
+                                    ),
+                                    model=str(usage_state.get("model", "unknown")),
+                                    input_tokens=self._as_int(
+                                        usage_state.get("input_tokens", 0)
+                                    ),
+                                    input_uncached_tokens=self._as_int(
+                                        usage_state.get("input_uncached_tokens", 0)
+                                    ),
+                                    input_cache_read_tokens=self._as_int(
+                                        usage_state.get(
+                                            "input_cache_read_tokens", 0
+                                        )
+                                    ),
+                                    input_cache_write_tokens_5m=self._as_int(
+                                        usage_state.get(
+                                            "input_cache_write_tokens_5m", 0
+                                        )
+                                    ),
+                                    input_cache_write_tokens_1h=self._as_int(
+                                        usage_state.get(
+                                            "input_cache_write_tokens_1h", 0
+                                        )
+                                    ),
+                                    input_cache_write_tokens_unknown=self._as_int(
+                                        usage_state.get(
+                                            "input_cache_write_tokens_unknown",
+                                            0,
+                                        )
+                                    ),
+                                    output_tokens=self._as_int(
+                                        usage_state.get("output_tokens", 0)
+                                    ),
+                                )
+                                yield {
+                                    "type": "usage",
+                                    "data": {
+                                        "run_id": run_id,
+                                        "agent_id": agent_id,
+                                        "provider": usage_state.get(
+                                            "provider", "unknown"
+                                        ),
+                                        "model": usage_state.get("model", "unknown"),
+                                        **usage_state,
+                                        "pricing": cost,
+                                        "priced": bool(cost.get("priced", False)),
+                                        "cost_usd": cost.get("total_cost_usd"),
+                                    },
+                                }
+
+                captured_messages = usage_capture.snapshot()
+                if usage_capture_offset < len(captured_messages):
+                    self._accumulate_usage_from_messages(
+                        usage_state=usage_state,
+                        usage_sources=usage_sources,
+                        messages=captured_messages[usage_capture_offset:],
+                        source_prefix=f"llm_end:{run_id}",
+                        source_offset=usage_capture_offset,
+                    )
+                    usage_capture_offset = len(captured_messages)
 
                 final_content = "".join(final_tokens).strip() or fallback_final_text
                 enriched_usage = {}

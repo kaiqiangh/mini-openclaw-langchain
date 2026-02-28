@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from graph.agent import AgentManager
 from usage.normalization import extract_usage_from_message
 from usage.pricing import calculate_cost_breakdown
 
@@ -156,3 +157,70 @@ def test_cost_breakdown_unpriced_unknown_model():
     assert cost["priced"] is False
     assert cost["total_cost_usd"] is None
     assert cost["unpriced_reason"] == "model_not_in_catalog"
+
+
+def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
+    manager = AgentManager()
+    usage_state = {
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "model_source": "fallback_model",
+        "usage_source": "unknown",
+        "input_tokens": 0,
+        "input_uncached_tokens": 0,
+        "input_cache_read_tokens": 0,
+        "input_cache_write_tokens_5m": 0,
+        "input_cache_write_tokens_1h": 0,
+        "input_cache_write_tokens_unknown": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "tool_input_tokens": 0,
+        "total_tokens": 0,
+    }
+    usage_sources: dict[str, dict[str, int]] = {}
+
+    call_a = {
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+        "model_source": "model_name",
+        "usage_source": "usage_metadata",
+        "input_tokens": 100,
+        "input_uncached_tokens": 40,
+        "input_cache_read_tokens": 60,
+        "output_tokens": 10,
+        "total_tokens": 110,
+    }
+    replay_of_call_a = dict(call_a)
+    call_b = dict(call_a)
+
+    changed = manager._accumulate_usage_candidate(
+        usage_state=usage_state,
+        usage_sources=usage_sources,
+        source_id="call-a",
+        usage_candidate=call_a,
+    )
+    assert changed is True
+
+    # Same source + same usage should not inflate totals.
+    changed = manager._accumulate_usage_candidate(
+        usage_state=usage_state,
+        usage_sources=usage_sources,
+        source_id="call-a",
+        usage_candidate=replay_of_call_a,
+    )
+    assert changed is False
+
+    # Same shape of usage from a different call should be counted.
+    changed = manager._accumulate_usage_candidate(
+        usage_state=usage_state,
+        usage_sources=usage_sources,
+        source_id="call-b",
+        usage_candidate=call_b,
+    )
+    assert changed is True
+
+    assert usage_state["input_tokens"] == 200
+    assert usage_state["input_uncached_tokens"] == 80
+    assert usage_state["input_cache_read_tokens"] == 120
+    assert usage_state["output_tokens"] == 20
+    assert usage_state["total_tokens"] == 220

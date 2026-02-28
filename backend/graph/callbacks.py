@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -113,3 +114,34 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 status="failed",
                 details={"error": str(error)},
             )
+
+
+class UsageCaptureCallbackHandler(BaseCallbackHandler):
+    """Captures final model messages from each LLM call for usage aggregation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self._messages: list[Any] = []
+
+    def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+        _ = kwargs
+        generations = getattr(response, "generations", None)
+        if not isinstance(generations, list):
+            return
+        captured: list[Any] = []
+        for branch in generations:
+            if not isinstance(branch, list):
+                continue
+            for generation in branch:
+                message = getattr(generation, "message", None)
+                if message is not None:
+                    captured.append(message)
+        if not captured:
+            return
+        with self._lock:
+            self._messages.extend(captured)
+
+    def snapshot(self) -> list[Any]:
+        with self._lock:
+            return list(self._messages)
