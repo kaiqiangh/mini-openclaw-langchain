@@ -25,7 +25,9 @@ class EmbeddingClient:
     secrets: SecretConfig
     timeout_seconds: int = 20
 
-    def _post_json(self, url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+    def _post_json(
+        self, url: str, payload: dict[str, Any], headers: dict[str, str]
+    ) -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(url, data=body, headers=headers, method="POST")
         with urlopen(request, timeout=self.timeout_seconds) as response:
@@ -46,7 +48,9 @@ class EmbeddingClient:
 
     def _embed_openai(self, texts: list[str]) -> list[list[float]]:
         if not self.secrets.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is required for openai embedding provider")
+            raise RuntimeError(
+                "OPENAI_API_KEY is required for openai embedding provider"
+            )
         payload = {
             "model": self.secrets.embedding_model,
             "input": texts,
@@ -59,20 +63,26 @@ class EmbeddingClient:
         response = self._post_json(url, payload, headers)
         rows = response.get("data", [])
         if not isinstance(rows, list):
-            raise RuntimeError("Invalid embeddings response format from OpenAI-compatible endpoint")
+            raise RuntimeError(
+                "Invalid embeddings response format from OpenAI-compatible endpoint"
+            )
 
         rows_sorted = sorted(
             [row for row in rows if isinstance(row, dict)],
             key=lambda row: int(row.get("index", 0)),
         )
-        vectors = [self._to_float_vector(row.get("embedding", [])) for row in rows_sorted]
+        vectors = [
+            self._to_float_vector(row.get("embedding", [])) for row in rows_sorted
+        ]
         if len(vectors) != len(texts):
             raise RuntimeError("Embedding response size mismatch")
         return vectors
 
     def _embed_google(self, texts: list[str]) -> list[list[float]]:
         if not self.secrets.google_api_key:
-            raise RuntimeError("GOOGLE_API_KEY is required for google_ai_studio embedding provider")
+            raise RuntimeError(
+                "GOOGLE_API_KEY is required for google_ai_studio embedding provider"
+            )
         model = self.secrets.google_embedding_model.strip()
         model_full = model if model.startswith("models/") else f"models/{model}"
 
@@ -90,7 +100,9 @@ class EmbeddingClient:
             response = self._post_json(url, payload, headers)
             embedding = response.get("embedding", {})
             if not isinstance(embedding, dict):
-                raise RuntimeError("Invalid embedContent response from Google AI Studio")
+                raise RuntimeError(
+                    "Invalid embedContent response from Google AI Studio"
+                )
             return [self._to_float_vector(embedding.get("values", []))]
 
         requests_payload = [
@@ -108,7 +120,9 @@ class EmbeddingClient:
         response = self._post_json(url, payload, headers)
         embeddings = response.get("embeddings", [])
         if not isinstance(embeddings, list):
-            raise RuntimeError("Invalid batchEmbedContents response from Google AI Studio")
+            raise RuntimeError(
+                "Invalid batchEmbedContents response from Google AI Studio"
+            )
 
         vectors = []
         for row in embeddings:
@@ -129,4 +143,3 @@ class EmbeddingClient:
         if provider == EmbeddingProvider.GOOGLE_AI_STUDIO:
             return self._embed_google(texts)
         raise RuntimeError(f"Unsupported embedding provider: {provider}")
-

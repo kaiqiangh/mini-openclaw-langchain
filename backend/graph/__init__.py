@@ -1,8 +1,14 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 __all__ = ["AgentManager", "MemoryIndexer", "PromptBuilder", "SessionManager"]
+
+if TYPE_CHECKING:
+    from .agent import AgentManager
+    from .memory_indexer import MemoryIndexer
+    from .prompt_builder import PromptBuilder
+    from .session_manager import SessionManager
 
 
 def __getattr__(name: str) -> Any:

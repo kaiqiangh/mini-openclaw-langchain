@@ -43,27 +43,39 @@ class SessionManager:
             "messages": [],
         }
 
-    def load_session(self, session_id: str, *, archived: bool = False) -> dict[str, Any]:
+    def load_session(
+        self, session_id: str, *, archived: bool = False
+    ) -> dict[str, Any]:
         path = self._session_path(session_id, archived=archived)
         if not path.exists():
             if archived:
                 raise FileNotFoundError(f"Archived session not found: {session_id}")
             payload = self._default_payload()
-            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             return payload
 
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, list):
             payload = self._default_payload()
             payload["messages"] = raw
-            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
             return payload
         return raw
 
-    def save_session(self, session_id: str, payload: dict[str, Any], *, archived: bool = False) -> None:
+    def save_session(
+        self, session_id: str, payload: dict[str, Any], *, archived: bool = False
+    ) -> None:
         payload["updated_at"] = self._now()
         path = self._session_path(session_id, archived=archived)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
         include_active = scope in {"active", "all"}
@@ -123,7 +135,9 @@ class SessionManager:
             return False
         payload = self.load_session(session_id, archived=False)
         payload["archived_at"] = self._now()
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        target.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         source.unlink()
         return True
 
@@ -134,7 +148,9 @@ class SessionManager:
             return False
         payload = self.load_session(session_id, archived=True)
         payload.pop("archived_at", None)
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        target.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         source.unlink()
         return True
 

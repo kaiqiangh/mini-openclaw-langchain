@@ -39,20 +39,40 @@ class PromptBuilder:
         text = path.read_text(encoding="utf-8")
         return text, False, False
 
-    def _build_sections(self, base_dir: Path, rag_mode: bool) -> list[tuple[str, str, str]]:
-        components: list[tuple[str, str, Path]] = [
+    def _build_sections(
+        self, base_dir: Path, rag_mode: bool
+    ) -> list[tuple[str, str, str]]:
+        components: list[tuple[str, str, Path | None]] = [
             ("Skills Snapshot", "SKILLS_SNAPSHOT.md", base_dir / "SKILLS_SNAPSHOT.md"),
             ("Soul", "workspace/SOUL.md", base_dir / "workspace" / "SOUL.md"),
-            ("Identity", "workspace/IDENTITY.md", base_dir / "workspace" / "IDENTITY.md"),
+            (
+                "Identity",
+                "workspace/IDENTITY.md",
+                base_dir / "workspace" / "IDENTITY.md",
+            ),
             ("User Profile", "workspace/USER.md", base_dir / "workspace" / "USER.md"),
-            ("Heartbeat Guide", "workspace/HEARTBEAT.md", base_dir / "workspace" / "HEARTBEAT.md"),
-            ("Agents Guide", "workspace/AGENTS.md", base_dir / "workspace" / "AGENTS.md"),
+            (
+                "Heartbeat Guide",
+                "workspace/HEARTBEAT.md",
+                base_dir / "workspace" / "HEARTBEAT.md",
+            ),
+            (
+                "Agents Guide",
+                "workspace/AGENTS.md",
+                base_dir / "workspace" / "AGENTS.md",
+            ),
         ]
 
         if rag_mode:
             components.append(("Long-term Memory", "memory/MEMORY.md", None))
         else:
-            components.append(("Long-term Memory", "memory/MEMORY.md", base_dir / "memory" / "MEMORY.md"))
+            components.append(
+                (
+                    "Long-term Memory",
+                    "memory/MEMORY.md",
+                    base_dir / "memory" / "MEMORY.md",
+                )
+            )
 
         sections: list[tuple[str, str, str]] = []
         for label, rel_path, abs_path in components:
@@ -82,8 +102,13 @@ class PromptBuilder:
         rag_mode: bool,
         is_first_turn: bool,
     ) -> PromptPack:
-        if runtime.injection_mode == InjectionMode.FIRST_TURN_ONLY and not is_first_turn:
-            empty_pack = PromptPack(prompt="", digest="", source_mtimes={}, truncated_files=[])
+        if (
+            runtime.injection_mode == InjectionMode.FIRST_TURN_ONLY
+            and not is_first_turn
+        ):
+            empty_pack = PromptPack(
+                prompt="", digest="", source_mtimes={}, truncated_files=[]
+            )
             return empty_pack
 
         sections = self._build_sections(base_dir=base_dir, rag_mode=rag_mode)
@@ -91,7 +116,9 @@ class PromptBuilder:
         source_mtimes: dict[str, float] = {}
         for _, rel_path, _ in sections:
             abs_path = base_dir / rel_path
-            source_mtimes[rel_path] = abs_path.stat().st_mtime if abs_path.exists() else -1.0
+            source_mtimes[rel_path] = (
+                abs_path.stat().st_mtime if abs_path.exists() else -1.0
+            )
 
         cache_key = self._digest(
             [
@@ -111,14 +138,18 @@ class PromptBuilder:
         truncated_files: list[str] = []
 
         for label, rel_path, content in sections:
-            content, was_truncated = self.truncate_component(content, runtime.bootstrap_max_chars)
+            content, was_truncated = self.truncate_component(
+                content, runtime.bootstrap_max_chars
+            )
             if was_truncated:
                 truncated_files.append(rel_path)
             rendered_parts.append(f"<!-- {label} -->\n{content}")
 
         prompt = "\n\n".join(rendered_parts)
         if len(prompt) > runtime.bootstrap_total_max_chars:
-            prompt = prompt[: runtime.bootstrap_total_max_chars] + "\n...[truncated_total]"
+            prompt = (
+                prompt[: runtime.bootstrap_total_max_chars] + "\n...[truncated_total]"
+            )
 
         digest = self._digest([prompt])
         pack = PromptPack(

@@ -53,7 +53,9 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 details=payload,
             )
 
-    def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kwargs: Any) -> None:
+    def on_tool_start(
+        self, serialized: dict[str, Any], input_str: str, **kwargs: Any
+    ) -> None:
         self._write(
             "tool_start",
             {
@@ -70,7 +72,9 @@ class AuditCallbackHandler(BaseCallbackHandler):
             },
         )
 
-    def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
+    def on_llm_start(
+        self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any
+    ) -> None:
         self._write(
             "llm_start",
             {

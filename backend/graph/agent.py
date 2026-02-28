@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from config import (
     AppConfig,
@@ -84,13 +85,14 @@ class AgentManager:
 
     @staticmethod
     def _build_llm(config: AppConfig, runtime: RuntimeConfig) -> ChatOpenAI:
-        return ChatOpenAI(
-            model=config.secrets.deepseek_model,
-            api_key=config.secrets.deepseek_api_key,
-            base_url=config.secrets.deepseek_base_url,
-            temperature=runtime.llm_runtime.temperature,
-            timeout=runtime.llm_runtime.timeout_seconds,
-        )
+        llm_kwargs: dict[str, Any] = {
+            "model": config.secrets.deepseek_model,
+            "api_key": SecretStr(config.secrets.deepseek_api_key),
+            "base_url": config.secrets.deepseek_base_url,
+            "temperature": runtime.llm_runtime.temperature,
+            "timeout": runtime.llm_runtime.timeout_seconds,
+        }
+        return ChatOpenAI(**llm_kwargs)
 
     def _require_initialized(self) -> tuple[Path, Path]:
         if self.base_dir is None or self.workspaces_dir is None:
@@ -126,7 +128,9 @@ class AgentManager:
         runtime = self.get_runtime(agent_id)
         return runtime.root_dir / "config.json"
 
-    def _copy_text_if_missing(self, source: Path | None, target: Path, default_text: str = "") -> None:
+    def _copy_text_if_missing(
+        self, source: Path | None, target: Path, default_text: str = ""
+    ) -> None:
         if target.exists():
             return
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +171,9 @@ class AgentManager:
             "- store stable preferences and long-lived context only",
         )
         for line in lines[1:]:
-            if not any(line.lower().startswith(prefix) for prefix in placeholder_prefixes):
+            if not any(
+                line.lower().startswith(prefix) for prefix in placeholder_prefixes
+            ):
                 return False
         return True
 
@@ -234,7 +240,9 @@ class AgentManager:
         if source.exists():
             target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         elif not target.exists():
-            target.write_text("<available_skills>\n</available_skills>\n", encoding="utf-8")
+            target.write_text(
+                "<available_skills>\n</available_skills>\n", encoding="utf-8"
+            )
 
     def _sync_skills_directory(self, workspace_root: Path) -> None:
         if self.base_dir is None:
@@ -277,7 +285,9 @@ class AgentManager:
             default_usage = root / "storage" / "usage" / "llm_usage.jsonl"
             if legacy_usage.exists() and not default_usage.exists():
                 default_usage.parent.mkdir(parents=True, exist_ok=True)
-                default_usage.write_text(legacy_usage.read_text(encoding="utf-8"), encoding="utf-8")
+                default_usage.write_text(
+                    legacy_usage.read_text(encoding="utf-8"), encoding="utf-8"
+                )
 
             legacy_knowledge = self.base_dir / "knowledge"
             default_knowledge = root / "knowledge"
@@ -288,15 +298,21 @@ class AgentManager:
         self._sync_skills_directory(root)
         self._sync_skills_snapshot(root)
         if self.base_dir is not None:
-            self._copy_text_if_missing(self.base_dir / "config.json", root / "config.json", default_text="{}\n")
+            self._copy_text_if_missing(
+                self.base_dir / "config.json", root / "config.json", default_text="{}\n"
+            )
         return root
 
     def _build_runtime(self, agent_id: str) -> AgentRuntime:
         if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
         workspace_root = self._ensure_workspace(agent_id)
-        global_config_path, agent_config_path = self._runtime_config_paths(workspace_root)
-        effective_runtime = load_effective_runtime_config(global_config_path, agent_config_path)
+        global_config_path, agent_config_path = self._runtime_config_paths(
+            workspace_root
+        )
+        effective_runtime = load_effective_runtime_config(
+            global_config_path, agent_config_path
+        )
         effective_digest = runtime_config_digest(effective_runtime)
         runtime = AgentRuntime(
             agent_id=agent_id,
@@ -311,13 +327,17 @@ class AgentManager:
             agent_config_mtime_ns=self._config_mtime_ns(agent_config_path),
         )
         runtime.audit_store.ensure_schema_descriptor()
-        runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
+        runtime.memory_indexer.ensure_storage(
+            settings=runtime.runtime_config.retrieval.memory
+        )
         return runtime
 
     def _refresh_runtime_config(self, runtime: AgentRuntime) -> None:
         workspace_root = self._ensure_workspace(runtime.agent_id)
         runtime.root_dir = workspace_root
-        global_config_path, agent_config_path = self._runtime_config_paths(workspace_root)
+        global_config_path, agent_config_path = self._runtime_config_paths(
+            workspace_root
+        )
         global_mtime = self._config_mtime_ns(global_config_path)
         agent_mtime = self._config_mtime_ns(agent_config_path)
         if (
@@ -327,12 +347,16 @@ class AgentManager:
         ):
             return
 
-        effective_runtime = load_effective_runtime_config(global_config_path, agent_config_path)
+        effective_runtime = load_effective_runtime_config(
+            global_config_path, agent_config_path
+        )
         runtime.runtime_config = effective_runtime
         runtime.runtime_config_digest = runtime_config_digest(effective_runtime)
         runtime.global_config_mtime_ns = global_mtime
         runtime.agent_config_mtime_ns = agent_mtime
-        runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
+        runtime.memory_indexer.ensure_storage(
+            settings=runtime.runtime_config.retrieval.memory
+        )
 
     def _provision_retrieval_storage_for_all_agents(self) -> None:
         _, workspaces_dir = self._require_initialized()
@@ -342,7 +366,9 @@ class AgentManager:
             agent_id = item.name
             try:
                 runtime = self.get_runtime(agent_id)
-                runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
+                runtime.memory_indexer.ensure_storage(
+                    settings=runtime.runtime_config.retrieval.memory
+                )
             except Exception:
                 continue
 
@@ -385,9 +411,17 @@ class AgentManager:
             if not item.is_dir():
                 continue
             sessions_dir = item / "sessions"
-            active_sessions = len([p for p in sessions_dir.glob("*.json") if p.is_file()]) if sessions_dir.exists() else 0
+            active_sessions = (
+                len([p for p in sessions_dir.glob("*.json") if p.is_file()])
+                if sessions_dir.exists()
+                else 0
+            )
             archived_dir = sessions_dir / "archived_sessions"
-            archived_sessions = len([p for p in archived_dir.glob("*.json") if p.is_file()]) if archived_dir.exists() else 0
+            archived_sessions = (
+                len([p for p in archived_dir.glob("*.json") if p.is_file()])
+                if archived_dir.exists()
+                else 0
+            )
             stat = item.stat()
             rows.append(
                 {
@@ -407,7 +441,9 @@ class AgentManager:
         if root.exists():
             raise ValueError(f"Agent already exists: {normalized}")
         runtime = self.get_runtime(normalized)
-        runtime.memory_indexer.rebuild_index(settings=runtime.runtime_config.retrieval.memory)
+        runtime.memory_indexer.rebuild_index(
+            settings=runtime.runtime_config.retrieval.memory
+        )
         for row in self.list_agents():
             if row.get("agent_id") == normalized:
                 return row
@@ -538,9 +574,19 @@ class AgentManager:
             if not isinstance(block, dict):
                 continue
             btype = str(block.get("type", "")).lower()
-            if btype not in {"reasoning", "reasoning_chunk", "thinking", "thinking_chunk"}:
+            if btype not in {
+                "reasoning",
+                "reasoning_chunk",
+                "thinking",
+                "thinking_chunk",
+            }:
                 continue
-            text = block.get("text") or block.get("content") or block.get("reasoning") or ""
+            text = (
+                block.get("text")
+                or block.get("content")
+                or block.get("reasoning")
+                or ""
+            )
             if text:
                 texts.append(str(text))
         return texts
@@ -581,11 +627,19 @@ class AgentManager:
         if usage_metadata:
             usage["input_tokens"] = max(
                 usage["input_tokens"],
-                self._as_int(usage_metadata.get("input_tokens", usage_metadata.get("prompt_tokens", 0))),
+                self._as_int(
+                    usage_metadata.get(
+                        "input_tokens", usage_metadata.get("prompt_tokens", 0)
+                    )
+                ),
             )
             usage["output_tokens"] = max(
                 usage["output_tokens"],
-                self._as_int(usage_metadata.get("output_tokens", usage_metadata.get("completion_tokens", 0))),
+                self._as_int(
+                    usage_metadata.get(
+                        "output_tokens", usage_metadata.get("completion_tokens", 0)
+                    )
+                ),
             )
             usage["total_tokens"] = max(
                 usage["total_tokens"],
@@ -596,23 +650,39 @@ class AgentManager:
             output_details = self._as_dict(usage_metadata.get("output_token_details"))
             usage["cached_input_tokens"] = max(
                 usage["cached_input_tokens"],
-                self._as_int(input_details.get("cache_read", input_details.get("cached_tokens", 0))),
+                self._as_int(
+                    input_details.get(
+                        "cache_read", input_details.get("cached_tokens", 0)
+                    )
+                ),
             )
             usage["reasoning_tokens"] = max(
                 usage["reasoning_tokens"],
-                self._as_int(output_details.get("reasoning", output_details.get("reasoning_tokens", 0))),
+                self._as_int(
+                    output_details.get(
+                        "reasoning", output_details.get("reasoning_tokens", 0)
+                    )
+                ),
             )
 
         response_metadata = self._as_dict(getattr(message, "response_metadata", None))
-        token_usage = self._as_dict(response_metadata.get("token_usage", response_metadata.get("usage", {})))
+        token_usage = self._as_dict(
+            response_metadata.get("token_usage", response_metadata.get("usage", {}))
+        )
         if token_usage:
             usage["input_tokens"] = max(
                 usage["input_tokens"],
-                self._as_int(token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))),
+                self._as_int(
+                    token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))
+                ),
             )
             usage["output_tokens"] = max(
                 usage["output_tokens"],
-                self._as_int(token_usage.get("completion_tokens", token_usage.get("output_tokens", 0))),
+                self._as_int(
+                    token_usage.get(
+                        "completion_tokens", token_usage.get("output_tokens", 0)
+                    )
+                ),
             )
             usage["total_tokens"] = max(
                 usage["total_tokens"],
@@ -620,22 +690,40 @@ class AgentManager:
             )
 
             prompt_details = self._as_dict(token_usage.get("prompt_tokens_details"))
-            completion_details = self._as_dict(token_usage.get("completion_tokens_details"))
+            completion_details = self._as_dict(
+                token_usage.get("completion_tokens_details")
+            )
             usage["cached_input_tokens"] = max(
                 usage["cached_input_tokens"],
-                self._as_int(prompt_details.get("cached_tokens", prompt_details.get("cache_read", 0))),
+                self._as_int(
+                    prompt_details.get(
+                        "cached_tokens", prompt_details.get("cache_read", 0)
+                    )
+                ),
             )
             usage["reasoning_tokens"] = max(
                 usage["reasoning_tokens"],
-                self._as_int(completion_details.get("reasoning_tokens", completion_details.get("reasoning", 0))),
+                self._as_int(
+                    completion_details.get(
+                        "reasoning_tokens", completion_details.get("reasoning", 0)
+                    )
+                ),
             )
 
         if usage["input_tokens"] == 0 and usage["total_tokens"] > 0:
-            usage["input_tokens"] = max(0, usage["total_tokens"] - usage["output_tokens"])
-        if usage["total_tokens"] == 0 and (usage["input_tokens"] or usage["output_tokens"]):
+            usage["input_tokens"] = max(
+                0, usage["total_tokens"] - usage["output_tokens"]
+            )
+        if usage["total_tokens"] == 0 and (
+            usage["input_tokens"] or usage["output_tokens"]
+        ):
             usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
-        usage["cached_input_tokens"] = min(usage["cached_input_tokens"], usage["input_tokens"])
-        usage["uncached_input_tokens"] = max(0, usage["input_tokens"] - usage["cached_input_tokens"])
+        usage["cached_input_tokens"] = min(
+            usage["cached_input_tokens"], usage["input_tokens"]
+        )
+        usage["uncached_input_tokens"] = max(
+            0, usage["input_tokens"] - usage["cached_input_tokens"]
+        )
         return usage
 
     def _record_usage(
@@ -711,15 +799,20 @@ class AgentManager:
         except Exception:  # noqa: BLE001
             return seed_text[:40] or "New Session"
 
-    async def summarize_messages(self, messages: list[dict[str, Any]], agent_id: str = "default") -> str:
+    async def summarize_messages(
+        self, messages: list[dict[str, Any]], agent_id: str = "default"
+    ) -> str:
         if self.config is None:
-            joined = "\n".join(f"{m.get('role','user')}: {m.get('content','')[:80]}" for m in messages)
+            joined = "\n".join(
+                f"{m.get('role','user')}: {m.get('content','')[:80]}" for m in messages
+            )
             return joined[:500]
         runtime = self.get_runtime(agent_id)
         llm = self._get_runtime_llm(runtime)
 
         corpus = "\n".join(
-            f"{m.get('role', 'user')}: {str(m.get('content', ''))[:200]}" for m in messages
+            f"{m.get('role', 'user')}: {str(m.get('content', ''))[:200]}"
+            for m in messages
         )
         prompt = (
             "Summarize the following conversation in under 500 characters. "
@@ -733,7 +826,9 @@ class AgentManager:
         except Exception:  # noqa: BLE001
             return corpus[:500]
 
-    def build_system_prompt(self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default") -> str:
+    def build_system_prompt(
+        self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default"
+    ) -> str:
         if self.config is None:
             raise RuntimeError("AgentManager is not initialized")
         runtime = self.get_runtime(agent_id)
@@ -773,7 +868,9 @@ class AgentManager:
                     f"- ({item['score']}) {item['text']}" for item in results
                 )
 
-        messages = self._build_messages(history=history, message=message, rag_context=rag_context)
+        messages = self._build_messages(
+            history=history, message=message, rag_context=rag_context
+        )
         system_prompt = self.build_system_prompt(
             rag_mode=effective_runtime.rag_mode,
             is_first_turn=is_first_turn,
@@ -871,8 +968,12 @@ class AgentManager:
                     f"- ({item['score']}) {item['text']}" for item in results
                 )
 
-        system_prompt = self.build_system_prompt(rag_mode=rag_mode, is_first_turn=is_first_turn, agent_id=agent_id)
-        messages = self._build_messages(history=history, message=message, rag_context=rag_context)
+        system_prompt = self.build_system_prompt(
+            rag_mode=rag_mode, is_first_turn=is_first_turn, agent_id=agent_id
+        )
+        messages = self._build_messages(
+            history=history, message=message, rag_context=rag_context
+        )
 
         pending_new_response = False
         final_tokens: list[str] = []
@@ -894,7 +995,10 @@ class AgentManager:
         for attempt in range(effective_runtime.agent_runtime.max_retries + 1):
             run_id = str(uuid.uuid4())
             try:
-                yield {"type": "run_start", "data": {"run_id": run_id, "attempt": attempt + 1}}
+                yield {
+                    "type": "run_start",
+                    "data": {"run_id": run_id, "attempt": attempt + 1},
+                }
                 agent = self._build_agent(
                     llm=llm,
                     runtime=effective_runtime,
@@ -937,7 +1041,9 @@ class AgentManager:
                                     "run_id": run_id,
                                     "node": node,
                                     "message_count": len(msgs),
-                                    "preview": self._as_text(getattr(latest, "content", ""))[:500],
+                                    "preview": self._as_text(
+                                        getattr(latest, "content", "")
+                                    )[:500],
                                 },
                             }
                             emitted_agent_update = True
@@ -950,28 +1056,48 @@ class AgentManager:
                                             "type": "tool_start",
                                             "data": {
                                                 "run_id": run_id,
-                                                "tool": str(call.get("name", "unknown")),
+                                                "tool": str(
+                                                    call.get("name", "unknown")
+                                                ),
                                                 "input": call.get("args", {}),
                                             },
                                         }
                                 else:
-                                    content = self._as_text(getattr(latest, "content", ""))
+                                    content = self._as_text(
+                                        getattr(latest, "content", "")
+                                    )
                                     if content:
                                         fallback_final_text = content
                                         if token_source is None:
-                                            delta = self._diff_incremental(latest_model_snapshot, content)
+                                            delta = self._diff_incremental(
+                                                latest_model_snapshot, content
+                                            )
                                             latest_model_snapshot = content
                                             if delta:
                                                 if pending_new_response:
-                                                    yield {"type": "new_response", "data": {}}
+                                                    yield {
+                                                        "type": "new_response",
+                                                        "data": {},
+                                                    }
                                                     pending_new_response = False
                                                 token_source = "updates"
                                                 final_tokens.append(delta)
-                                                yield {"type": "token", "data": {"content": delta, "source": "updates"}}
+                                                yield {
+                                                    "type": "token",
+                                                    "data": {
+                                                        "content": delta,
+                                                        "source": "updates",
+                                                    },
+                                                }
 
-                                    for reasoning in self._extract_reasoning_text(latest):
+                                    for reasoning in self._extract_reasoning_text(
+                                        latest
+                                    ):
                                         normalized = reasoning.strip()
-                                        if not normalized or normalized in emitted_reasoning:
+                                        if (
+                                            not normalized
+                                            or normalized in emitted_reasoning
+                                        ):
                                             continue
                                         emitted_reasoning.add(normalized)
                                         yield {
@@ -982,23 +1108,37 @@ class AgentManager:
                                             },
                                         }
 
-                                usage_candidate = self._extract_usage_from_message(latest)
-                                if self._as_int(usage_candidate.get("total_tokens", 0)) > 0:
+                                usage_candidate = self._extract_usage_from_message(
+                                    latest
+                                )
+                                if (
+                                    self._as_int(usage_candidate.get("total_tokens", 0))
+                                    > 0
+                                ):
                                     for key in usage_state.keys():
                                         usage_state[key] = max(
                                             self._as_int(usage_state.get(key, 0)),
                                             self._as_int(usage_candidate.get(key, 0)),
                                         )
-                                    signature = "|".join(str(usage_state.get(k, 0)) for k in sorted(usage_state))
+                                    signature = "|".join(
+                                        str(usage_state.get(k, 0))
+                                        for k in sorted(usage_state)
+                                    )
                                     if signature != usage_signature:
                                         usage_signature = signature
                                         cost = estimate_cost_usd(
                                             model=self.config.secrets.deepseek_model,
-                                            input_tokens=self._as_int(usage_state.get("input_tokens", 0)),
-                                            cached_input_tokens=self._as_int(
-                                                usage_state.get("cached_input_tokens", 0)
+                                            input_tokens=self._as_int(
+                                                usage_state.get("input_tokens", 0)
                                             ),
-                                            output_tokens=self._as_int(usage_state.get("output_tokens", 0)),
+                                            cached_input_tokens=self._as_int(
+                                                usage_state.get(
+                                                    "cached_input_tokens", 0
+                                                )
+                                            ),
+                                            output_tokens=self._as_int(
+                                                usage_state.get("output_tokens", 0)
+                                            ),
                                         )
                                         yield {
                                             "type": "usage",
@@ -1019,16 +1159,28 @@ class AgentManager:
                                             "run_id": run_id,
                                             "tool": str(
                                                 getattr(tool_msg, "name", None)
-                                                or getattr(tool_msg, "tool_call_id", "tool")
+                                                or getattr(
+                                                    tool_msg, "tool_call_id", "tool"
+                                                )
                                             ),
-                                            "output": self._as_text(getattr(tool_msg, "content", "")),
+                                            "output": self._as_text(
+                                                getattr(tool_msg, "content", "")
+                                            ),
                                         },
                                     }
                                     pending_new_response = True
 
-                    if mode == "messages" and isinstance(chunk, tuple) and len(chunk) == 2:
+                    if (
+                        mode == "messages"
+                        and isinstance(chunk, tuple)
+                        and len(chunk) == 2
+                    ):
                         token, metadata = chunk
-                        node = metadata.get("langgraph_node", "") if isinstance(metadata, dict) else ""
+                        node = (
+                            metadata.get("langgraph_node", "")
+                            if isinstance(metadata, dict)
+                            else ""
+                        )
                         if node != "model":
                             continue
 
@@ -1055,7 +1207,10 @@ class AgentManager:
                                 yield {"type": "new_response", "data": {}}
                                 pending_new_response = False
                             final_tokens.append(text)
-                            yield {"type": "token", "data": {"content": text, "source": "messages"}}
+                            yield {
+                                "type": "token",
+                                "data": {"content": text, "source": "messages"},
+                            }
 
                         usage_candidate = self._extract_usage_from_message(token)
                         if self._as_int(usage_candidate.get("total_tokens", 0)) > 0:
@@ -1096,6 +1251,10 @@ class AgentManager:
                     continue
                 yield {
                     "type": "error",
-                    "data": {"error": str(exc), "run_id": run_id, "attempt": attempt + 1},
+                    "data": {
+                        "error": str(exc),
+                        "run_id": run_id,
+                        "attempt": attempt + 1,
+                    },
                 }
                 return

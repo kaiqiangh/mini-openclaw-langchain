@@ -96,8 +96,12 @@ class SQLiteRetrievalStore:
                     )
                     """
                 )
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_domain ON chunks(domain)")
-                conn.execute("CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(chunk_text)")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chunks_domain ON chunks(domain)"
+                )
+                conn.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(chunk_text)"
+                )
                 conn.commit()
 
     def get_meta(self, domain: str) -> dict[str, Any] | None:
@@ -116,7 +120,12 @@ class SQLiteRetrievalStore:
         return dict(row)
 
     def _delete_domain_rows(self, conn: sqlite3.Connection, domain: str) -> None:
-        ids = [row[0] for row in conn.execute("SELECT id FROM chunks WHERE domain = ?", (domain,)).fetchall()]
+        ids = [
+            row[0]
+            for row in conn.execute(
+                "SELECT id FROM chunks WHERE domain = ?", (domain,)
+            ).fetchall()
+        ]
         for chunk_id in ids:
             conn.execute("DELETE FROM chunks_fts WHERE rowid = ?", (chunk_id,))
         conn.execute("DELETE FROM chunks WHERE domain = ?", (domain,))
@@ -149,7 +158,10 @@ class SQLiteRetrievalStore:
                             json.dumps(chunk.embedding, ensure_ascii=True),
                         ),
                     )
-                    row_id = int(cursor.lastrowid)
+                    row_id_raw = cursor.lastrowid
+                    if row_id_raw is None:
+                        raise RuntimeError("SQLite insert returned no rowid")
+                    row_id = int(row_id_raw)
                     conn.execute(
                         "INSERT INTO chunks_fts(rowid, chunk_text) VALUES (?, ?)",
                         (row_id, chunk.text),
@@ -196,7 +208,9 @@ class SQLiteRetrievalStore:
             deduped.append(f'"{lowered}"')
         return " OR ".join(deduped)
 
-    def _candidate_rows(self, *, domain: str, query: str, limit: int) -> list[sqlite3.Row]:
+    def _candidate_rows(
+        self, *, domain: str, query: str, limit: int
+    ) -> list[sqlite3.Row]:
         max_rows = max(1, int(limit))
         fts_query = self._fts_query(query)
         with self._lock:
@@ -243,7 +257,9 @@ class SQLiteRetrievalStore:
         lexical_weight: float,
         query_embedding: list[float],
     ) -> list[dict[str, Any]]:
-        rows = self._candidate_rows(domain=domain, query=query, limit=max(top_k, fts_prefilter_k))
+        rows = self._candidate_rows(
+            domain=domain, query=query, limit=max(top_k, fts_prefilter_k)
+        )
         terms = {item for item in query.lower().split() if item}
         scored: list[tuple[float, str, str]] = []
         for row in rows:
@@ -264,4 +280,3 @@ class SQLiteRetrievalStore:
             {"text": item[2], "score": item[0], "source": item[1]}
             for item in scored[: max(1, int(top_k))]
         ]
-
