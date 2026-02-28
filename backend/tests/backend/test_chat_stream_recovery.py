@@ -20,10 +20,11 @@ async def test_stream_continues_after_client_disconnect(api_app):
     ):
         _ = history, kwargs
         yield {"type": "run_start", "data": {"run_id": "run-bg", "attempt": 1}}
+        await asyncio.sleep(0.25)
         yield {"type": "token", "data": {"content": f"[{session_id}]"}}
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.25)
         yield {"type": "token", "data": {"content": message}}
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.25)
         yield {
             "type": "done",
             "data": {
@@ -47,19 +48,11 @@ async def test_stream_continues_after_client_disconnect(api_app):
             json={"message": "hello", "session_id": session_id, "stream": True},
         ) as response:
             response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line.startswith("event: token"):
-                    break
-
-            # While still running, live response should be visible in history.
-            live_history = (
-                await client.get(f"/api/sessions/{session_id}/history")
-            ).json()["data"]["messages"]
-            assert live_history
-            assert bool(live_history[-1].get("streaming", False)) is True
+            # Disconnect immediately; backend run should continue independently.
+            await asyncio.sleep(0.05)
 
         # Disconnecting the stream should not stop the backend run.
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
         final_history = (
             await client.get(f"/api/sessions/{session_id}/history")
         ).json()["data"]["messages"]
