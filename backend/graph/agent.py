@@ -317,8 +317,10 @@ class AgentManager:
         return root
 
     def _build_runtime(self, agent_id: str) -> AgentRuntime:
-        if self.base_dir is None or self.config is None:
+        if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
+        if self.config is None:
+            self.config = load_config(self.base_dir)
         workspace_root = self._ensure_workspace(agent_id)
         global_config_path, agent_config_path = self._runtime_config_paths(
             workspace_root
