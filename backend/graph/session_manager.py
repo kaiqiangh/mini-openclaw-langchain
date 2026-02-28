@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 class SessionManager:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
+        self._lock = threading.RLock()
         self.sessions_dir = base_dir / "sessions"
         self.archive_dir = self.sessions_dir / "archive"
         self.archived_sessions_dir = self.sessions_dir / "archived_sessions"
@@ -46,36 +48,39 @@ class SessionManager:
     def load_session(
         self, session_id: str, *, archived: bool = False
     ) -> dict[str, Any]:
-        path = self._session_path(session_id, archived=archived)
-        if not path.exists():
-            if archived:
-                raise FileNotFoundError(f"Archived session not found: {session_id}")
-            payload = self._default_payload()
-            path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            return payload
+        with self._lock:
+            path = self._session_path(session_id, archived=archived)
+            if not path.exists():
+                if archived:
+                    raise FileNotFoundError(f"Archived session not found: {session_id}")
+                payload = self._default_payload()
+                path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                return payload
 
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, list):
-            payload = self._default_payload()
-            payload["messages"] = raw
-            path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            return payload
-        return raw
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                payload = self._default_payload()
+                payload["messages"] = raw
+                path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                return payload
+            return raw
 
     def save_session(
         self, session_id: str, payload: dict[str, Any], *, archived: bool = False
     ) -> None:
-        payload["updated_at"] = self._now()
-        path = self._session_path(session_id, archived=archived)
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        with self._lock:
+            payload["updated_at"] = self._now()
+            path = self._session_path(session_id, archived=archived)
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
 
     def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
         include_active = scope in {"active", "all"}
@@ -161,12 +166,70 @@ class SessionManager:
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
     ) -> None:
-        session = self.load_session(session_id)
-        entry: dict[str, Any] = {"role": role, "content": content}
-        if tool_calls:
+        with self._lock:
+            session = self.load_session(session_id)
+            entry: dict[str, Any] = {"role": role, "content": content}
+            if tool_calls:
+                entry["tool_calls"] = tool_calls
+            session.setdefault("messages", []).append(entry)
+            self.save_session(session_id, session)
+
+    def set_live_response(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> None:
+        with self._lock:
+            session = self.load_session(session_id)
+            payload: dict[str, Any] = {
+                "run_id": run_id,
+                "content": content,
+                "updated_at": self._now(),
+            }
+            if tool_calls:
+                payload["tool_calls"] = tool_calls
+            session["live_response"] = payload
+            self.save_session(session_id, session)
+
+    def clear_live_response(self, session_id: str, run_id: str | None = None) -> None:
+        with self._lock:
+            session = self.load_session(session_id)
+            live = session.get("live_response")
+            if not isinstance(live, dict):
+                return
+            if run_id and str(live.get("run_id", "")).strip() != run_id.strip():
+                return
+            session.pop("live_response", None)
+            self.save_session(session_id, session)
+
+    @staticmethod
+    def with_live_response(messages: list[dict[str, Any]], session: dict[str, Any]) -> list[dict[str, Any]]:
+        merged = [dict(message) for message in messages]
+        live = session.get("live_response")
+        if not isinstance(live, dict):
+            return merged
+        content = str(live.get("content", "")).strip()
+        tool_calls = live.get("tool_calls")
+        if not content and not (
+            isinstance(tool_calls, list) and len(tool_calls) > 0
+        ):
+            return merged
+
+        entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": content,
+            "streaming": True,
+        }
+        if isinstance(tool_calls, list) and tool_calls:
             entry["tool_calls"] = tool_calls
-        session.setdefault("messages", []).append(entry)
-        self.save_session(session_id, session)
+        run_id = str(live.get("run_id", "")).strip()
+        if run_id:
+            entry["run_id"] = run_id
+        merged.append(entry)
+        return merged
 
     def get_compressed_context(self, session_id: str) -> str:
         session = self.load_session(session_id)

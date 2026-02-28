@@ -161,7 +161,10 @@ async def get_messages(
             "agent_id": agent_id,
             "archived": archived,
             "system_prompt": system_prompt,
-            "messages": session.get("messages", []),
+            "messages": manager.with_live_response(
+                list(session.get("messages", [])),
+                session,
+            ),
             "compressed_context": session.get("compressed_context", ""),
         }
     }
@@ -183,7 +186,10 @@ async def get_history(
             "session_id": session_id,
             "agent_id": agent_id,
             "archived": archived,
-            "messages": session.get("messages", []),
+            "messages": manager.with_live_response(
+                list(session.get("messages", [])),
+                session,
+            ),
             "compressed_context": session.get("compressed_context", ""),
         }
     }
