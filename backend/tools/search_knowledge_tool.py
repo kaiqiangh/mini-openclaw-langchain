@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config import RetrievalStorageConfig, load_config, load_effective_runtime_config, load_runtime_config
+from config import (
+    RetrievalStorageConfig,
+    load_config,
+    load_effective_runtime_config,
+    load_runtime_config,
+)
 from graph.embedding_client import EmbeddingClient, cosine_similarity
 from graph.retrieval_store import RetrievalChunk, SQLiteRetrievalStore
 
@@ -49,7 +54,9 @@ class SearchKnowledgeTool:
             chunks.append(text[start : start + size])
         return chunks
 
-    def _knowledge_digest(self, files: list[Path], *, chunk_size: int, chunk_overlap: int) -> str:
+    def _knowledge_digest(
+        self, files: list[Path], *, chunk_size: int, chunk_overlap: int
+    ) -> str:
         hasher = hashlib.sha256()
         for file_path in sorted(files):
             stat = file_path.stat()
@@ -60,7 +67,9 @@ class SearchKnowledgeTool:
         hasher.update(str(chunk_overlap).encode("utf-8"))
         return hasher.hexdigest()
 
-    def _build_index(self, files: list[Path], digest: str, *, chunk_size: int, chunk_overlap: int) -> dict[str, Any]:
+    def _build_index(
+        self, files: list[Path], digest: str, *, chunk_size: int, chunk_overlap: int
+    ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         for file_path in files:
             text = file_path.read_text(encoding="utf-8", errors="replace")
@@ -84,7 +93,9 @@ class SearchKnowledgeTool:
         vectors: list[list[float]] = []
         if rows:
             try:
-                vectors = EmbeddingClient(config.secrets).embed_texts([row["text"] for row in rows])
+                vectors = EmbeddingClient(config.secrets).embed_texts(
+                    [row["text"] for row in rows]
+                )
             except Exception as exc:  # noqa: BLE001
                 vectors = []
                 embedding_error = str(exc)
@@ -106,7 +117,11 @@ class SearchKnowledgeTool:
         config_base = self.config_base_dir or self.root_dir
         global_config = config_base / "config.json"
         agent_config = self.root_dir / "config.json"
-        if global_config.exists() and agent_config.exists() and global_config.resolve() != agent_config.resolve():
+        if (
+            global_config.exists()
+            and agent_config.exists()
+            and global_config.resolve() != agent_config.resolve()
+        ):
             runtime = load_effective_runtime_config(global_config, agent_config)
         elif agent_config.exists():
             runtime = load_runtime_config(agent_config)
@@ -124,10 +139,21 @@ class SearchKnowledgeTool:
 
     @staticmethod
     def _safe_int(value: object, fallback: int) -> int:
-        try:
+        if isinstance(value, bool):
             return int(value)
-        except Exception:
-            return fallback
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return fallback
+            try:
+                return int(raw)
+            except ValueError:
+                return fallback
+        return fallback
 
     def _migrate_json_to_sqlite(
         self,
@@ -142,8 +168,12 @@ class SearchKnowledgeTool:
         if not isinstance(rows, list):
             return False
         digest = str(payload.get("digest", digest_fallback))
-        chunk_size = max(64, self._safe_int(payload.get("chunk_size"), chunk_size_fallback))
-        chunk_overlap = max(0, self._safe_int(payload.get("chunk_overlap"), chunk_overlap_fallback))
+        chunk_size = max(
+            64, self._safe_int(payload.get("chunk_size"), chunk_size_fallback)
+        )
+        chunk_overlap = max(
+            0, self._safe_int(payload.get("chunk_overlap"), chunk_overlap_fallback)
+        )
         provider = str(payload.get("embedding_provider", "openai"))
         model = str(payload.get("embedding_model", "text-embedding-3-small"))
 
@@ -161,7 +191,9 @@ class SearchKnowledgeTool:
                         parsed_embedding.append(float(item))
                     except Exception:
                         continue
-            chunks.append(RetrievalChunk(source=source, text=text, embedding=parsed_embedding))
+            chunks.append(
+                RetrievalChunk(source=source, text=text, embedding=parsed_embedding)
+            )
 
         store.replace_domain_index(
             domain="knowledge",
@@ -187,7 +219,9 @@ class SearchKnowledgeTool:
         except Exception:
             return None
 
-        digest = self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        digest = self._knowledge_digest(
+            files, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
         meta = store.get_meta("knowledge")
         if meta is None and self._index_file.exists():
             try:
@@ -207,7 +241,9 @@ class SearchKnowledgeTool:
         if meta is not None and str(meta.get("digest", "")) == digest:
             return store
 
-        payload = self._build_index(files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        payload = self._build_index(
+            files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
         rows = payload.get("rows", [])
         if not isinstance(rows, list):
             rows = []
@@ -237,23 +273,33 @@ class SearchKnowledgeTool:
                 chunk_size=chunk_size,
                 chunk_overlap=chunk_overlap,
                 embedding_provider=str(payload.get("embedding_provider", "openai")),
-                embedding_model=str(payload.get("embedding_model", "text-embedding-3-small")),
+                embedding_model=str(
+                    payload.get("embedding_model", "text-embedding-3-small")
+                ),
                 chunks=chunks,
             )
             return store
         except Exception:
             return None
 
-    def _load_or_rebuild_index(self, files: list[Path], *, chunk_size: int, chunk_overlap: int) -> dict[str, Any]:
-        digest = self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    def _load_or_rebuild_index(
+        self, files: list[Path], *, chunk_size: int, chunk_overlap: int
+    ) -> dict[str, Any]:
+        digest = self._knowledge_digest(
+            files, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
         if self._index_file.exists():
             payload = json.loads(self._index_file.read_text(encoding="utf-8"))
             if payload.get("digest") == digest:
                 return payload
 
         self._index_dir.mkdir(parents=True, exist_ok=True)
-        payload = self._build_index(files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self._index_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+        payload = self._build_index(
+            files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
+        self._index_file.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+        )
         return payload
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -309,7 +355,9 @@ class SearchKnowledgeTool:
                         duration_ms=int((time.monotonic() - started) * 1000),
                     )
 
-        payload = self._load_or_rebuild_index(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        payload = self._load_or_rebuild_index(
+            files, chunk_size=chunk_size, chunk_overlap=chunk_overlap
+        )
         rows = payload.get("rows", [])
         if not isinstance(rows, list):
             rows = []
@@ -326,7 +374,9 @@ class SearchKnowledgeTool:
             vector = 0.0
             if query_embedding:
                 vector = cosine_similarity(query_embedding, row.get("embedding", []))
-            score = (vector * float(self.semantic_weight)) + (lexical * float(self.lexical_weight))
+            score = (vector * float(self.semantic_weight)) + (
+                lexical * float(self.lexical_weight)
+            )
             if score > 0:
                 snippet = text[:300].replace("\n", " ")
                 scored.append((score, source, snippet))
