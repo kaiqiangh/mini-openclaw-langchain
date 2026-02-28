@@ -79,6 +79,7 @@ export default function SchedulerPage() {
     enabled: false,
   });
   const [tracingSaving, setTracingSaving] = useState(false);
+  const [tracingError, setTracingError] = useState("");
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig>({
     enabled: false,
     interval_seconds: 300,
@@ -95,27 +96,30 @@ export default function SchedulerPage() {
     setLoading(true);
     setError("");
     try {
-      const [
-        jobRows,
-        runRows,
-        failureRows,
-        heartbeatConfig,
-        heartbeatRunRows,
-        tracingConfig,
-      ] = await Promise.all([
+      const [jobRows, runRows, failureRows, heartbeatConfig, heartbeatRunRows] =
+        await Promise.all([
         listCronJobs(nextAgentId),
         listCronRuns(nextAgentId, 100),
         listCronFailures(nextAgentId, 100),
         getHeartbeatConfig(nextAgentId),
         listHeartbeatRuns(nextAgentId, 100),
-        getTracingConfig(),
       ]);
       setJobs(jobRows);
       setRuns(runRows);
       setFailures(failureRows);
       setHeartbeat(heartbeatConfig);
       setHeartbeatRuns(heartbeatRunRows);
-      setTracing(tracingConfig);
+      try {
+        const tracingConfig = await getTracingConfig();
+        setTracing(tracingConfig);
+        setTracingError("");
+      } catch (err) {
+        setTracingError(
+          err instanceof Error
+            ? err.message
+            : "Tracing config is unavailable",
+        );
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load scheduler data",
@@ -222,8 +226,57 @@ export default function SchedulerPage() {
               )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Agent {agentId}</Badge>
+              <button
+                type="button"
+                aria-label="Toggle LangSmith tracing"
+                title={
+                  tracingError
+                    ? "Tracing config unavailable"
+                    : "Toggle LangSmith tracing"
+                }
+                disabled={tracingSaving}
+                onClick={async () => {
+                  setTracingSaving(true);
+                  setError("");
+                  try {
+                    const next = await setTracingConfig(!tracing.enabled);
+                    setTracing(next);
+                    setTracingError("");
+                  } catch (err) {
+                    const message =
+                      err instanceof Error
+                        ? err.message
+                        : "Failed to update tracing config";
+                    setTracingError(message);
+                    setError(message);
+                  } finally {
+                    setTracingSaving(false);
+                  }
+                }}
+                className={`relative inline-flex h-7 w-14 items-center rounded-full border transition-colors ${
+                  tracing.enabled
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                    : "border-[var(--border-strong)] bg-[var(--surface-3)]"
+                } ${tracingSaving ? "cursor-not-allowed opacity-60" : ""}`}
+              >
+                <span
+                  className={`inline-block h-5 w-5 rounded-full border bg-[var(--surface)] transition-transform ${
+                    tracing.enabled
+                      ? "translate-x-8 border-[var(--accent-strong)]"
+                      : "translate-x-1 border-[var(--border-strong)]"
+                  }`}
+                />
+              </button>
+              <Badge tone={tracing.enabled ? "accent" : "neutral"}>
+                Trace {tracing.enabled ? "ON" : "OFF"}
+              </Badge>
             </div>
           </div>
+          {tracingError ? (
+            <div className="px-4 pb-2 text-[11px] text-[var(--warn)]">
+              Tracing toggle warning: {tracingError}
+            </div>
+          ) : null}
           <div className="grid gap-3 p-4 md:grid-cols-5">
             <label className="min-w-0">
               <span className="ui-label">Agent</span>
@@ -425,153 +478,102 @@ export default function SchedulerPage() {
             </TableWrap>
           </div>
 
-          <div className="min-h-0 space-y-3">
-            <div className="panel-shell min-h-0">
-              <div className="ui-panel-header">
-                <h2 className="ui-panel-title">Heartbeat</h2>
-                <Badge tone={heartbeat.enabled ? "success" : "warn"}>
-                  {heartbeat.enabled ? "Enabled" : "Disabled"}
-                </Badge>
-              </div>
-              <div className="space-y-2 p-4">
-                <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                  <input
-                    type="checkbox"
-                    checked={heartbeat.enabled}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        enabled: event.target.checked,
-                      }))
-                    }
-                  />
-                  Enabled
-                </label>
-                <label className="block">
-                  <span className="ui-label">Interval Seconds</span>
-                  <Input
-                    className="mt-1 ui-mono text-xs"
-                    value={String(heartbeat.interval_seconds)}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        interval_seconds: Number(event.target.value || 0),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="ui-label">Timezone</span>
-                  <Input
-                    className="mt-1 ui-mono text-xs"
-                    value={heartbeat.timezone}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        timezone: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="ui-label">Active Start Hour</span>
-                  <Input
-                    className="mt-1 ui-mono text-xs"
-                    value={String(heartbeat.active_start_hour)}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        active_start_hour: Number(event.target.value || 0),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="ui-label">Active End Hour</span>
-                  <Input
-                    className="mt-1 ui-mono text-xs"
-                    value={String(heartbeat.active_end_hour)}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        active_end_hour: Number(event.target.value || 0),
-                      }))
-                    }
-                  />
-                </label>
-                <label className="block">
-                  <span className="ui-label">Session ID</span>
-                  <Input
-                    className="mt-1 ui-mono text-xs"
-                    value={heartbeat.session_id}
-                    onChange={(event) =>
-                      setHeartbeat((prev) => ({
-                        ...prev,
-                        session_id: event.target.value,
-                      }))
-                    }
-                  />
-                </label>
-                <Button
-                  type="button"
-                  className="w-full text-xs"
-                  onClick={async () => {
-                    await updateHeartbeatConfig(heartbeat, agentId);
-                    await refreshAll(agentId);
-                  }}
-                >
-                  Save Heartbeat
-                </Button>
-              </div>
+          <div className="panel-shell min-h-0">
+            <div className="ui-panel-header">
+              <h2 className="ui-panel-title">Heartbeat</h2>
+              <Badge tone={heartbeat.enabled ? "success" : "warn"}>
+                {heartbeat.enabled ? "Enabled" : "Disabled"}
+              </Badge>
             </div>
-
-            <div className="panel-shell">
-              <div className="ui-panel-header">
-                <h2 className="ui-panel-title">Tracing</h2>
-                <Badge tone={tracing.enabled ? "accent" : "neutral"}>
-                  {tracing.enabled ? "LangSmith ON" : "LangSmith OFF"}
-                </Badge>
-              </div>
-              <div className="space-y-3 p-4">
-                <p className="text-xs text-[var(--muted)]">
-                  Global observability toggle. Controls{" "}
-                  <span className="ui-mono">OBS_TRACING_ENABLED</span>.
-                </p>
-                <button
-                  type="button"
-                  aria-label="Toggle LangSmith tracing"
-                  disabled={tracingSaving}
-                  onClick={async () => {
-                    setTracingSaving(true);
-                    setError("");
-                    try {
-                      const next = await setTracingConfig(!tracing.enabled);
-                      setTracing(next);
-                    } catch (err) {
-                      setError(
-                        err instanceof Error
-                          ? err.message
-                          : "Failed to update tracing config",
-                      );
-                    } finally {
-                      setTracingSaving(false);
-                    }
-                  }}
-                  className={`relative inline-flex h-8 w-16 items-center rounded-full border transition-colors ${
-                    tracing.enabled
-                      ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-                      : "border-[var(--border-strong)] bg-[var(--surface-3)]"
-                  } ${tracingSaving ? "cursor-not-allowed opacity-60" : ""}`}
-                >
-                  <span
-                    className={`inline-block h-6 w-6 rounded-full border bg-[var(--surface)] transition-transform ${
-                      tracing.enabled
-                        ? "translate-x-9 border-[var(--accent-strong)]"
-                        : "translate-x-1 border-[var(--border-strong)]"
-                    }`}
-                  />
-                </button>
-              </div>
+            <div className="space-y-2 p-4">
+              <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={heartbeat.enabled}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      enabled: event.target.checked,
+                    }))
+                  }
+                />
+                Enabled
+              </label>
+              <label className="block">
+                <span className="ui-label">Interval Seconds</span>
+                <Input
+                  className="mt-1 ui-mono text-xs"
+                  value={String(heartbeat.interval_seconds)}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      interval_seconds: Number(event.target.value || 0),
+                    }))
+                  }
+                />
+              </label>
+              <label className="block">
+                <span className="ui-label">Timezone</span>
+                <Input
+                  className="mt-1 ui-mono text-xs"
+                  value={heartbeat.timezone}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      timezone: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label className="block">
+                <span className="ui-label">Active Start Hour</span>
+                <Input
+                  className="mt-1 ui-mono text-xs"
+                  value={String(heartbeat.active_start_hour)}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      active_start_hour: Number(event.target.value || 0),
+                    }))
+                  }
+                />
+              </label>
+              <label className="block">
+                <span className="ui-label">Active End Hour</span>
+                <Input
+                  className="mt-1 ui-mono text-xs"
+                  value={String(heartbeat.active_end_hour)}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      active_end_hour: Number(event.target.value || 0),
+                    }))
+                  }
+                />
+              </label>
+              <label className="block">
+                <span className="ui-label">Session ID</span>
+                <Input
+                  className="mt-1 ui-mono text-xs"
+                  value={heartbeat.session_id}
+                  onChange={(event) =>
+                    setHeartbeat((prev) => ({
+                      ...prev,
+                      session_id: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <Button
+                type="button"
+                className="w-full text-xs"
+                onClick={async () => {
+                  await updateHeartbeatConfig(heartbeat, agentId);
+                  await refreshAll(agentId);
+                }}
+              >
+                Save Heartbeat
+              </Button>
             </div>
           </div>
         </div>
