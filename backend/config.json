@@ -3,6 +3,33 @@
   "injection_mode": "every_turn",
   "bootstrap_max_chars": 20000,
   "bootstrap_total_max_chars": 150000,
+  "agent_runtime": {
+    "max_steps": 20,
+    "max_retries": 1
+  },
+  "llm_runtime": {
+    "temperature": 0.2,
+    "timeout_seconds": 60
+  },
+  "retrieval": {
+    "memory": {
+      "top_k": 3,
+      "semantic_weight": 0.7,
+      "lexical_weight": 0.3,
+      "chunk_size": 256,
+      "chunk_overlap": 32
+    },
+    "knowledge": {
+      "top_k": 3,
+      "semantic_weight": 0.7,
+      "lexical_weight": 0.3,
+      "chunk_size": 400,
+      "chunk_overlap": 80
+    }
+  },
+  "tool_retry_guard": {
+    "repeat_identical_failure_limit": 2
+  },
   "tool_timeouts": {
     "terminal_seconds": 30,
     "python_repl_seconds": 30,
