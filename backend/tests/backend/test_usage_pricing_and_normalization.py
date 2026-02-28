@@ -224,3 +224,21 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     assert usage_state["input_cache_read_tokens"] == 120
     assert usage_state["output_tokens"] == 20
     assert usage_state["total_tokens"] == 220
+
+
+def test_reasoner_tool_loop_model_defaults_to_deepseek_chat(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_TOOL_MODEL", raising=False)
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="deepseek-reasoner",
+        has_tools=True,
+    )
+    assert selected == "deepseek-chat"
+
+
+def test_reasoner_tool_loop_model_respects_override(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_TOOL_MODEL", "deepseek-v3.1")
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="deepseek-reasoner",
+        has_tools=True,
+    )
+    assert selected == "deepseek-v3.1"

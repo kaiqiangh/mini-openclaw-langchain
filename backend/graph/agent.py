@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 import uuid
@@ -94,6 +95,17 @@ class AgentManager:
             "timeout": runtime.llm_runtime.timeout_seconds,
         }
         return ChatOpenAI(**llm_kwargs)
+
+    @staticmethod
+    def _resolve_tool_loop_model(configured_model: str, has_tools: bool) -> str:
+        """Select a tool-compatible model when provider requirements demand it."""
+        model = configured_model.strip() or "deepseek-chat"
+        if not has_tools:
+            return model
+        if model.lower() != "deepseek-reasoner":
+            return model
+        override = (os.getenv("DEEPSEEK_TOOL_MODEL", "deepseek-chat") or "").strip()
+        return override or model
 
     def _require_initialized(self) -> tuple[Path, Path]:
         if self.base_dir is None or self.workspaces_dir is None:
@@ -305,7 +317,7 @@ class AgentManager:
         return root
 
     def _build_runtime(self, agent_id: str) -> AgentRuntime:
-        if self.base_dir is None:
+        if self.base_dir is None or self.config is None:
             raise RuntimeError("AgentManager is not initialized")
         workspace_root = self._ensure_workspace(agent_id)
         global_config_path, agent_config_path = self._runtime_config_paths(
@@ -497,7 +509,7 @@ class AgentManager:
         runtime_root: Path,
         runtime_audit_store: AuditStore,
         response_format: Any | None = None,
-    ) -> Any:
+    ) -> tuple[Any, str]:
         if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
 
@@ -524,20 +536,34 @@ class AgentManager:
                 session_id=session_id,
             ),
         )
+        configured_model = str(self.config.secrets.deepseek_model)
+        selected_model = self._resolve_tool_loop_model(
+            configured_model=configured_model,
+            has_tools=bool(langchain_tools),
+        )
+        active_llm = llm
+        if selected_model != configured_model:
+            active_llm = ChatOpenAI(
+                model=selected_model,
+                api_key=SecretStr(self.config.secrets.deepseek_api_key),
+                base_url=self.config.secrets.deepseek_base_url,
+                temperature=runtime.llm_runtime.temperature,
+                timeout=runtime.llm_runtime.timeout_seconds,
+            )
 
         if response_format is None:
             return create_agent(
-                model=llm,
+                model=active_llm,
                 tools=langchain_tools,
                 system_prompt=system_prompt,
-            )
+            ), selected_model
 
         return create_agent(
-            model=llm,
+            model=active_llm,
             tools=langchain_tools,
             system_prompt=system_prompt,
             response_format=response_format,
-        )
+        ), selected_model
 
     @staticmethod
     def _as_text(content: Any) -> str:
@@ -765,11 +791,14 @@ class AgentManager:
         usage_sources: dict[str, dict[str, int]],
         messages: list[Any],
         source_prefix: str,
+        fallback_model: str | None = None,
         source_offset: int = 0,
     ) -> bool:
         changed = False
         for index, message in enumerate(messages):
-            candidate = self._extract_usage_from_message(message)
+            candidate = self._extract_usage_from_message(
+                message, fallback_model=fallback_model
+            )
             source_id = str(getattr(message, "id", "")).strip()
             if source_id:
                 source_key = f"{source_prefix}:{source_id}"
@@ -798,12 +827,17 @@ class AgentManager:
         )
         return "|".join(parts)
 
-    def _extract_usage_from_message(self, message: Any) -> dict[str, Any]:
+    def _extract_usage_from_message(
+        self, message: Any, fallback_model: str | None = None
+    ) -> dict[str, Any]:
         if self.config is None:
             return {}
+        model_fallback = (fallback_model or self.config.secrets.deepseek_model).strip()
+        if not model_fallback:
+            model_fallback = self.config.secrets.deepseek_model
         return extract_usage_from_message(
             message=message,
-            fallback_model=self.config.secrets.deepseek_model,
+            fallback_model=model_fallback,
             fallback_base_url=self.config.secrets.deepseek_base_url,
         )
 
@@ -1009,7 +1043,7 @@ class AgentManager:
             response_schema = RunJsonResponse
 
         run_id = str(uuid.uuid4())
-        agent = self._build_agent(
+        agent, active_model = self._build_agent(
             llm=llm,
             runtime=effective_runtime,
             system_prompt=system_prompt,
@@ -1037,12 +1071,12 @@ class AgentManager:
         result = await agent.ainvoke({"messages": messages}, config=config)
         usage_payload: dict[str, Any] | None = None
         default_provider = infer_provider(
-            self.config.secrets.deepseek_model,
+            active_model,
             base_url=self.config.secrets.deepseek_base_url,
         )
         usage_state: dict[str, Any] = {
             "provider": default_provider,
-            "model": self.config.secrets.deepseek_model,
+            "model": active_model,
             "model_source": "fallback_model",
             "usage_source": "unknown",
             "input_tokens": 0,
@@ -1064,6 +1098,7 @@ class AgentManager:
             usage_sources=usage_sources,
             messages=captured_messages,
             source_prefix=f"llm_end:{run_id}",
+            fallback_model=active_model,
         )
 
         output_messages = result.get("messages", [])
@@ -1076,6 +1111,7 @@ class AgentManager:
                 usage_sources=usage_sources,
                 messages=output_messages,
                 source_prefix=f"result:{run_id}",
+                fallback_model=active_model,
             )
 
         if self._as_int(usage_state.get("total_tokens", 0)) > 0:
@@ -1171,7 +1207,7 @@ class AgentManager:
                     "type": "run_start",
                     "data": {"run_id": run_id, "attempt": attempt + 1},
                 }
-                agent = self._build_agent(
+                agent, active_model = self._build_agent(
                     llm=llm,
                     runtime=effective_runtime,
                     system_prompt=system_prompt,
@@ -1190,6 +1226,11 @@ class AgentManager:
                     runtime_audit_store=runtime_state.audit_store,
                 )
                 usage_capture_offset = 0
+                usage_state["provider"] = infer_provider(
+                    active_model,
+                    base_url=self.config.secrets.deepseek_base_url,
+                )
+                usage_state["model"] = active_model
 
                 config = {
                     "recursion_limit": effective_runtime.agent_runtime.max_steps,
@@ -1351,6 +1392,7 @@ class AgentManager:
                             usage_sources=usage_sources,
                             messages=captured_messages[usage_capture_offset:],
                             source_prefix=f"llm_end:{run_id}",
+                            fallback_model=active_model,
                             source_offset=usage_capture_offset,
                         )
                         usage_capture_offset = len(captured_messages)
@@ -1417,6 +1459,7 @@ class AgentManager:
                         usage_sources=usage_sources,
                         messages=captured_messages[usage_capture_offset:],
                         source_prefix=f"llm_end:{run_id}",
+                        fallback_model=active_model,
                         source_offset=usage_capture_offset,
                     )
                     usage_capture_offset = len(captured_messages)
