@@ -36,6 +36,7 @@ def _require_store(agent_id: str) -> UsageStore:
 @router.get("/usage/records")
 async def get_usage_records(
     since_hours: int = Query(default=24, ge=1, le=24 * 365),
+    provider: str | None = None,
     model: str | None = None,
     trigger_type: str | None = None,
     session_id: str | None = None,
@@ -45,6 +46,7 @@ async def get_usage_records(
     store = _require_store(agent_id)
     query = UsageQuery(
         since_hours=since_hours,
+        provider=provider,
         model=model,
         trigger_type=trigger_type,
         session_id=session_id,
@@ -56,6 +58,7 @@ async def get_usage_records(
             "filters": {
                 "agent_id": agent_id,
                 "since_hours": since_hours,
+                "provider": provider or "",
                 "model": model or "",
                 "trigger_type": trigger_type or "",
                 "session_id": session_id or "",
@@ -70,6 +73,7 @@ async def get_usage_records(
 @router.get("/usage/summary")
 async def get_usage_summary(
     since_hours: int = Query(default=24, ge=1, le=24 * 365),
+    provider: str | None = None,
     model: str | None = None,
     trigger_type: str | None = None,
     session_id: str | None = None,
@@ -79,6 +83,7 @@ async def get_usage_summary(
     records = store.query_records(
         UsageQuery(
             since_hours=since_hours,
+            provider=provider,
             model=model,
             trigger_type=trigger_type,
             session_id=session_id,
@@ -91,12 +96,14 @@ async def get_usage_summary(
             "filters": {
                 "agent_id": agent_id,
                 "since_hours": since_hours,
+                "provider": provider or "",
                 "model": model or "",
                 "trigger_type": trigger_type or "",
                 "session_id": session_id or "",
             },
             "totals": summary["totals"],
-            "by_model": summary["by_model"],
+            "by_provider_model": summary["by_provider_model"],
+            "by_provider": summary["by_provider"],
             "count": len(records),
         }
     }

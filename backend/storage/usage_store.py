@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from usage.pricing import resolve_model_pricing
-
 
 @dataclass
 class UsageQuery:
     since_hours: int = 24
+    provider: str | None = None
     model: str | None = None
     trigger_type: str | None = None
     session_id: str | None = None
@@ -51,301 +50,176 @@ class UsageStore:
         return rows
 
     @staticmethod
-    def _int(value: Any) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return 0
-
-    @staticmethod
-    def _float(value: Any) -> float:
-        try:
-            return float(value)
-        except Exception:
-            return 0.0
-
-    @staticmethod
-    def _coerce_int(value: Any) -> tuple[int, bool]:
+    def _coerce_int(value: Any) -> int:
         if isinstance(value, bool):
-            return int(value), True
+            return int(value)
         if isinstance(value, int):
-            return value, True
+            return value
         if isinstance(value, float):
             if math.isfinite(value):
-                return int(value), True
-            return 0, False
+                return int(value)
+            return 0
         if isinstance(value, str):
             raw = value.strip().replace(",", "")
             if not raw:
-                return 0, False
+                return 0
             try:
-                return int(raw), True
+                return int(raw)
             except Exception:
                 try:
-                    return int(float(raw)), True
+                    return int(float(raw))
                 except Exception:
-                    return 0, False
-        return 0, False
+                    return 0
+        return 0
 
     @staticmethod
-    def _clamp(value: float, low: float, high: float) -> float:
-        return max(low, min(high, value))
-
-    def _build_model_profiles(
-        self, rows: list[dict[str, Any]]
-    ) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
-        accum: dict[str, dict[str, float]] = {}
-        global_accum = {
-            "samples": 0.0,
-            "output_ratio": 0.0,
-            "cached_ratio": 0.0,
-            "reasoning_ratio": 0.0,
-        }
-
-        for row in rows:
-            model_key = str(row.get("model", "unknown")).strip().lower() or "unknown"
-
-            input_tokens, input_ok = self._coerce_int(row.get("input_tokens", 0))
-            cached_tokens, cached_ok = self._coerce_int(
-                row.get("cached_input_tokens", 0)
-            )
-            output_tokens, output_ok = self._coerce_int(row.get("output_tokens", 0))
-            reasoning_tokens, reasoning_ok = self._coerce_int(
-                row.get("reasoning_tokens", 0)
-            )
-            total_tokens, total_ok = self._coerce_int(row.get("total_tokens", 0))
-
-            input_tokens = max(0, input_tokens)
-            cached_tokens = max(0, cached_tokens)
-            output_tokens = max(0, output_tokens)
-            reasoning_tokens = max(0, reasoning_tokens)
-            total_tokens = max(0, total_tokens)
-
-            if not total_ok and input_ok and output_ok:
-                total_tokens = input_tokens + output_tokens
-                total_ok = True
-
-            if not total_ok or total_tokens <= 0:
-                continue
-
-            if not input_ok:
-                input_tokens = max(0, total_tokens - output_tokens)
-            if not output_ok:
-                output_tokens = max(0, total_tokens - input_tokens)
-            if not cached_ok:
-                cached_tokens = 0
-            if not reasoning_ok:
-                reasoning_tokens = 0
-
-            cached_tokens = min(cached_tokens, input_tokens)
-            reasoning_tokens = min(reasoning_tokens, output_tokens)
-            total_tokens = max(total_tokens, input_tokens + output_tokens)
-            if total_tokens <= 0:
-                continue
-
-            output_ratio = self._clamp(output_tokens / total_tokens, 0.0, 1.0)
-            cached_ratio = self._clamp(
-                (cached_tokens / input_tokens) if input_tokens > 0 else 0.0, 0.0, 1.0
-            )
-            reasoning_ratio = self._clamp(
-                (reasoning_tokens / output_tokens) if output_tokens > 0 else 0.0,
-                0.0,
-                1.0,
-            )
-
-            bucket = accum.setdefault(
-                model_key,
-                {
-                    "samples": 0.0,
-                    "output_ratio": 0.0,
-                    "cached_ratio": 0.0,
-                    "reasoning_ratio": 0.0,
-                },
-            )
-            bucket["samples"] += 1.0
-            bucket["output_ratio"] += output_ratio
-            bucket["cached_ratio"] += cached_ratio
-            bucket["reasoning_ratio"] += reasoning_ratio
-
-            global_accum["samples"] += 1.0
-            global_accum["output_ratio"] += output_ratio
-            global_accum["cached_ratio"] += cached_ratio
-            global_accum["reasoning_ratio"] += reasoning_ratio
-
-        profiles: dict[str, dict[str, float]] = {}
-        for key, bucket in accum.items():
-            samples = max(1.0, bucket["samples"])
-            profiles[key] = {
-                "output_ratio": bucket["output_ratio"] / samples,
-                "cached_ratio": bucket["cached_ratio"] / samples,
-                "reasoning_ratio": bucket["reasoning_ratio"] / samples,
-            }
-
-        global_samples = max(1.0, global_accum["samples"])
-        global_profile = {
-            "output_ratio": (
-                global_accum["output_ratio"] / global_samples
-                if global_accum["samples"] > 0
-                else 0.35
-            ),
-            "cached_ratio": (
-                global_accum["cached_ratio"] / global_samples
-                if global_accum["samples"] > 0
-                else 0.0
-            ),
-            "reasoning_ratio": (
-                global_accum["reasoning_ratio"] / global_samples
-                if global_accum["samples"] > 0
-                else 0.0
-            ),
-        }
-        return profiles, global_profile
-
-    def _infer_tokens_from_cost(
-        self,
-        *,
-        model: str,
-        estimated_cost_usd: float,
-        profile: dict[str, float] | None,
-    ) -> dict[str, int] | None:
-        pricing = resolve_model_pricing(model)
-        if pricing is None or estimated_cost_usd <= 0:
+    def _coerce_float(value: Any) -> float | None:
+        if value is None:
             return None
+        if isinstance(value, bool):
+            return float(value)
+        if isinstance(value, (int, float)):
+            cast = float(value)
+            return cast if math.isfinite(cast) else None
+        if isinstance(value, str):
+            raw = value.strip().replace(",", "")
+            if not raw:
+                return None
+            try:
+                cast = float(raw)
+            except Exception:
+                return None
+            return cast if math.isfinite(cast) else None
+        return None
 
-        profile = profile or {}
-        output_ratio = self._clamp(float(profile.get("output_ratio", 0.35)), 0.05, 0.95)
-        cached_ratio = self._clamp(float(profile.get("cached_ratio", 0.0)), 0.0, 0.95)
-        reasoning_ratio = self._clamp(
-            float(profile.get("reasoning_ratio", 0.0)), 0.0, 0.95
+    @staticmethod
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "y", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "n", "off", ""}:
+                return False
+        return False
+
+    def _normalize_record(self, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+
+        provider = str(normalized.get("provider", "unknown")).strip().lower() or "unknown"
+        model = str(normalized.get("model", "unknown")).strip() or "unknown"
+        trigger_type = str(normalized.get("trigger_type", "")).strip().lower()
+        session_id = str(normalized.get("session_id", "")).strip()
+        run_id = str(normalized.get("run_id", "")).strip()
+
+        input_tokens = max(0, self._coerce_int(normalized.get("input_tokens", 0)))
+        input_uncached_tokens = max(
+            0, self._coerce_int(normalized.get("input_uncached_tokens", 0))
+        )
+        input_cache_read_tokens = max(
+            0, self._coerce_int(normalized.get("input_cache_read_tokens", 0))
+        )
+        input_cache_write_tokens_5m = max(
+            0, self._coerce_int(normalized.get("input_cache_write_tokens_5m", 0))
+        )
+        input_cache_write_tokens_1h = max(
+            0, self._coerce_int(normalized.get("input_cache_write_tokens_1h", 0))
+        )
+        input_cache_write_tokens_unknown = max(
+            0,
+            self._coerce_int(normalized.get("input_cache_write_tokens_unknown", 0)),
         )
 
-        blended_input_cost = (
-            (1.0 - cached_ratio) * pricing.input_usd_per_1m
-            + cached_ratio * pricing.cached_input_usd_per_1m
-        )
-        blended_cost_per_1m = (
-            1.0 - output_ratio
-        ) * blended_input_cost + output_ratio * pricing.output_usd_per_1m
-        if blended_cost_per_1m <= 0:
-            return None
-
-        total_tokens = max(
-            1, int(round((estimated_cost_usd * 1_000_000.0) / blended_cost_per_1m))
-        )
-        output_tokens = int(round(total_tokens * output_ratio))
-        output_tokens = max(0, min(output_tokens, total_tokens))
-        input_tokens = max(0, total_tokens - output_tokens)
-        cached_input_tokens = max(
-            0, min(int(round(input_tokens * cached_ratio)), input_tokens)
-        )
-        uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
+        output_tokens = max(0, self._coerce_int(normalized.get("output_tokens", 0)))
         reasoning_tokens = max(
-            0, min(int(round(output_tokens * reasoning_ratio)), output_tokens)
+            0, self._coerce_int(normalized.get("reasoning_tokens", 0))
         )
+        tool_input_tokens = max(
+            0, self._coerce_int(normalized.get("tool_input_tokens", 0))
+        )
+        total_tokens = max(0, self._coerce_int(normalized.get("total_tokens", 0)))
+
+        cache_write_total = (
+            input_cache_write_tokens_5m
+            + input_cache_write_tokens_1h
+            + input_cache_write_tokens_unknown
+        )
+
+        if input_tokens <= 0 and (
+            input_uncached_tokens > 0
+            or input_cache_read_tokens > 0
+            or cache_write_total > 0
+        ):
+            input_tokens = (
+                input_uncached_tokens + input_cache_read_tokens + cache_write_total
+            )
+
+        if input_uncached_tokens <= 0 and input_tokens > 0:
+            input_uncached_tokens = max(
+                0,
+                input_tokens - input_cache_read_tokens - cache_write_total,
+            )
+
+        if input_uncached_tokens > input_tokens:
+            input_uncached_tokens = input_tokens
+
+        if total_tokens <= 0:
+            total_tokens = input_tokens + output_tokens + tool_input_tokens
+        else:
+            total_tokens = max(total_tokens, input_tokens + output_tokens + tool_input_tokens)
+
+        pricing = normalized.get("pricing")
+        pricing_payload = pricing if isinstance(pricing, dict) else {}
+
+        cost_usd = self._coerce_float(normalized.get("cost_usd"))
+        if cost_usd is None:
+            cost_usd = self._coerce_float(pricing_payload.get("total_cost_usd"))
+
+        priced = self._coerce_bool(normalized.get("priced"))
+        if "priced" not in normalized:
+            priced = self._coerce_bool(pricing_payload.get("priced"))
+
+        if not priced:
+            cost_usd = None
+
+        timestamp_ms = max(0, self._coerce_int(normalized.get("timestamp_ms", 0)))
+
         return {
+            "schema_version": self._coerce_int(normalized.get("schema_version", 2))
+            or 2,
+            "timestamp_ms": timestamp_ms,
+            "agent_id": str(normalized.get("agent_id", "default")).strip() or "default",
+            "provider": provider,
+            "model": model,
+            "model_source": str(normalized.get("model_source", "unknown")).strip()
+            or "unknown",
+            "usage_source": str(normalized.get("usage_source", "unknown")).strip()
+            or "unknown",
+            "trigger_type": trigger_type,
+            "run_id": run_id,
+            "session_id": session_id,
             "input_tokens": input_tokens,
-            "cached_input_tokens": cached_input_tokens,
-            "uncached_input_tokens": uncached_input_tokens,
+            "input_uncached_tokens": input_uncached_tokens,
+            "input_cache_read_tokens": input_cache_read_tokens,
+            "input_cache_write_tokens_5m": input_cache_write_tokens_5m,
+            "input_cache_write_tokens_1h": input_cache_write_tokens_1h,
+            "input_cache_write_tokens_unknown": input_cache_write_tokens_unknown,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "tool_input_tokens": tool_input_tokens,
             "total_tokens": total_tokens,
+            "priced": priced,
+            "cost_usd": round(cost_usd, 8) if cost_usd is not None else None,
+            "pricing": pricing_payload,
         }
-
-    def _normalize_record(
-        self,
-        row: dict[str, Any],
-        *,
-        model_profiles: dict[str, dict[str, float]],
-        global_profile: dict[str, float],
-    ) -> dict[str, Any]:
-        normalized = dict(row)
-        model = str(normalized.get("model", "unknown")).strip() or "unknown"
-        model_key = model.lower()
-
-        input_tokens, input_ok = self._coerce_int(normalized.get("input_tokens", 0))
-        cached_tokens, cached_ok = self._coerce_int(
-            normalized.get("cached_input_tokens", 0)
-        )
-        uncached_tokens, uncached_ok = self._coerce_int(
-            normalized.get("uncached_input_tokens", 0)
-        )
-        output_tokens, output_ok = self._coerce_int(normalized.get("output_tokens", 0))
-        reasoning_tokens, reasoning_ok = self._coerce_int(
-            normalized.get("reasoning_tokens", 0)
-        )
-        total_tokens, total_ok = self._coerce_int(normalized.get("total_tokens", 0))
-
-        input_tokens = max(0, input_tokens)
-        cached_tokens = max(0, cached_tokens)
-        uncached_tokens = max(0, uncached_tokens)
-        output_tokens = max(0, output_tokens)
-        reasoning_tokens = max(0, reasoning_tokens)
-        total_tokens = max(0, total_tokens)
-
-        if not total_ok and input_ok and output_ok:
-            total_tokens = input_tokens + output_tokens
-            total_ok = True
-        if not input_ok and total_ok and output_ok:
-            input_tokens = max(0, total_tokens - output_tokens)
-            input_ok = True
-        if not output_ok and total_ok and input_ok:
-            output_tokens = max(0, total_tokens - input_tokens)
-            output_ok = True
-        if not cached_ok:
-            cached_tokens = 0
-            cached_ok = True
-        cached_tokens = min(cached_tokens, input_tokens)
-        if not uncached_ok:
-            uncached_tokens = max(0, input_tokens - cached_tokens)
-            uncached_ok = True
-        if not reasoning_ok:
-            reasoning_tokens = 0
-            reasoning_ok = True
-        reasoning_tokens = min(reasoning_tokens, output_tokens)
-        if total_tokens <= 0 and (input_tokens > 0 or output_tokens > 0):
-            total_tokens = input_tokens + output_tokens
-            total_ok = True
-        if total_tokens < input_tokens + output_tokens:
-            total_tokens = input_tokens + output_tokens
-
-        estimated_cost_usd = self._float(normalized.get("estimated_cost_usd", 0.0))
-        needs_inference = (
-            input_tokens <= 0 and output_tokens <= 0 and total_tokens <= 0
-        ) and estimated_cost_usd > 0.0
-        if needs_inference:
-            inferred = self._infer_tokens_from_cost(
-                model=model,
-                estimated_cost_usd=estimated_cost_usd,
-                profile=model_profiles.get(model_key, global_profile),
-            )
-            if inferred is not None:
-                input_tokens = inferred["input_tokens"]
-                cached_tokens = inferred["cached_input_tokens"]
-                uncached_tokens = inferred["uncached_input_tokens"]
-                output_tokens = inferred["output_tokens"]
-                reasoning_tokens = inferred["reasoning_tokens"]
-                total_tokens = inferred["total_tokens"]
-                normalized["token_estimation"] = "inferred_from_cost"
-
-        cached_tokens = min(cached_tokens, input_tokens)
-        uncached_tokens = max(0, input_tokens - cached_tokens)
-        reasoning_tokens = min(reasoning_tokens, output_tokens)
-        if total_tokens <= 0 and (input_tokens > 0 or output_tokens > 0):
-            total_tokens = input_tokens + output_tokens
-        total_tokens = max(total_tokens, input_tokens + output_tokens)
-
-        normalized["input_tokens"] = input_tokens
-        normalized["cached_input_tokens"] = cached_tokens
-        normalized["uncached_input_tokens"] = uncached_tokens
-        normalized["output_tokens"] = output_tokens
-        normalized["reasoning_tokens"] = reasoning_tokens
-        normalized["total_tokens"] = total_tokens
-        normalized["estimated_cost_usd"] = estimated_cost_usd
-        return normalized
 
     def query_records(self, query: UsageQuery) -> list[dict[str, Any]]:
         now_ms = int(time.time() * 1000)
         min_ts = now_ms - max(1, int(query.since_hours)) * 3600 * 1000
+        provider_filter = query.provider.strip().lower() if query.provider else None
         model_filter = query.model.strip().lower() if query.model else None
         trigger_filter = (
             query.trigger_type.strip().lower() if query.trigger_type else None
@@ -353,93 +227,153 @@ class UsageStore:
         session_filter = query.session_id.strip() if query.session_id else None
 
         filtered: list[dict[str, Any]] = []
-        for row in self._iter_records():
-            ts = int(row.get("timestamp_ms", 0))
-            if ts < min_ts:
+        for raw in self._iter_records():
+            row = self._normalize_record(raw)
+            if int(row.get("timestamp_ms", 0)) < min_ts:
                 continue
-            model = str(row.get("model", "")).strip().lower()
+            provider = str(row.get("provider", "")).lower()
+            model = str(row.get("model", "")).lower()
+            trigger = str(row.get("trigger_type", "")).lower()
+            session_id = str(row.get("session_id", "")).strip()
+
+            if provider_filter and provider != provider_filter:
+                continue
             if model_filter and model != model_filter:
                 continue
-            trigger = str(row.get("trigger_type", "")).strip().lower()
             if trigger_filter and trigger != trigger_filter:
                 continue
-            session_id = str(row.get("session_id", "")).strip()
             if session_filter and session_id != session_filter:
                 continue
             filtered.append(row)
 
-        model_profiles, global_profile = self._build_model_profiles(filtered)
-        normalized_rows = [
-            self._normalize_record(
-                item, model_profiles=model_profiles, global_profile=global_profile
-            )
-            for item in filtered
-        ]
-        normalized_rows.sort(
-            key=lambda item: int(item.get("timestamp_ms", 0)), reverse=True
-        )
-        return normalized_rows[: max(1, int(query.limit))]
+        filtered.sort(key=lambda item: int(item.get("timestamp_ms", 0)), reverse=True)
+        return filtered[: max(1, int(query.limit))]
 
     def summarize(self, records: list[dict[str, Any]]) -> dict[str, Any]:
-        model_profiles, global_profile = self._build_model_profiles(records)
-        normalized_records = [
-            self._normalize_record(
-                item, model_profiles=model_profiles, global_profile=global_profile
-            )
-            for item in records
-        ]
+        normalized_records = [self._normalize_record(item) for item in records]
 
-        totals = {
+        totals: dict[str, Any] = {
             "runs": len(normalized_records),
+            "priced_runs": 0,
+            "unpriced_runs": 0,
             "input_tokens": 0,
-            "cached_input_tokens": 0,
-            "uncached_input_tokens": 0,
+            "input_uncached_tokens": 0,
+            "input_cache_read_tokens": 0,
+            "input_cache_write_tokens_5m": 0,
+            "input_cache_write_tokens_1h": 0,
+            "input_cache_write_tokens_unknown": 0,
             "output_tokens": 0,
             "reasoning_tokens": 0,
+            "tool_input_tokens": 0,
             "total_tokens": 0,
-            "estimated_cost_usd": 0.0,
+            "cost_usd": 0.0,
         }
 
-        by_model: dict[str, dict[str, Any]] = {}
+        by_provider_model: dict[str, dict[str, Any]] = {}
+        by_provider: dict[str, dict[str, Any]] = {}
+
         for row in normalized_records:
-            model = str(row.get("model", "unknown")).strip() or "unknown"
-            block = by_model.setdefault(
-                model,
+            provider = str(row.get("provider", "unknown"))
+            model = str(row.get("model", "unknown"))
+            key = f"{provider}|{model}"
+
+            model_bucket = by_provider_model.setdefault(
+                key,
                 {
+                    "provider": provider,
                     "model": model,
                     "runs": 0,
+                    "priced_runs": 0,
+                    "unpriced_runs": 0,
                     "input_tokens": 0,
-                    "cached_input_tokens": 0,
-                    "uncached_input_tokens": 0,
+                    "input_uncached_tokens": 0,
+                    "input_cache_read_tokens": 0,
+                    "input_cache_write_tokens_5m": 0,
+                    "input_cache_write_tokens_1h": 0,
+                    "input_cache_write_tokens_unknown": 0,
                     "output_tokens": 0,
                     "reasoning_tokens": 0,
+                    "tool_input_tokens": 0,
                     "total_tokens": 0,
-                    "estimated_cost_usd": 0.0,
+                    "cost_usd": 0.0,
                 },
             )
-            block["runs"] += 1
-            for key in (
+
+            provider_bucket = by_provider.setdefault(
+                provider,
+                {
+                    "provider": provider,
+                    "runs": 0,
+                    "priced_runs": 0,
+                    "unpriced_runs": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "cost_usd": 0.0,
+                },
+            )
+
+            numeric_fields = (
                 "input_tokens",
-                "cached_input_tokens",
-                "uncached_input_tokens",
+                "input_uncached_tokens",
+                "input_cache_read_tokens",
+                "input_cache_write_tokens_5m",
+                "input_cache_write_tokens_1h",
+                "input_cache_write_tokens_unknown",
                 "output_tokens",
                 "reasoning_tokens",
+                "tool_input_tokens",
                 "total_tokens",
-            ):
-                value = self._int(row.get(key, 0))
-                block[key] += value
-                totals[key] += value
+            )
 
-            cost = self._float(row.get("estimated_cost_usd", 0.0))
-            block["estimated_cost_usd"] = round(block["estimated_cost_usd"] + cost, 8)
-            totals["estimated_cost_usd"] = round(totals["estimated_cost_usd"] + cost, 8)
+            model_bucket["runs"] += 1
+            provider_bucket["runs"] += 1
+            for field in numeric_fields:
+                value = self._coerce_int(row.get(field, 0))
+                model_bucket[field] += value
+                totals[field] += value
 
-        model_rows = sorted(
-            by_model.values(),
+            provider_bucket["input_tokens"] += self._coerce_int(row.get("input_tokens", 0))
+            provider_bucket["output_tokens"] += self._coerce_int(row.get("output_tokens", 0))
+            provider_bucket["total_tokens"] += self._coerce_int(row.get("total_tokens", 0))
+
+            cost_value = self._coerce_float(row.get("cost_usd"))
+            is_priced = bool(row.get("priced", False)) and cost_value is not None
+            if is_priced:
+                model_bucket["priced_runs"] += 1
+                provider_bucket["priced_runs"] += 1
+                totals["priced_runs"] += 1
+                model_bucket["cost_usd"] = round(
+                    model_bucket["cost_usd"] + float(cost_value), 8
+                )
+                provider_bucket["cost_usd"] = round(
+                    provider_bucket["cost_usd"] + float(cost_value), 8
+                )
+                totals["cost_usd"] = round(totals["cost_usd"] + float(cost_value), 8)
+            else:
+                model_bucket["unpriced_runs"] += 1
+                provider_bucket["unpriced_runs"] += 1
+                totals["unpriced_runs"] += 1
+
+        provider_model_rows = sorted(
+            by_provider_model.values(),
             key=lambda item: (
-                float(item.get("estimated_cost_usd", 0.0)),
+                float(item.get("cost_usd", 0.0)),
                 int(item.get("total_tokens", 0)),
             ),
             reverse=True,
         )
-        return {"totals": totals, "by_model": model_rows}
+        provider_rows = sorted(
+            by_provider.values(),
+            key=lambda item: (
+                float(item.get("cost_usd", 0.0)),
+                int(item.get("total_tokens", 0)),
+            ),
+            reverse=True,
+        )
+
+        return {
+            "totals": totals,
+            "by_provider_model": provider_model_rows,
+            "by_provider": provider_rows,
+        }

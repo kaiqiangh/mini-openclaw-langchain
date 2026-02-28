@@ -30,7 +30,8 @@ from storage.usage_store import UsageStore
 from tools import get_all_tools, get_explicit_enabled_tools, get_tool_runner
 from tools.base import ToolContext
 from tools.langchain_tools import build_langchain_tools
-from usage.pricing import estimate_cost_usd
+from usage.normalization import extract_usage_from_message
+from usage.pricing import calculate_cost_breakdown, infer_provider
 
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -614,117 +615,59 @@ class AgentManager:
     def _as_dict(value: Any) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
 
+    @staticmethod
+    def _usage_numeric_fields() -> tuple[str, ...]:
+        return (
+            "input_tokens",
+            "input_uncached_tokens",
+            "input_cache_read_tokens",
+            "input_cache_write_tokens_5m",
+            "input_cache_write_tokens_1h",
+            "input_cache_write_tokens_unknown",
+            "output_tokens",
+            "reasoning_tokens",
+            "tool_input_tokens",
+            "total_tokens",
+        )
+
+    def _merge_usage_state(
+        self, usage_state: dict[str, Any], usage_candidate: dict[str, Any]
+    ) -> None:
+        for field in self._usage_numeric_fields():
+            usage_state[field] = max(
+                self._as_int(usage_state.get(field, 0)),
+                self._as_int(usage_candidate.get(field, 0)),
+            )
+
+        for field in ("provider", "model", "model_source", "usage_source"):
+            value = str(usage_candidate.get(field, "")).strip()
+            if not value:
+                continue
+            current = str(usage_state.get(field, "")).strip()
+            if value.lower() == "unknown" and current and current.lower() != "unknown":
+                continue
+            usage_state[field] = value
+
+    def _usage_signature(self, usage_state: dict[str, Any]) -> str:
+        parts = [str(usage_state.get(field, "")) for field in self._usage_numeric_fields()]
+        parts.extend(
+            [
+                str(usage_state.get("provider", "")),
+                str(usage_state.get("model", "")),
+                str(usage_state.get("model_source", "")),
+                str(usage_state.get("usage_source", "")),
+            ]
+        )
+        return "|".join(parts)
+
     def _extract_usage_from_message(self, message: Any) -> dict[str, Any]:
-        usage: dict[str, Any] = {
-            "input_tokens": 0,
-            "cached_input_tokens": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "total_tokens": 0,
-        }
-
-        usage_metadata = self._as_dict(getattr(message, "usage_metadata", None))
-        if usage_metadata:
-            usage["input_tokens"] = max(
-                usage["input_tokens"],
-                self._as_int(
-                    usage_metadata.get(
-                        "input_tokens", usage_metadata.get("prompt_tokens", 0)
-                    )
-                ),
-            )
-            usage["output_tokens"] = max(
-                usage["output_tokens"],
-                self._as_int(
-                    usage_metadata.get(
-                        "output_tokens", usage_metadata.get("completion_tokens", 0)
-                    )
-                ),
-            )
-            usage["total_tokens"] = max(
-                usage["total_tokens"],
-                self._as_int(usage_metadata.get("total_tokens", 0)),
-            )
-
-            input_details = self._as_dict(usage_metadata.get("input_token_details"))
-            output_details = self._as_dict(usage_metadata.get("output_token_details"))
-            usage["cached_input_tokens"] = max(
-                usage["cached_input_tokens"],
-                self._as_int(
-                    input_details.get(
-                        "cache_read", input_details.get("cached_tokens", 0)
-                    )
-                ),
-            )
-            usage["reasoning_tokens"] = max(
-                usage["reasoning_tokens"],
-                self._as_int(
-                    output_details.get(
-                        "reasoning", output_details.get("reasoning_tokens", 0)
-                    )
-                ),
-            )
-
-        response_metadata = self._as_dict(getattr(message, "response_metadata", None))
-        token_usage = self._as_dict(
-            response_metadata.get("token_usage", response_metadata.get("usage", {}))
+        if self.config is None:
+            return {}
+        return extract_usage_from_message(
+            message=message,
+            fallback_model=self.config.secrets.deepseek_model,
+            fallback_base_url=self.config.secrets.deepseek_base_url,
         )
-        if token_usage:
-            usage["input_tokens"] = max(
-                usage["input_tokens"],
-                self._as_int(
-                    token_usage.get("prompt_tokens", token_usage.get("input_tokens", 0))
-                ),
-            )
-            usage["output_tokens"] = max(
-                usage["output_tokens"],
-                self._as_int(
-                    token_usage.get(
-                        "completion_tokens", token_usage.get("output_tokens", 0)
-                    )
-                ),
-            )
-            usage["total_tokens"] = max(
-                usage["total_tokens"],
-                self._as_int(token_usage.get("total_tokens", 0)),
-            )
-
-            prompt_details = self._as_dict(token_usage.get("prompt_tokens_details"))
-            completion_details = self._as_dict(
-                token_usage.get("completion_tokens_details")
-            )
-            usage["cached_input_tokens"] = max(
-                usage["cached_input_tokens"],
-                self._as_int(
-                    prompt_details.get(
-                        "cached_tokens", prompt_details.get("cache_read", 0)
-                    )
-                ),
-            )
-            usage["reasoning_tokens"] = max(
-                usage["reasoning_tokens"],
-                self._as_int(
-                    completion_details.get(
-                        "reasoning_tokens", completion_details.get("reasoning", 0)
-                    )
-                ),
-            )
-
-        if usage["input_tokens"] == 0 and usage["total_tokens"] > 0:
-            usage["input_tokens"] = max(
-                0, usage["total_tokens"] - usage["output_tokens"]
-            )
-        if usage["total_tokens"] == 0 and (
-            usage["input_tokens"] or usage["output_tokens"]
-        ):
-            usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
-        usage["cached_input_tokens"] = min(
-            usage["cached_input_tokens"], usage["input_tokens"]
-        )
-        usage["uncached_input_tokens"] = max(
-            0, usage["input_tokens"] - usage["cached_input_tokens"]
-        )
-        return usage
 
     def _record_usage(
         self,
@@ -733,24 +676,65 @@ class AgentManager:
         run_id: str,
         session_id: str,
         trigger_type: str,
-        model: str,
         agent_id: str,
         usage_store: UsageStore,
     ) -> dict[str, Any]:
-        cost = estimate_cost_usd(
+        provider = str(usage.get("provider", "unknown")).strip() or "unknown"
+        model = str(usage.get("model", "unknown")).strip() or "unknown"
+        usage_cost = calculate_cost_breakdown(
+            provider=provider,
             model=model,
             input_tokens=self._as_int(usage.get("input_tokens", 0)),
-            cached_input_tokens=self._as_int(usage.get("cached_input_tokens", 0)),
+            input_uncached_tokens=self._as_int(
+                usage.get("input_uncached_tokens", 0)
+            ),
+            input_cache_read_tokens=self._as_int(
+                usage.get("input_cache_read_tokens", 0)
+            ),
+            input_cache_write_tokens_5m=self._as_int(
+                usage.get("input_cache_write_tokens_5m", 0)
+            ),
+            input_cache_write_tokens_1h=self._as_int(
+                usage.get("input_cache_write_tokens_1h", 0)
+            ),
+            input_cache_write_tokens_unknown=self._as_int(
+                usage.get("input_cache_write_tokens_unknown", 0)
+            ),
             output_tokens=self._as_int(usage.get("output_tokens", 0)),
         )
         enriched = {
+            "schema_version": 2,
             "agent_id": agent_id,
+            "provider": provider,
             "model": model,
             "trigger_type": trigger_type,
             "run_id": run_id,
             "session_id": session_id,
-            **usage,
-            **cost,
+            "model_source": str(usage.get("model_source", "unknown")),
+            "usage_source": str(usage.get("usage_source", "unknown")),
+            "input_tokens": self._as_int(usage.get("input_tokens", 0)),
+            "input_uncached_tokens": self._as_int(
+                usage.get("input_uncached_tokens", 0)
+            ),
+            "input_cache_read_tokens": self._as_int(
+                usage.get("input_cache_read_tokens", 0)
+            ),
+            "input_cache_write_tokens_5m": self._as_int(
+                usage.get("input_cache_write_tokens_5m", 0)
+            ),
+            "input_cache_write_tokens_1h": self._as_int(
+                usage.get("input_cache_write_tokens_1h", 0)
+            ),
+            "input_cache_write_tokens_unknown": self._as_int(
+                usage.get("input_cache_write_tokens_unknown", 0)
+            ),
+            "output_tokens": self._as_int(usage.get("output_tokens", 0)),
+            "reasoning_tokens": self._as_int(usage.get("reasoning_tokens", 0)),
+            "tool_input_tokens": self._as_int(usage.get("tool_input_tokens", 0)),
+            "total_tokens": self._as_int(usage.get("total_tokens", 0)),
+            "priced": bool(usage_cost.get("priced", False)),
+            "cost_usd": usage_cost.get("total_cost_usd"),
+            "pricing": usage_cost,
         }
         usage_store.append_record(enriched)
         return enriched
@@ -923,7 +907,6 @@ class AgentManager:
                         run_id=run_id,
                         session_id=session_id,
                         trigger_type=trigger_type,
-                        model=self.config.secrets.deepseek_model,
                         agent_id=agent_id,
                         usage_store=runtime_state.usage_store,
                     )
@@ -982,12 +965,24 @@ class AgentManager:
         latest_model_snapshot = ""
         emitted_reasoning: set[str] = set()
         emitted_agent_update = False
+        default_provider = infer_provider(
+            self.config.secrets.deepseek_model,
+            base_url=self.config.secrets.deepseek_base_url,
+        )
         usage_state: dict[str, Any] = {
+            "provider": default_provider,
+            "model": self.config.secrets.deepseek_model,
+            "model_source": "fallback_model",
+            "usage_source": "unknown",
             "input_tokens": 0,
-            "cached_input_tokens": 0,
-            "uncached_input_tokens": 0,
+            "input_uncached_tokens": 0,
+            "input_cache_read_tokens": 0,
+            "input_cache_write_tokens_5m": 0,
+            "input_cache_write_tokens_1h": 0,
+            "input_cache_write_tokens_unknown": 0,
             "output_tokens": 0,
             "reasoning_tokens": 0,
+            "tool_input_tokens": 0,
             "total_tokens": 0,
         }
         usage_signature = ""
@@ -1115,25 +1110,44 @@ class AgentManager:
                                     self._as_int(usage_candidate.get("total_tokens", 0))
                                     > 0
                                 ):
-                                    for key in usage_state.keys():
-                                        usage_state[key] = max(
-                                            self._as_int(usage_state.get(key, 0)),
-                                            self._as_int(usage_candidate.get(key, 0)),
-                                        )
-                                    signature = "|".join(
-                                        str(usage_state.get(k, 0))
-                                        for k in sorted(usage_state)
-                                    )
+                                    self._merge_usage_state(usage_state, usage_candidate)
+                                    signature = self._usage_signature(usage_state)
                                     if signature != usage_signature:
                                         usage_signature = signature
-                                        cost = estimate_cost_usd(
-                                            model=self.config.secrets.deepseek_model,
+                                        cost = calculate_cost_breakdown(
+                                            provider=str(
+                                                usage_state.get("provider", "unknown")
+                                            ),
+                                            model=str(
+                                                usage_state.get("model", "unknown")
+                                            ),
                                             input_tokens=self._as_int(
                                                 usage_state.get("input_tokens", 0)
                                             ),
-                                            cached_input_tokens=self._as_int(
+                                            input_uncached_tokens=self._as_int(
                                                 usage_state.get(
-                                                    "cached_input_tokens", 0
+                                                    "input_uncached_tokens", 0
+                                                )
+                                            ),
+                                            input_cache_read_tokens=self._as_int(
+                                                usage_state.get(
+                                                    "input_cache_read_tokens", 0
+                                                )
+                                            ),
+                                            input_cache_write_tokens_5m=self._as_int(
+                                                usage_state.get(
+                                                    "input_cache_write_tokens_5m", 0
+                                                )
+                                            ),
+                                            input_cache_write_tokens_1h=self._as_int(
+                                                usage_state.get(
+                                                    "input_cache_write_tokens_1h", 0
+                                                )
+                                            ),
+                                            input_cache_write_tokens_unknown=self._as_int(
+                                                usage_state.get(
+                                                    "input_cache_write_tokens_unknown",
+                                                    0,
                                                 )
                                             ),
                                             output_tokens=self._as_int(
@@ -1145,9 +1159,20 @@ class AgentManager:
                                             "data": {
                                                 "run_id": run_id,
                                                 "agent_id": agent_id,
-                                                "model": self.config.secrets.deepseek_model,
+                                                "provider": usage_state.get(
+                                                    "provider", "unknown"
+                                                ),
+                                                "model": usage_state.get(
+                                                    "model", "unknown"
+                                                ),
                                                 **usage_state,
-                                                **cost,
+                                                "pricing": cost,
+                                                "priced": bool(
+                                                    cost.get("priced", False)
+                                                ),
+                                                "cost_usd": cost.get(
+                                                    "total_cost_usd"
+                                                ),
                                             },
                                         }
 
@@ -1214,11 +1239,7 @@ class AgentManager:
 
                         usage_candidate = self._extract_usage_from_message(token)
                         if self._as_int(usage_candidate.get("total_tokens", 0)) > 0:
-                            for key in usage_state.keys():
-                                usage_state[key] = max(
-                                    self._as_int(usage_state.get(key, 0)),
-                                    self._as_int(usage_candidate.get(key, 0)),
-                                )
+                            self._merge_usage_state(usage_state, usage_candidate)
 
                 final_content = "".join(final_tokens).strip() or fallback_final_text
                 enriched_usage = {}
@@ -1228,7 +1249,6 @@ class AgentManager:
                         run_id=run_id,
                         session_id=session_id,
                         trigger_type=trigger_type,
-                        model=self.config.secrets.deepseek_model,
                         agent_id=agent_id,
                         usage_store=runtime_state.usage_store,
                     )
