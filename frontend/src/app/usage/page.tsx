@@ -34,12 +34,31 @@ const usdFormatter = new Intl.NumberFormat("en-US", {
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 
+const utcTimeFormatter = new Intl.DateTimeFormat("en-GB", {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  timeZone: "UTC",
+  hour12: false,
+});
+
 function formatUsd(value: number): string {
   return usdFormatter.format(value);
 }
 
+function formatUsdMaybe(value: number | null): string {
+  if (value === null) return "Unpriced";
+  return formatUsd(value);
+}
+
 function formatNumber(value: number): string {
   return numberFormatter.format(value);
+}
+
+function formatUtcTimestamp(timestampMs: number): string {
+  return utcTimeFormatter.format(new Date(timestampMs));
 }
 
 function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
@@ -51,34 +70,33 @@ function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
   const buckets: Array<{
     label: string;
     total_tokens: number;
-    estimated_cost_usd: number;
+    cost_usd: number;
   }> = [];
-  const map = new Map<
-    number,
-    { total_tokens: number; estimated_cost_usd: number }
-  >();
+  const map = new Map<number, { total_tokens: number; cost_usd: number }>();
 
   for (const row of records) {
     if (row.timestamp_ms < start) continue;
     const offset = Math.floor((row.timestamp_ms - start) / bucketMs);
     const key = start + offset * bucketMs;
-    const current = map.get(key) ?? { total_tokens: 0, estimated_cost_usd: 0 };
+    const current = map.get(key) ?? { total_tokens: 0, cost_usd: 0 };
     current.total_tokens += row.total_tokens;
-    current.estimated_cost_usd += row.estimated_cost_usd;
+    if (row.cost_usd !== null) {
+      current.cost_usd += row.cost_usd;
+    }
     map.set(key, current);
   }
 
   const count = Math.max(1, Math.ceil((now - start) / bucketMs));
   for (let i = 0; i < count; i += 1) {
     const ts = start + i * bucketMs;
-    const row = map.get(ts) ?? { total_tokens: 0, estimated_cost_usd: 0 };
+    const row = map.get(ts) ?? { total_tokens: 0, cost_usd: 0 };
     buckets.push({
       label:
         bucketHours === 1
           ? new Date(ts).toISOString().slice(5, 13).replace("T", " ")
           : new Date(ts).toISOString().slice(0, 10),
       total_tokens: row.total_tokens,
-      estimated_cost_usd: row.estimated_cost_usd,
+      cost_usd: row.cost_usd,
     });
   }
   return buckets;
@@ -87,32 +105,44 @@ function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
 function toCsv(records: UsageRecord[]): string {
   const header = [
     "timestamp_ms",
+    "provider",
+    "model",
     "run_id",
     "session_id",
     "trigger_type",
-    "model",
     "input_tokens",
-    "cached_input_tokens",
-    "uncached_input_tokens",
+    "input_uncached_tokens",
+    "input_cache_read_tokens",
+    "input_cache_write_tokens_5m",
+    "input_cache_write_tokens_1h",
+    "input_cache_write_tokens_unknown",
     "output_tokens",
     "reasoning_tokens",
+    "tool_input_tokens",
     "total_tokens",
-    "estimated_cost_usd",
+    "priced",
+    "cost_usd",
   ];
   const rows = records.map((row) =>
     [
       row.timestamp_ms,
+      row.provider,
+      row.model,
       row.run_id,
       row.session_id,
       row.trigger_type,
-      row.model,
       row.input_tokens,
-      row.cached_input_tokens,
-      row.uncached_input_tokens,
+      row.input_uncached_tokens,
+      row.input_cache_read_tokens,
+      row.input_cache_write_tokens_5m,
+      row.input_cache_write_tokens_1h,
+      row.input_cache_write_tokens_unknown,
       row.output_tokens,
       row.reasoning_tokens,
+      row.tool_input_tokens,
       row.total_tokens,
-      row.estimated_cost_usd,
+      row.priced,
+      row.cost_usd ?? "",
     ]
       .map((item) => `"${String(item).replace(/"/g, '""')}"`)
       .join(","),
@@ -124,6 +154,7 @@ export default function UsagePage() {
   const [agents, setAgents] = useState<string[]>(["default"]);
   const [agentId, setAgentId] = useState<string>("default");
   const [sinceHours, setSinceHours] = useState<number>(24);
+  const [provider, setProvider] = useState<string>("");
   const [model, setModel] = useState<string>("");
   const [triggerType, setTriggerType] = useState<string>("");
   const [summary, setSummary] = useState<UsageSummary | null>(null);
@@ -165,15 +196,17 @@ export default function UsagePage() {
         const [summaryData, recordsData] = await Promise.all([
           getUsageSummary({
             sinceHours,
+            provider: provider || undefined,
             model: model || undefined,
             triggerType: triggerType || undefined,
             agentId,
           }),
           getUsageRecords({
             sinceHours,
+            provider: provider || undefined,
             model: model || undefined,
             triggerType: triggerType || undefined,
-            limit: 200,
+            limit: 300,
             agentId,
           }),
         ]);
@@ -197,7 +230,7 @@ export default function UsagePage() {
     return () => {
       cancelled = true;
     };
-  }, [agentId, model, sinceHours, triggerType]);
+  }, [agentId, model, provider, sinceHours, triggerType]);
 
   useEffect(() => {
     if (!copyState) return;
@@ -207,23 +240,41 @@ export default function UsagePage() {
     };
   }, [copyState]);
 
-  const modelOptions = useMemo(() => {
-    const items = new Set<string>();
-    for (const row of summary?.by_model ?? []) {
-      items.add(row.model);
+  const providerOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of summary?.by_provider ?? []) {
+      values.add(row.provider);
     }
-    return Array.from(items).sort((a, b) => a.localeCompare(b));
-  }, [summary]);
+    for (const row of records) {
+      values.add(row.provider);
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [summary, records]);
+
+  const modelOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const row of summary?.by_provider_model ?? []) {
+      if (provider && row.provider !== provider) continue;
+      values.add(row.model);
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [provider, summary]);
 
   const totals = summary?.totals ?? {
     runs: 0,
+    priced_runs: 0,
+    unpriced_runs: 0,
     input_tokens: 0,
-    cached_input_tokens: 0,
-    uncached_input_tokens: 0,
+    input_uncached_tokens: 0,
+    input_cache_read_tokens: 0,
+    input_cache_write_tokens_5m: 0,
+    input_cache_write_tokens_1h: 0,
+    input_cache_write_tokens_unknown: 0,
     output_tokens: 0,
     reasoning_tokens: 0,
+    tool_input_tokens: 0,
     total_tokens: 0,
-    estimated_cost_usd: 0,
+    cost_usd: 0,
   };
 
   const trendBuckets = useMemo(
@@ -285,7 +336,7 @@ export default function UsagePage() {
             </div>
           </div>
 
-          <div className="grid gap-3 p-4 md:grid-cols-5">
+          <div className="grid gap-3 p-4 md:grid-cols-6">
             <label className="min-w-0">
               <span className="ui-label">Agent</span>
               <Select
@@ -313,6 +364,26 @@ export default function UsagePage() {
                 {TIMEFRAME_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="min-w-0">
+              <span className="ui-label">Provider</span>
+              <Select
+                name="provider-filter"
+                className="mt-1 ui-mono text-xs"
+                value={provider}
+                onChange={(event) => {
+                  setProvider(event.target.value);
+                  setModel("");
+                }}
+              >
+                <option value="">All providers</option>
+                {providerOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
                   </option>
                 ))}
               </Select>
@@ -370,9 +441,13 @@ export default function UsagePage() {
 
         <div className="grid gap-3 md:grid-cols-5">
           <div className="panel-shell p-4">
-            <div className="ui-label">Estimated Cost</div>
+            <div className="ui-label">Priced Cost (USD)</div>
             <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatUsd(totals.estimated_cost_usd)}
+              {formatUsd(totals.cost_usd)}
+            </div>
+            <div className="mt-1 text-[11px] text-[var(--muted)]">
+              Priced runs {formatNumber(totals.priced_runs)} /{" "}
+              {formatNumber(totals.runs)}
             </div>
           </div>
           <div className="panel-shell p-4">
@@ -380,11 +455,22 @@ export default function UsagePage() {
             <div className="ui-tabular mt-1 text-lg font-semibold">
               {formatNumber(totals.input_tokens)}
             </div>
+            <div className="mt-1 text-[11px] text-[var(--muted)]">
+              Uncached {formatNumber(totals.input_uncached_tokens)}
+            </div>
           </div>
           <div className="panel-shell p-4">
-            <div className="ui-label">Cached Input</div>
+            <div className="ui-label">Cache Read</div>
             <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.cached_input_tokens)}
+              {formatNumber(totals.input_cache_read_tokens)}
+            </div>
+            <div className="mt-1 text-[11px] text-[var(--muted)]">
+              Cache Write {" "}
+              {formatNumber(
+                totals.input_cache_write_tokens_5m +
+                  totals.input_cache_write_tokens_1h +
+                  totals.input_cache_write_tokens_unknown,
+              )}
             </div>
           </div>
           <div className="panel-shell p-4">
@@ -392,12 +478,18 @@ export default function UsagePage() {
             <div className="ui-tabular mt-1 text-lg font-semibold">
               {formatNumber(totals.output_tokens)}
             </div>
+            <div className="mt-1 text-[11px] text-[var(--muted)]">
+              Reasoning {formatNumber(totals.reasoning_tokens)}
+            </div>
           </div>
           <div className="panel-shell p-4">
-            <div className="ui-label">Reasoning / Total</div>
+            <div className="ui-label">Total / Tool Input</div>
             <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.reasoning_tokens)} /{" "}
-              {formatNumber(totals.total_tokens)}
+              {formatNumber(totals.total_tokens)} /{" "}
+              {formatNumber(totals.tool_input_tokens)}
+            </div>
+            <div className="mt-1 text-[11px] text-[var(--muted)]">
+              Unpriced runs {formatNumber(totals.unpriced_runs)}
             </div>
           </div>
         </div>
@@ -441,7 +533,8 @@ export default function UsagePage() {
                     key={bucket.label}
                     className="rounded border border-[var(--border)] px-2 py-0.5"
                   >
-                    {bucket.label}: {formatNumber(bucket.total_tokens)}
+                    {bucket.label}: {formatNumber(bucket.total_tokens)} ({" "}
+                    {formatUsd(bucket.cost_usd)})
                   </span>
                 ))}
             </div>
@@ -451,40 +544,44 @@ export default function UsagePage() {
         <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-2">
           <div className="panel-shell min-h-0">
             <div className="ui-panel-header">
-              <h2 className="ui-panel-title">By Model</h2>
+              <h2 className="ui-panel-title">By Provider / Model</h2>
               <Badge tone="neutral">
-                {summary?.by_model.length ?? 0} models
+                {summary?.by_provider_model.length ?? 0} rows
               </Badge>
             </div>
             <TableWrap className="m-3 mt-0 max-h-full">
               <DataTable>
                 <thead>
                   <tr>
+                    <th>Provider</th>
                     <th>Model</th>
                     <th>Runs</th>
                     <th>Input</th>
-                    <th>Cached</th>
+                    <th>Cache Read</th>
                     <th>Output</th>
                     <th>Total</th>
                     <th>Cost</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(summary?.by_model ?? []).map((row) => (
-                    <tr key={row.model}>
+                  {(summary?.by_provider_model ?? []).map((row) => (
+                    <tr key={`${row.provider}:${row.model}`}>
+                      <td className="ui-mono">{row.provider}</td>
                       <td className="ui-mono">{row.model}</td>
-                      <td>{formatNumber(row.runs)}</td>
+                      <td>
+                        {formatNumber(row.runs)} ({formatNumber(row.priced_runs)}p)
+                      </td>
                       <td>{formatNumber(row.input_tokens)}</td>
-                      <td>{formatNumber(row.cached_input_tokens)}</td>
+                      <td>{formatNumber(row.input_cache_read_tokens)}</td>
                       <td>{formatNumber(row.output_tokens)}</td>
                       <td>{formatNumber(row.total_tokens)}</td>
-                      <td>{formatUsd(row.estimated_cost_usd)}</td>
+                      <td>{formatUsd(row.cost_usd)}</td>
                     </tr>
                   ))}
-                  {(summary?.by_model ?? []).length === 0 ? (
+                  {(summary?.by_provider_model ?? []).length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={8}
                         className="text-center text-[var(--muted)]"
                       >
                         No model data for this filter.
@@ -506,12 +603,10 @@ export default function UsagePage() {
                 <thead>
                   <tr>
                     <th>Run</th>
-                    <th>Time</th>
-                    <th>Model</th>
+                    <th>Time (UTC)</th>
+                    <th>Provider / Model</th>
                     <th>Input</th>
-                    <th>Cached</th>
                     <th>Output</th>
-                    <th>Reasoning</th>
                     <th>Total</th>
                     <th>Cost</th>
                   </tr>
@@ -542,20 +637,44 @@ export default function UsagePage() {
                           </div>
                         ) : null}
                       </td>
-                      <td>{new Date(row.timestamp_ms).toLocaleString()}</td>
-                      <td className="ui-mono">{row.model}</td>
-                      <td>{formatNumber(row.input_tokens)}</td>
-                      <td>{formatNumber(row.cached_input_tokens)}</td>
-                      <td>{formatNumber(row.output_tokens)}</td>
-                      <td>{formatNumber(row.reasoning_tokens)}</td>
+                      <td>{formatUtcTimestamp(row.timestamp_ms)}</td>
+                      <td className="ui-mono">
+                        {row.provider}
+                        <div>{row.model}</div>
+                      </td>
+                      <td>
+                        {formatNumber(row.input_tokens)}
+                        <div className="text-[10px] text-[var(--muted)]">
+                          u:{formatNumber(row.input_uncached_tokens)} r:
+                          {formatNumber(row.input_cache_read_tokens)} w:
+                          {formatNumber(
+                            row.input_cache_write_tokens_5m +
+                              row.input_cache_write_tokens_1h +
+                              row.input_cache_write_tokens_unknown,
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {formatNumber(row.output_tokens)}
+                        <div className="text-[10px] text-[var(--muted)]">
+                          reasoning {formatNumber(row.reasoning_tokens)}
+                        </div>
+                      </td>
                       <td>{formatNumber(row.total_tokens)}</td>
-                      <td>{formatUsd(row.estimated_cost_usd)}</td>
+                      <td>
+                        {formatUsdMaybe(row.cost_usd)}
+                        {!row.priced ? (
+                          <div className="text-[10px] text-[var(--danger)]">
+                            {row.pricing.unpriced_reason ?? "unpriced"}
+                          </div>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                   {records.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={7}
                         className="text-center text-[var(--muted)]"
                       >
                         No recent runs for this filter.

@@ -49,42 +49,92 @@ export type WorkspaceFileIndex = {
 };
 
 export type UsageRecord = {
+  schema_version: number;
   timestamp_ms: number;
+  agent_id: string;
+  provider: string;
   run_id: string;
   session_id: string;
   trigger_type: string;
   model: string;
+  model_source: string;
+  usage_source: string;
   input_tokens: number;
-  cached_input_tokens: number;
-  uncached_input_tokens: number;
+  input_uncached_tokens: number;
+  input_cache_read_tokens: number;
+  input_cache_write_tokens_5m: number;
+  input_cache_write_tokens_1h: number;
+  input_cache_write_tokens_unknown: number;
   output_tokens: number;
   reasoning_tokens: number;
+  tool_input_tokens: number;
   total_tokens: number;
-  estimated_cost_usd: number;
-  source?: string;
+  priced: boolean;
+  cost_usd: number | null;
+  pricing: {
+    provider: string;
+    model: string;
+    model_key: string | null;
+    priced: boolean;
+    currency: string;
+    source: string;
+    catalog_version: string;
+    long_context_applied: boolean;
+    total_cost_usd: number | null;
+    unpriced_reason: string | null;
+    line_items: Array<{
+      kind: string;
+      tokens: number;
+      rate_usd_per_1m: number | null;
+      cost_usd: number | null;
+    }>;
+  };
 };
 
 export type UsageSummary = {
   totals: {
     runs: number;
+    priced_runs: number;
+    unpriced_runs: number;
     input_tokens: number;
-    cached_input_tokens: number;
-    uncached_input_tokens: number;
+    input_uncached_tokens: number;
+    input_cache_read_tokens: number;
+    input_cache_write_tokens_5m: number;
+    input_cache_write_tokens_1h: number;
+    input_cache_write_tokens_unknown: number;
     output_tokens: number;
     reasoning_tokens: number;
+    tool_input_tokens: number;
     total_tokens: number;
-    estimated_cost_usd: number;
+    cost_usd: number;
   };
-  by_model: Array<{
+  by_provider_model: Array<{
+    provider: string;
     model: string;
     runs: number;
+    priced_runs: number;
+    unpriced_runs: number;
     input_tokens: number;
-    cached_input_tokens: number;
-    uncached_input_tokens: number;
+    input_uncached_tokens: number;
+    input_cache_read_tokens: number;
+    input_cache_write_tokens_5m: number;
+    input_cache_write_tokens_1h: number;
+    input_cache_write_tokens_unknown: number;
     output_tokens: number;
     reasoning_tokens: number;
+    tool_input_tokens: number;
     total_tokens: number;
-    estimated_cost_usd: number;
+    cost_usd: number;
+  }>;
+  by_provider: Array<{
+    provider: string;
+    runs: number;
+    priced_runs: number;
+    unpriced_runs: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    cost_usd: number;
   }>;
   count: number;
 };
@@ -240,12 +290,14 @@ export async function getSessionHistory(
 
 export async function getUsageSummary(params: {
   sinceHours: number;
+  provider?: string;
   model?: string;
   triggerType?: string;
   agentId?: string;
 }): Promise<UsageSummary> {
   const qs = new URLSearchParams();
   qs.set("since_hours", String(params.sinceHours));
+  if (params.provider) qs.set("provider", params.provider);
   if (params.model) qs.set("model", params.model);
   if (params.triggerType) qs.set("trigger_type", params.triggerType);
   qs.set("agent_id", params.agentId ?? "default");
@@ -257,6 +309,7 @@ export async function getUsageSummary(params: {
 
 export async function getUsageRecords(params: {
   sinceHours: number;
+  provider?: string;
   model?: string;
   triggerType?: string;
   limit?: number;
@@ -264,6 +317,7 @@ export async function getUsageRecords(params: {
 }): Promise<UsageRecord[]> {
   const qs = new URLSearchParams();
   qs.set("since_hours", String(params.sinceHours));
+  if (params.provider) qs.set("provider", params.provider);
   if (params.model) qs.set("model", params.model);
   if (params.triggerType) qs.set("trigger_type", params.triggerType);
   if (params.limit) qs.set("limit", String(params.limit));
