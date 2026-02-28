@@ -209,6 +209,7 @@ __marimo__/
 docs/
 plan/
 .DS_Store
+.codex/
 
 # Node.js runtime artifacts
 node_modules/
