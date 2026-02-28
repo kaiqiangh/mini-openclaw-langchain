@@ -12,7 +12,9 @@ from tools.search_knowledge_tool import SearchKnowledgeTool
 def test_memory_indexer_honors_top_k_and_chunk_settings(tmp_path: Path):
     (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
     (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "config.json").write_text('{"retrieval":{"memory":{"top_k":3}}}\n', encoding="utf-8")
+    (tmp_path / "config.json").write_text(
+        '{"retrieval":{"memory":{"top_k":3}}}\n', encoding="utf-8"
+    )
     (tmp_path / "memory" / "MEMORY.md").write_text(
         "alpha one\nbeta two\nalpha three\nalpha four\n",
         encoding="utf-8",

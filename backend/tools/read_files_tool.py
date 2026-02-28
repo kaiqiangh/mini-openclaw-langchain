@@ -80,7 +80,10 @@ class ReadFilesTool:
                     {
                         "ok": False,
                         "path": path,
-                        "error": {"code": "E_NOT_FOUND", "message": f"File not found: {path}"},
+                        "error": {
+                            "code": "E_NOT_FOUND",
+                            "message": f"File not found: {path}",
+                        },
                     }
                 )
                 continue

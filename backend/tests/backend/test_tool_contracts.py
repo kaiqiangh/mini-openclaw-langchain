@@ -11,7 +11,9 @@ def test_toolresult_success_and_failure_shapes():
     assert ok.error is None
     assert ok.meta.tool_name == "x"
 
-    err = ToolResult.failure(tool_name="x", code="E_TIMEOUT", message="boom", duration_ms=9, retryable=True)
+    err = ToolResult.failure(
+        tool_name="x", code="E_TIMEOUT", message="boom", duration_ms=9, retryable=True
+    )
     assert err.ok is False
     assert err.error is not None
     assert err.error.code == "E_TIMEOUT"

@@ -91,17 +91,28 @@ class UsageStore:
     def _clamp(value: float, low: float, high: float) -> float:
         return max(low, min(high, value))
 
-    def _build_model_profiles(self, rows: list[dict[str, Any]]) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
+    def _build_model_profiles(
+        self, rows: list[dict[str, Any]]
+    ) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
         accum: dict[str, dict[str, float]] = {}
-        global_accum = {"samples": 0.0, "output_ratio": 0.0, "cached_ratio": 0.0, "reasoning_ratio": 0.0}
+        global_accum = {
+            "samples": 0.0,
+            "output_ratio": 0.0,
+            "cached_ratio": 0.0,
+            "reasoning_ratio": 0.0,
+        }
 
         for row in rows:
             model_key = str(row.get("model", "unknown")).strip().lower() or "unknown"
 
             input_tokens, input_ok = self._coerce_int(row.get("input_tokens", 0))
-            cached_tokens, cached_ok = self._coerce_int(row.get("cached_input_tokens", 0))
+            cached_tokens, cached_ok = self._coerce_int(
+                row.get("cached_input_tokens", 0)
+            )
             output_tokens, output_ok = self._coerce_int(row.get("output_tokens", 0))
-            reasoning_tokens, reasoning_ok = self._coerce_int(row.get("reasoning_tokens", 0))
+            reasoning_tokens, reasoning_ok = self._coerce_int(
+                row.get("reasoning_tokens", 0)
+            )
             total_tokens, total_ok = self._coerce_int(row.get("total_tokens", 0))
 
             input_tokens = max(0, input_tokens)
@@ -133,12 +144,23 @@ class UsageStore:
                 continue
 
             output_ratio = self._clamp(output_tokens / total_tokens, 0.0, 1.0)
-            cached_ratio = self._clamp((cached_tokens / input_tokens) if input_tokens > 0 else 0.0, 0.0, 1.0)
-            reasoning_ratio = self._clamp((reasoning_tokens / output_tokens) if output_tokens > 0 else 0.0, 0.0, 1.0)
+            cached_ratio = self._clamp(
+                (cached_tokens / input_tokens) if input_tokens > 0 else 0.0, 0.0, 1.0
+            )
+            reasoning_ratio = self._clamp(
+                (reasoning_tokens / output_tokens) if output_tokens > 0 else 0.0,
+                0.0,
+                1.0,
+            )
 
             bucket = accum.setdefault(
                 model_key,
-                {"samples": 0.0, "output_ratio": 0.0, "cached_ratio": 0.0, "reasoning_ratio": 0.0},
+                {
+                    "samples": 0.0,
+                    "output_ratio": 0.0,
+                    "cached_ratio": 0.0,
+                    "reasoning_ratio": 0.0,
+                },
             )
             bucket["samples"] += 1.0
             bucket["output_ratio"] += output_ratio
@@ -161,9 +183,21 @@ class UsageStore:
 
         global_samples = max(1.0, global_accum["samples"])
         global_profile = {
-            "output_ratio": global_accum["output_ratio"] / global_samples if global_accum["samples"] > 0 else 0.35,
-            "cached_ratio": global_accum["cached_ratio"] / global_samples if global_accum["samples"] > 0 else 0.0,
-            "reasoning_ratio": global_accum["reasoning_ratio"] / global_samples if global_accum["samples"] > 0 else 0.0,
+            "output_ratio": (
+                global_accum["output_ratio"] / global_samples
+                if global_accum["samples"] > 0
+                else 0.35
+            ),
+            "cached_ratio": (
+                global_accum["cached_ratio"] / global_samples
+                if global_accum["samples"] > 0
+                else 0.0
+            ),
+            "reasoning_ratio": (
+                global_accum["reasoning_ratio"] / global_samples
+                if global_accum["samples"] > 0
+                else 0.0
+            ),
         }
         return profiles, global_profile
 
@@ -181,22 +215,33 @@ class UsageStore:
         profile = profile or {}
         output_ratio = self._clamp(float(profile.get("output_ratio", 0.35)), 0.05, 0.95)
         cached_ratio = self._clamp(float(profile.get("cached_ratio", 0.0)), 0.0, 0.95)
-        reasoning_ratio = self._clamp(float(profile.get("reasoning_ratio", 0.0)), 0.0, 0.95)
+        reasoning_ratio = self._clamp(
+            float(profile.get("reasoning_ratio", 0.0)), 0.0, 0.95
+        )
 
         blended_input_cost = (
-            (1.0 - cached_ratio) * pricing.input_usd_per_1m + cached_ratio * pricing.cached_input_usd_per_1m
+            (1.0 - cached_ratio) * pricing.input_usd_per_1m
+            + cached_ratio * pricing.cached_input_usd_per_1m
         )
-        blended_cost_per_1m = (1.0 - output_ratio) * blended_input_cost + output_ratio * pricing.output_usd_per_1m
+        blended_cost_per_1m = (
+            1.0 - output_ratio
+        ) * blended_input_cost + output_ratio * pricing.output_usd_per_1m
         if blended_cost_per_1m <= 0:
             return None
 
-        total_tokens = max(1, int(round((estimated_cost_usd * 1_000_000.0) / blended_cost_per_1m)))
+        total_tokens = max(
+            1, int(round((estimated_cost_usd * 1_000_000.0) / blended_cost_per_1m))
+        )
         output_tokens = int(round(total_tokens * output_ratio))
         output_tokens = max(0, min(output_tokens, total_tokens))
         input_tokens = max(0, total_tokens - output_tokens)
-        cached_input_tokens = max(0, min(int(round(input_tokens * cached_ratio)), input_tokens))
+        cached_input_tokens = max(
+            0, min(int(round(input_tokens * cached_ratio)), input_tokens)
+        )
         uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
-        reasoning_tokens = max(0, min(int(round(output_tokens * reasoning_ratio)), output_tokens))
+        reasoning_tokens = max(
+            0, min(int(round(output_tokens * reasoning_ratio)), output_tokens)
+        )
         return {
             "input_tokens": input_tokens,
             "cached_input_tokens": cached_input_tokens,
@@ -218,10 +263,16 @@ class UsageStore:
         model_key = model.lower()
 
         input_tokens, input_ok = self._coerce_int(normalized.get("input_tokens", 0))
-        cached_tokens, cached_ok = self._coerce_int(normalized.get("cached_input_tokens", 0))
-        uncached_tokens, uncached_ok = self._coerce_int(normalized.get("uncached_input_tokens", 0))
+        cached_tokens, cached_ok = self._coerce_int(
+            normalized.get("cached_input_tokens", 0)
+        )
+        uncached_tokens, uncached_ok = self._coerce_int(
+            normalized.get("uncached_input_tokens", 0)
+        )
         output_tokens, output_ok = self._coerce_int(normalized.get("output_tokens", 0))
-        reasoning_tokens, reasoning_ok = self._coerce_int(normalized.get("reasoning_tokens", 0))
+        reasoning_tokens, reasoning_ok = self._coerce_int(
+            normalized.get("reasoning_tokens", 0)
+        )
         total_tokens, total_ok = self._coerce_int(normalized.get("total_tokens", 0))
 
         input_tokens = max(0, input_tokens)
@@ -258,7 +309,9 @@ class UsageStore:
             total_tokens = input_tokens + output_tokens
 
         estimated_cost_usd = self._float(normalized.get("estimated_cost_usd", 0.0))
-        needs_inference = (input_tokens <= 0 and output_tokens <= 0 and total_tokens <= 0) and estimated_cost_usd > 0.0
+        needs_inference = (
+            input_tokens <= 0 and output_tokens <= 0 and total_tokens <= 0
+        ) and estimated_cost_usd > 0.0
         if needs_inference:
             inferred = self._infer_tokens_from_cost(
                 model=model,
@@ -294,7 +347,9 @@ class UsageStore:
         now_ms = int(time.time() * 1000)
         min_ts = now_ms - max(1, int(query.since_hours)) * 3600 * 1000
         model_filter = query.model.strip().lower() if query.model else None
-        trigger_filter = query.trigger_type.strip().lower() if query.trigger_type else None
+        trigger_filter = (
+            query.trigger_type.strip().lower() if query.trigger_type else None
+        )
         session_filter = query.session_id.strip() if query.session_id else None
 
         filtered: list[dict[str, Any]] = []
@@ -315,15 +370,23 @@ class UsageStore:
 
         model_profiles, global_profile = self._build_model_profiles(filtered)
         normalized_rows = [
-            self._normalize_record(item, model_profiles=model_profiles, global_profile=global_profile) for item in filtered
+            self._normalize_record(
+                item, model_profiles=model_profiles, global_profile=global_profile
+            )
+            for item in filtered
         ]
-        normalized_rows.sort(key=lambda item: int(item.get("timestamp_ms", 0)), reverse=True)
+        normalized_rows.sort(
+            key=lambda item: int(item.get("timestamp_ms", 0)), reverse=True
+        )
         return normalized_rows[: max(1, int(query.limit))]
 
     def summarize(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         model_profiles, global_profile = self._build_model_profiles(records)
         normalized_records = [
-            self._normalize_record(item, model_profiles=model_profiles, global_profile=global_profile) for item in records
+            self._normalize_record(
+                item, model_profiles=model_profiles, global_profile=global_profile
+            )
+            for item in records
         ]
 
         totals = {
@@ -373,7 +436,10 @@ class UsageStore:
 
         model_rows = sorted(
             by_model.values(),
-            key=lambda item: (float(item.get("estimated_cost_usd", 0.0)), int(item.get("total_tokens", 0))),
+            key=lambda item: (
+                float(item.get("estimated_cost_usd", 0.0)),
+                int(item.get("total_tokens", 0)),
+            ),
             reverse=True,
         )
         return {"totals": totals, "by_model": model_rows}

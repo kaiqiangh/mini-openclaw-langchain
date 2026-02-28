@@ -76,7 +76,10 @@ class PythonReplTool:
                 retryable=True,
             )
 
-        payload: dict[str, Any] = {"ok": False, "error": "No output from Python process"}
+        payload: dict[str, Any] = {
+            "ok": False,
+            "error": "No output from Python process",
+        }
         try:
             payload = queue.get_nowait()
         except Exception:

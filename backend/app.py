@@ -11,10 +11,21 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-from api import agents, chat, compress, config_api, files, scheduler_api, sessions, tokens, usage
+from api import (
+    agents,
+    chat,
+    compress,
+    config_api,
+    files,
+    scheduler_api,
+    sessions,
+    tokens,
+    usage,
+)
 from api.errors import ApiError, error_payload
 from config import load_config, validate_required_secrets
 from graph.agent import AgentManager
@@ -31,7 +42,7 @@ cron_scheduler: CronScheduler | None = None
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: FastAPI) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._buckets: dict[str, Deque[float]] = defaultdict(deque)
         self._limits: list[tuple[str, int, int]] = [
@@ -46,7 +57,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return limit, window_sec
         return None
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         limit_conf = self._resolve_limit(request.url.path)
         if limit_conf is not None:
             limit, window_sec = limit_conf
@@ -75,12 +86,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
         return response
 
@@ -118,7 +131,9 @@ async def lifespan(_: FastAPI):
 
     default_runtime = agent_manager.get_runtime("default")
     if agent_manager.memory_indexer is not None:
-        agent_manager.memory_indexer.rebuild_index(settings=default_runtime.runtime_config.retrieval.memory)
+        agent_manager.memory_indexer.rebuild_index(
+            settings=default_runtime.runtime_config.retrieval.memory
+        )
 
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=default_runtime.root_dir,
@@ -155,7 +170,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Mini-OpenClaw API", version="0.1.0", lifespan=lifespan)
-trusted_hosts = _parse_csv_env("APP_TRUSTED_HOSTS", ["localhost", "127.0.0.1", "*.localhost"])
+trusted_hosts = _parse_csv_env(
+    "APP_TRUSTED_HOSTS", ["localhost", "127.0.0.1", "*.localhost"]
+)
 allowed_origins = _parse_csv_env(
     "APP_ALLOWED_ORIGINS",
     ["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -181,10 +198,14 @@ async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+async def validation_error_handler(
+    _: Request, exc: RequestValidationError
+) -> JSONResponse:
     details = [
         {
-            "field": ".".join(str(part) for part in err.get("loc", []) if part != "body"),
+            "field": ".".join(
+                str(part) for part in err.get("loc", []) if part != "body"
+            ),
             "message": err.get("msg", "Invalid value"),
             "code": err.get("type", "validation_error"),
         }

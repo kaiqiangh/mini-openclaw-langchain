@@ -21,7 +21,9 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert files_index.status_code == 200
     assert "memory/MEMORY.md" in files_index.json()["data"]["files"]
 
-    write_file = client.post("/api/files", json={"path": "memory/NEW.md", "content": "abc"})
+    write_file = client.post(
+        "/api/files", json={"path": "memory/NEW.md", "content": "abc"}
+    )
     assert write_file.status_code == 200
 
     token_session = client.get(f"/api/tokens/session/{session_id}")
@@ -46,12 +48,16 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     create_other_agent = client.post("/api/agents", json={"agent_id": "agent-rag"})
     assert create_other_agent.status_code == 200
 
-    rag_other_before = client.get("/api/config/rag-mode", params={"agent_id": "agent-rag"})
+    rag_other_before = client.get(
+        "/api/config/rag-mode", params={"agent_id": "agent-rag"}
+    )
     assert rag_other_before.status_code == 200
     assert rag_other_before.json()["data"]["enabled"] is False
     assert rag_other_before.json()["data"]["agent_id"] == "agent-rag"
 
-    rag_other_put = client.put("/api/config/rag-mode?agent_id=agent-rag", json={"enabled": True})
+    rag_other_put = client.put(
+        "/api/config/rag-mode?agent_id=agent-rag", json={"enabled": True}
+    )
     assert rag_other_put.status_code == 200
     assert rag_other_put.json()["data"]["enabled"] is True
     assert rag_other_put.json()["data"]["agent_id"] == "agent-rag"
@@ -103,7 +109,10 @@ def test_archive_restore_and_delete_archived_session(client):
 
     archived_list = client.get("/api/sessions", params={"scope": "archived"})
     assert archived_list.status_code == 200
-    assert any(item["session_id"] == session_id and item["archived"] is True for item in archived_list.json()["data"])
+    assert any(
+        item["session_id"] == session_id and item["archived"] is True
+        for item in archived_list.json()["data"]
+    )
 
     restored = client.post(f"/api/sessions/{session_id}/restore")
     assert restored.status_code == 200
@@ -123,7 +132,9 @@ def test_agents_endpoint_and_session_isolation(client):
     assert created_agent.json()["data"]["agent_id"] == "agent-b"
 
     default_session = client.post("/api/sessions", json={}).json()["data"]["session_id"]
-    other_session = client.post("/api/sessions?agent_id=agent-b", json={}).json()["data"]["session_id"]
+    other_session = client.post("/api/sessions?agent_id=agent-b", json={}).json()[
+        "data"
+    ]["session_id"]
 
     default_list = client.get("/api/sessions").json()["data"]
     other_list = client.get("/api/sessions?agent_id=agent-b").json()["data"]
@@ -133,6 +144,8 @@ def test_agents_endpoint_and_session_isolation(client):
     assert any(item["session_id"] == other_session for item in other_list)
 
     default_files = client.get("/api/files/index").json()["data"]["files"]
-    other_files = client.get("/api/files/index?agent_id=agent-b").json()["data"]["files"]
+    other_files = client.get("/api/files/index?agent_id=agent-b").json()["data"][
+        "files"
+    ]
     assert "memory/MEMORY.md" in default_files
     assert "memory/MEMORY.md" in other_files

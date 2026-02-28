@@ -4,7 +4,13 @@ import json
 import time
 from pathlib import Path
 
-from config import LlmRuntimeConfig, RetrievalConfig, RuntimeConfig, load_effective_runtime_config, merge_runtime_configs
+from config import (
+    LlmRuntimeConfig,
+    RetrievalConfig,
+    RuntimeConfig,
+    load_effective_runtime_config,
+    merge_runtime_configs,
+)
 from graph.agent import AgentManager
 
 
@@ -30,7 +36,13 @@ def test_load_effective_runtime_config_deep_merge(tmp_path: Path):
             {
                 "rag_mode": False,
                 "llm_runtime": {"temperature": 0.4, "timeout_seconds": 45},
-                "retrieval": {"memory": {"top_k": 6, "semantic_weight": 0.8, "lexical_weight": 0.2}},
+                "retrieval": {
+                    "memory": {
+                        "top_k": 6,
+                        "semantic_weight": 0.8,
+                        "lexical_weight": 0.2,
+                    }
+                },
             }
         )
         + "\n",
@@ -63,7 +75,9 @@ def test_merge_runtime_configs_uses_override_delta():
         llm_runtime=LlmRuntimeConfig(temperature=0.15, timeout_seconds=120),
         retrieval=RetrievalConfig(),
     )
-    override = RuntimeConfig(llm_runtime=LlmRuntimeConfig(temperature=0.5, timeout_seconds=60))
+    override = RuntimeConfig(
+        llm_runtime=LlmRuntimeConfig(temperature=0.5, timeout_seconds=60)
+    )
 
     merged = merge_runtime_configs(base, override)
     assert merged.rag_mode is True
@@ -106,12 +120,16 @@ def test_agent_runtime_auto_reload_on_agent_config_change(tmp_path: Path):
 
 def test_agent_runtime_isolation_between_agents(tmp_path: Path):
     base_dir = tmp_path
-    (base_dir / "config.json").write_text(json.dumps({"rag_mode": False}) + "\n", encoding="utf-8")
+    (base_dir / "config.json").write_text(
+        json.dumps({"rag_mode": False}) + "\n", encoding="utf-8"
+    )
     manager = _seed_manager_dirs(base_dir)
 
     alpha = manager.get_runtime("alpha")
     beta = manager.get_runtime("beta")
-    (beta.root_dir / "config.json").write_text(json.dumps({"rag_mode": True}) + "\n", encoding="utf-8")
+    (beta.root_dir / "config.json").write_text(
+        json.dumps({"rag_mode": True}) + "\n", encoding="utf-8"
+    )
     time.sleep(0.01)
 
     alpha_after = manager.get_runtime("alpha")

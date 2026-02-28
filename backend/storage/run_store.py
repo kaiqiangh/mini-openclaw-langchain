@@ -137,5 +137,7 @@ class AuditStore:
         }
         schema_path = self.audit_dir / "SCHEMA.json"
         if not schema_path.exists():
-            schema_path.write_text(json.dumps(descriptor, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-
+            schema_path.write_text(
+                json.dumps(descriptor, ensure_ascii=True, indent=2) + "\n",
+                encoding="utf-8",
+            )

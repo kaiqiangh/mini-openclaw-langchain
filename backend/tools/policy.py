@@ -45,7 +45,9 @@ class ToolPolicyEngine:
             if tool_name in enabled:
                 return PolicyDecision(True, "allowed_via_explicit_enable")
         elif enabled and tool_name not in enabled:
-            return PolicyDecision(False, f"tool '{tool_name}' is not in explicit enabled set")
+            return PolicyDecision(
+                False, f"tool '{tool_name}' is not in explicit enabled set"
+            )
 
         max_level = self.max_level_by_trigger.get(trigger_type, PermissionLevel.L0_READ)
         if permission_level > max_level:

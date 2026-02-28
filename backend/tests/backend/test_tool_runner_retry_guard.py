@@ -27,7 +27,9 @@ class _FailingTool:
 
 
 def test_tool_runner_blocks_repeated_identical_failures(tmp_path: Path):
-    runner = ToolRunner(policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl")
+    runner = ToolRunner(
+        policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl"
+    )
     context = ToolContext(
         workspace_root=tmp_path,
         trigger_type="chat",
@@ -40,14 +42,26 @@ def test_tool_runner_blocks_repeated_identical_failures(tmp_path: Path):
     second = runner.run_tool(tool, args={"path": "a"}, context=context)
     third = runner.run_tool(tool, args={"path": "a"}, context=context)
 
-    assert first.ok is False and first.error is not None and first.error.code == "E_EXEC"
-    assert second.ok is False and second.error is not None and second.error.code == "E_EXEC"
-    assert third.ok is False and third.error is not None and third.error.code == "E_POLICY_DENIED"
+    assert (
+        first.ok is False and first.error is not None and first.error.code == "E_EXEC"
+    )
+    assert (
+        second.ok is False
+        and second.error is not None
+        and second.error.code == "E_EXEC"
+    )
+    assert (
+        third.ok is False
+        and third.error is not None
+        and third.error.code == "E_POLICY_DENIED"
+    )
     assert "retry blocked" in third.error.message.lower()
 
 
 def test_tool_runner_does_not_block_different_arguments(tmp_path: Path):
-    runner = ToolRunner(policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl")
+    runner = ToolRunner(
+        policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl"
+    )
     context = ToolContext(
         workspace_root=tmp_path,
         trigger_type="chat",
@@ -82,5 +96,11 @@ def test_tool_runner_respects_configured_repeat_limit(tmp_path: Path):
     first = runner.run_tool(tool, args={"path": "x"}, context=context)
     second = runner.run_tool(tool, args={"path": "x"}, context=context)
 
-    assert first.ok is False and first.error is not None and first.error.code == "E_EXEC"
-    assert second.ok is False and second.error is not None and second.error.code == "E_POLICY_DENIED"
+    assert (
+        first.ok is False and first.error is not None and first.error.code == "E_EXEC"
+    )
+    assert (
+        second.ok is False
+        and second.error is not None
+        and second.error.code == "E_POLICY_DENIED"
+    )

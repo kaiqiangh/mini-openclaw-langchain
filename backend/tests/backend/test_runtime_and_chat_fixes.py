@@ -31,15 +31,22 @@ def test_runtime_config_endpoint_roundtrip(client):
 
     updated = client.put("/api/config/runtime", json={"config": payload})
     assert updated.status_code == 200
-    assert updated.json()["data"]["config"]["scheduler"]["runs_query_default_limit"] == 42
-    assert updated.json()["data"]["config"]["retrieval"]["storage"]["fts_prefilter_k"] == 25
+    assert (
+        updated.json()["data"]["config"]["scheduler"]["runs_query_default_limit"] == 42
+    )
+    assert (
+        updated.json()["data"]["config"]["retrieval"]["storage"]["fts_prefilter_k"]
+        == 25
+    )
 
 
 def test_tokens_session_uses_agent_effective_runtime(client):
     default_session = client.post("/api/sessions", json={}).json()["data"]["session_id"]
     created = client.post("/api/agents", json={"agent_id": "alpha"})
     assert created.status_code == 200
-    alpha_session = client.post("/api/sessions?agent_id=alpha", json={}).json()["data"]["session_id"]
+    alpha_session = client.post("/api/sessions?agent_id=alpha", json={}).json()["data"][
+        "session_id"
+    ]
 
     toggle = client.put("/api/config/rag-mode?agent_id=alpha", json={"enabled": True})
     assert toggle.status_code == 200

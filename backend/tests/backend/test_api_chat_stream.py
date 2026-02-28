@@ -41,7 +41,9 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
     assert "agent_update" in events
     assert "reasoning" in events
 
-    history = client.get(f"/api/sessions/{session_id}/history").json()["data"]["messages"]
+    history = client.get(f"/api/sessions/{session_id}/history").json()["data"][
+        "messages"
+    ]
     assert len(history) == 3
     assert history[0]["role"] == "user"
     assert history[1]["role"] == "assistant"
@@ -49,6 +51,12 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
 
     # Ensure structured message linkage audit records are persisted.
     links_file = api_app["base_dir"] / "storage" / "audit" / "message_links.jsonl"
-    rows = [json.loads(line) for line in links_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [
+        json.loads(line)
+        for line in links_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     assert len(rows) >= 3
-    assert any(row.get("role") == "assistant" and row.get("segment_index") == 1 for row in rows)
+    assert any(
+        row.get("role") == "assistant" and row.get("segment_index") == 1 for row in rows
+    )

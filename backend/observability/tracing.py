@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 from typing import Any
 
@@ -11,23 +12,26 @@ def build_optional_callbacks(*, run_id: str) -> list[Any]:
 
     if provider == "langsmith":
         try:
-            from langchain.callbacks.tracers import LangChainTracer
+            from langchain_core.tracers import LangChainTracer
 
-            tracer = LangChainTracer()
-            tracer.run_name = run_id
-            tracer.project_name = os.getenv("LANGSMITH_PROJECT", "mini-openclaw")
+            tracer = LangChainTracer(
+                project_name=os.getenv("LANGSMITH_PROJECT", "mini-openclaw")
+            )
+            if hasattr(tracer, "run_name"):
+                setattr(tracer, "run_name", run_id)
             return [tracer]
         except Exception:
             return []
 
     if provider == "langfuse":
         try:
-            from langfuse.callback import CallbackHandler
-
-            handler = CallbackHandler()
+            module = importlib.import_module("langfuse.callback")
+            handler_cls = getattr(module, "CallbackHandler", None)
+            if handler_cls is None:
+                return []
+            handler = handler_cls()
             return [handler]
         except Exception:
             return []
 
     return []
-

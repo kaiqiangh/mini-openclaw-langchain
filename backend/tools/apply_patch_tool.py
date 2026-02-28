@@ -56,7 +56,9 @@ class ApplyPatchTool:
                     files.add(normalized)
         return files, hunks, strip_level
 
-    def _run_patch_command(self, *, patch_binary: str, patch_text: str, dry_run: bool, strip_level: int) -> tuple[int, str]:
+    def _run_patch_command(
+        self, *, patch_binary: str, patch_text: str, dry_run: bool, strip_level: int
+    ) -> tuple[int, str]:
         cmd = [
             patch_binary,
             f"-p{strip_level}",
@@ -76,7 +78,9 @@ class ApplyPatchTool:
             timeout=self.timeout_seconds,
             check=False,
         )
-        output = "\n".join(part for part in [completed.stdout, completed.stderr] if part).strip()
+        output = "\n".join(
+            part for part in [completed.stdout, completed.stderr] if part
+        ).strip()
         return completed.returncode, output
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:

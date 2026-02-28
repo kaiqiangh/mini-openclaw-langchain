@@ -32,7 +32,10 @@ def test_fetch_url_enforces_content_size_limit(tmp_path: Path, monkeypatch):
 
     class _FakeResponse:
         status = 200
-        headers = {"Content-Type": "text/plain; charset=utf-8", "Content-Length": "1000"}
+        headers = {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Length": "1000",
+        }
 
         def __enter__(self):
             return self
@@ -53,7 +56,9 @@ def test_fetch_url_enforces_content_size_limit(tmp_path: Path, monkeypatch):
 
     import tools.fetch_url_tool as fetch_module
 
-    monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())
+    monkeypatch.setattr(
+        fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener()
+    )
     result = tool.run({"url": "https://example.com"}, _context(tmp_path))
     assert result.ok is False
     assert result.error is not None
@@ -67,8 +72,22 @@ def test_fetch_url_enforces_redirect_limit(tmp_path: Path, monkeypatch):
         class _FakeOpener:
             def open(self, request, timeout=0):  # noqa: D401, ARG002
                 headers: dict[str, str] = {}
-                handler.redirect_request(request, io.BytesIO(b""), 302, "Found", headers, "https://example.com/a")
-                handler.redirect_request(request, io.BytesIO(b""), 302, "Found", headers, "https://example.com/b")
+                handler.redirect_request(
+                    request,
+                    io.BytesIO(b""),
+                    302,
+                    "Found",
+                    headers,
+                    "https://example.com/a",
+                )
+                handler.redirect_request(
+                    request,
+                    io.BytesIO(b""),
+                    302,
+                    "Found",
+                    headers,
+                    "https://example.com/b",
+                )
                 raise AssertionError("expected redirect handler to stop execution")
 
         return _FakeOpener()

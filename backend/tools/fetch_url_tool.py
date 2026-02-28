@@ -96,7 +96,12 @@ class FetchUrlTool:
         _ = context
         started = time.monotonic()
         url = str(args.get("url", "")).strip()
-        extract_mode = str(args.get("extractMode", args.get("extract_mode", "markdown"))).strip().lower() or "markdown"
+        extract_mode = (
+            str(args.get("extractMode", args.get("extract_mode", "markdown")))
+            .strip()
+            .lower()
+            or "markdown"
+        )
         if extract_mode not in {"markdown", "text", "html"}:
             return ToolResult.failure(
                 tool_name=self.name,
@@ -151,7 +156,9 @@ class FetchUrlTool:
                 self.validator(newurl)
                 return super().redirect_request(req, fp, code, msg, headers, newurl)
 
-        redirect_handler = _RedirectLimiter(max(0, int(self.max_redirects)), self._validate_url)
+        redirect_handler = _RedirectLimiter(
+            max(0, int(self.max_redirects)), self._validate_url
+        )
         opener = build_opener(redirect_handler)
         request = Request(url, headers={"User-Agent": "mini-openclaw/0.1"})
         try:
@@ -167,7 +174,9 @@ class FetchUrlTool:
                         duration_ms=int((time.monotonic() - started) * 1000),
                     )
 
-                content_length_raw = (response.headers.get("Content-Length", "") or "").strip()
+                content_length_raw = (
+                    response.headers.get("Content-Length", "") or ""
+                ).strip()
                 if content_length_raw:
                     try:
                         if int(content_length_raw) > int(self.max_content_bytes):

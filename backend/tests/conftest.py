@@ -4,6 +4,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from fastapi import FastAPI, Request
@@ -15,7 +16,17 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from api import agents, chat, compress, config_api, files, scheduler_api, sessions, tokens, usage  # noqa: E402
+from api import (
+    agents,
+    chat,
+    compress,
+    config_api,
+    files,
+    scheduler_api,
+    sessions,
+    tokens,
+    usage,
+)  # noqa: E402
 from api.errors import ApiError, error_payload  # noqa: E402
 from config import RuntimeConfig, load_runtime_config  # noqa: E402
 from graph.memory_indexer import MemoryIndexer  # noqa: E402
@@ -24,6 +35,9 @@ from scheduler.cron import CronScheduler  # noqa: E402
 from scheduler.heartbeat import HeartbeatScheduler  # noqa: E402
 from storage.run_store import AuditStore  # noqa: E402
 from storage.usage_store import UsageStore  # noqa: E402
+
+if TYPE_CHECKING:
+    from graph.agent import AgentManager
 
 
 @dataclass
@@ -77,13 +91,23 @@ class FakeAgentManager:
             (root / rel).mkdir(parents=True, exist_ok=True)
         if not (root / "workspace" / "SOUL.md").exists():
             (root / "workspace" / "SOUL.md").write_text("SOUL", encoding="utf-8")
-            (root / "workspace" / "IDENTITY.md").write_text("IDENTITY", encoding="utf-8")
+            (root / "workspace" / "IDENTITY.md").write_text(
+                "IDENTITY", encoding="utf-8"
+            )
             (root / "workspace" / "USER.md").write_text("USER", encoding="utf-8")
             (root / "workspace" / "AGENTS.md").write_text("AGENTS", encoding="utf-8")
-            (root / "workspace" / "HEARTBEAT.md").write_text("HEARTBEAT", encoding="utf-8")
-            (root / "memory" / "MEMORY.md").write_text("memory content", encoding="utf-8")
-            (root / "knowledge" / "note.md").write_text("knowledge alpha beta", encoding="utf-8")
-            (root / "SKILLS_SNAPSHOT.md").write_text("<available_skills></available_skills>\n", encoding="utf-8")
+            (root / "workspace" / "HEARTBEAT.md").write_text(
+                "HEARTBEAT", encoding="utf-8"
+            )
+            (root / "memory" / "MEMORY.md").write_text(
+                "memory content", encoding="utf-8"
+            )
+            (root / "knowledge" / "note.md").write_text(
+                "knowledge alpha beta", encoding="utf-8"
+            )
+            (root / "SKILLS_SNAPSHOT.md").write_text(
+                "<available_skills></available_skills>\n", encoding="utf-8"
+            )
         if not (root / "config.json").exists():
             (root / "config.json").write_text('{"rag_mode": false}\n', encoding="utf-8")
         return root
@@ -157,7 +181,9 @@ class FakeAgentManager:
             return False
         return True
 
-    def build_system_prompt(self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default") -> str:
+    def build_system_prompt(
+        self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default"
+    ) -> str:
         if rag_mode:
             return (
                 f"SYSTEM PROMPT RAG=1 first={int(bool(is_first_turn))} agent={agent_id}\n"
@@ -169,26 +195,43 @@ class FakeAgentManager:
         _ = seed_text, agent_id
         return "Test Title"
 
-    async def summarize_messages(self, messages: list[dict[str, object]], agent_id: str = "default") -> str:
+    async def summarize_messages(
+        self, messages: list[dict[str, object]], agent_id: str = "default"
+    ) -> str:
         _ = messages, agent_id
         return "Compressed Summary"
 
     async def run_once(self, *, message: str, **kwargs):
-        return {"text": f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"}
+        return {
+            "text": f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"
+        }
 
-    async def astream(self, message: str, history: list[dict[str, object]], session_id: str, **kwargs):
+    async def astream(
+        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
+    ):
         _ = history, kwargs
         yield {"type": "run_start", "data": {"run_id": "run-test", "attempt": 1}}
         yield {
             "type": "agent_update",
-            "data": {"run_id": "run-test", "node": "model", "message_count": 1, "preview": "starting"},
+            "data": {
+                "run_id": "run-test",
+                "node": "model",
+                "message_count": 1,
+                "preview": "starting",
+            },
         }
         yield {"type": "retrieval", "data": {"query": message, "results": []}}
         yield {"type": "token", "data": {"content": f"[{session_id}]A"}}
-        yield {"type": "tool_start", "data": {"tool": "read_file", "input": {"path": "memory/MEMORY.md"}}}
+        yield {
+            "type": "tool_start",
+            "data": {"tool": "read_file", "input": {"path": "memory/MEMORY.md"}},
+        }
         yield {"type": "tool_end", "data": {"tool": "read_file", "output": "ok"}}
         yield {"type": "new_response", "data": {}}
-        yield {"type": "reasoning", "data": {"run_id": "run-test", "content": "reasoning sample"}}
+        yield {
+            "type": "reasoning",
+            "data": {"run_id": "run-test", "content": "reasoning sample"},
+        }
         yield {"type": "token", "data": {"content": "B"}}
         yield {
             "type": "done",
@@ -222,8 +265,12 @@ def backend_base_dir(tmp_path: Path) -> Path:
     (base / "workspace" / "AGENTS.md").write_text("AGENTS", encoding="utf-8")
     (base / "workspace" / "HEARTBEAT.md").write_text("HEARTBEAT", encoding="utf-8")
     (base / "memory" / "MEMORY.md").write_text("memory content", encoding="utf-8")
-    (base / "knowledge" / "note.md").write_text("knowledge alpha beta", encoding="utf-8")
-    (base / "SKILLS_SNAPSHOT.md").write_text("<available_skills></available_skills>\n", encoding="utf-8")
+    (base / "knowledge" / "note.md").write_text(
+        "knowledge alpha beta", encoding="utf-8"
+    )
+    (base / "SKILLS_SNAPSHOT.md").write_text(
+        "<available_skills></available_skills>\n", encoding="utf-8"
+    )
 
     (base / "config.json").write_text(
         json.dumps(
@@ -256,34 +303,35 @@ def api_app(backend_base_dir: Path):
     app = FastAPI()
 
     agent_manager = FakeAgentManager(backend_base_dir)
+    typed_agent_manager = cast("AgentManager", agent_manager)
     session_manager = agent_manager.get_session_manager("default")
 
-    chat.set_agent_manager(agent_manager)
-    sessions.set_agent_manager(agent_manager)
-    files.set_dependencies(backend_base_dir, agent_manager)
-    tokens.set_dependencies(backend_base_dir, agent_manager)
-    compress.set_agent_manager(agent_manager)
-    config_api.set_dependencies(backend_base_dir, agent_manager)
-    usage.set_agent_manager(agent_manager)
-    agents.set_agent_manager(agent_manager)
+    chat.set_agent_manager(typed_agent_manager)
+    sessions.set_agent_manager(typed_agent_manager)
+    files.set_dependencies(backend_base_dir, typed_agent_manager)
+    tokens.set_dependencies(backend_base_dir, typed_agent_manager)
+    compress.set_agent_manager(typed_agent_manager)
+    config_api.set_dependencies(backend_base_dir, typed_agent_manager)
+    usage.set_agent_manager(typed_agent_manager)
+    agents.set_agent_manager(typed_agent_manager)
     runtime = agent_manager.get_runtime("default")
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=runtime.root_dir,
         config=runtime.runtime_config.heartbeat,
-        agent_manager=agent_manager,
+        agent_manager=typed_agent_manager,
         session_manager=runtime.session_manager,
         agent_id="default",
     )
     cron_scheduler = CronScheduler(
         base_dir=runtime.root_dir,
         config=runtime.runtime_config.cron,
-        agent_manager=agent_manager,
+        agent_manager=typed_agent_manager,
         session_manager=runtime.session_manager,
         agent_id="default",
     )
     scheduler_api.set_dependencies(
         backend_base_dir,
-        agent_manager,
+        typed_agent_manager,
         default_heartbeat_scheduler=heartbeat_scheduler,
         default_cron_scheduler=cron_scheduler,
     )
@@ -292,14 +340,20 @@ def api_app(backend_base_dir: Path):
     async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=error_payload(code=exc.code, message=exc.message, details=exc.details),
+            content=error_payload(
+                code=exc.code, message=exc.message, details=exc.details
+            ),
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    async def validation_error_handler(
+        _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
         details = [
             {
-                "field": ".".join(str(part) for part in err.get("loc", []) if part != "body"),
+                "field": ".".join(
+                    str(part) for part in err.get("loc", []) if part != "body"
+                ),
                 "message": err.get("msg", "Invalid value"),
                 "code": err.get("type", "validation_error"),
             }

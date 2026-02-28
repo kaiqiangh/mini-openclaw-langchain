@@ -23,7 +23,9 @@ class ToolRunner:
         self.policy_engine = policy_engine
         self.audit_file = audit_file
         self.audit_store = audit_store
-        self.repeat_identical_failure_limit = max(1, int(repeat_identical_failure_limit))
+        self.repeat_identical_failure_limit = max(
+            1, int(repeat_identical_failure_limit)
+        )
         self._repeat_failure_counts: dict[tuple[str, str, str], int] = {}
 
     @staticmethod

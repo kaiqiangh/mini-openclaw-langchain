@@ -47,7 +47,15 @@ class TerminalTool:
             "LOGNAME",
             "TZ",
         }
-        sensitive_markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL", "COOKIE")
+        sensitive_markers = (
+            "KEY",
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "AUTH",
+            "CREDENTIAL",
+            "COOKIE",
+        )
         sanitized: dict[str, str] = {}
         for key, value in os.environ.items():
             upper = key.upper()

@@ -140,7 +140,9 @@ class RuntimeConfig:
     tool_network: ToolNetworkConfig = field(default_factory=ToolNetworkConfig)
     tool_timeouts: ToolTimeouts = field(default_factory=ToolTimeouts)
     tool_output_limits: ToolOutputLimits = field(default_factory=ToolOutputLimits)
-    autonomous_tools: AutonomousToolsConfig = field(default_factory=AutonomousToolsConfig)
+    autonomous_tools: AutonomousToolsConfig = field(
+        default_factory=AutonomousToolsConfig
+    )
     scheduler: SchedulerRuntimeConfig = field(default_factory=SchedulerRuntimeConfig)
     heartbeat: HeartbeatRuntimeConfig = field(default_factory=HeartbeatRuntimeConfig)
     cron: CronRuntimeConfig = field(default_factory=CronRuntimeConfig)
@@ -245,7 +247,9 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "read_file_chars": runtime.tool_output_limits.read_file_chars,
         },
         "autonomous_tools": {
-            "heartbeat_enabled_tools": list(runtime.autonomous_tools.heartbeat_enabled_tools),
+            "heartbeat_enabled_tools": list(
+                runtime.autonomous_tools.heartbeat_enabled_tools
+            ),
             "cron_enabled_tools": list(runtime.autonomous_tools.cron_enabled_tools),
         },
         "scheduler": {
@@ -323,24 +327,38 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
                 chunk_overlap=max(0, int(knowledge_retrieval.get("chunk_overlap", 80))),
             ),
             storage=RetrievalStorageConfig(
-                engine=str(storage_retrieval.get("engine", "sqlite")).strip().lower() or "sqlite",
-                db_path=str(storage_retrieval.get("db_path", "storage/retrieval.db")).strip() or "storage/retrieval.db",
-                fts_prefilter_k=max(1, int(storage_retrieval.get("fts_prefilter_k", 50))),
+                engine=str(storage_retrieval.get("engine", "sqlite")).strip().lower()
+                or "sqlite",
+                db_path=str(
+                    storage_retrieval.get("db_path", "storage/retrieval.db")
+                ).strip()
+                or "storage/retrieval.db",
+                fts_prefilter_k=max(
+                    1, int(storage_retrieval.get("fts_prefilter_k", 50))
+                ),
             ),
         ),
         tool_retry_guard=ToolRetryGuardConfig(
-            repeat_identical_failure_limit=max(1, int(tool_retry_guard.get("repeat_identical_failure_limit", 2))),
+            repeat_identical_failure_limit=max(
+                1, int(tool_retry_guard.get("repeat_identical_failure_limit", 2))
+            ),
         ),
         tool_network=ToolNetworkConfig(
             allow_http_schemes=[
                 str(item).strip().lower()
-                for item in list(tool_network.get("allow_http_schemes", ["http", "https"]))
+                for item in list(
+                    tool_network.get("allow_http_schemes", ["http", "https"])
+                )
                 if str(item).strip()
             ]
             or ["http", "https"],
-            block_private_networks=bool(tool_network.get("block_private_networks", True)),
+            block_private_networks=bool(
+                tool_network.get("block_private_networks", True)
+            ),
             max_redirects=max(0, int(tool_network.get("max_redirects", 3))),
-            max_content_bytes=max(1024, int(tool_network.get("max_content_bytes", 2_000_000))),
+            max_content_bytes=max(
+                1024, int(tool_network.get("max_content_bytes", 2_000_000))
+            ),
         ),
         tool_timeouts=ToolTimeouts(
             terminal_seconds=int(tool_timeouts.get("terminal_seconds", 30)),
@@ -353,12 +371,16 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             read_file_chars=int(tool_output_limits.get("read_file_chars", 10000)),
         ),
         autonomous_tools=AutonomousToolsConfig(
-            heartbeat_enabled_tools=list(autonomous_tools.get("heartbeat_enabled_tools", [])),
+            heartbeat_enabled_tools=list(
+                autonomous_tools.get("heartbeat_enabled_tools", [])
+            ),
             cron_enabled_tools=list(autonomous_tools.get("cron_enabled_tools", [])),
         ),
         scheduler=SchedulerRuntimeConfig(
             api_enabled=bool(scheduler.get("api_enabled", True)),
-            runs_query_default_limit=max(1, int(scheduler.get("runs_query_default_limit", 100))),
+            runs_query_default_limit=max(
+                1, int(scheduler.get("runs_query_default_limit", 100))
+            ),
         ),
         heartbeat=HeartbeatRuntimeConfig(
             enabled=bool(heartbeat.get("enabled", False)),
@@ -387,7 +409,9 @@ def load_runtime_config(config_path: Path) -> RuntimeConfig:
     return _runtime_from_payload(payload)
 
 
-def merge_runtime_configs(base: RuntimeConfig, override: RuntimeConfig) -> RuntimeConfig:
+def merge_runtime_configs(
+    base: RuntimeConfig, override: RuntimeConfig
+) -> RuntimeConfig:
     default_payload = _runtime_to_payload(RuntimeConfig())
     override_payload = _runtime_to_payload(override)
     override_delta = _deep_diff(override_payload, default_payload)
@@ -395,7 +419,9 @@ def merge_runtime_configs(base: RuntimeConfig, override: RuntimeConfig) -> Runti
     return _runtime_from_payload(merged_payload)
 
 
-def load_effective_runtime_config(global_config_path: Path, agent_config_path: Path) -> RuntimeConfig:
+def load_effective_runtime_config(
+    global_config_path: Path, agent_config_path: Path
+) -> RuntimeConfig:
     global_payload: dict[str, Any] = {}
     agent_payload: dict[str, Any] = {}
     if global_config_path.exists():
@@ -436,7 +462,9 @@ def _load_secrets() -> SecretConfig:
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
-        google_embedding_model=os.getenv("GOOGLE_EMBEDDING_MODEL", "gemini-embedding-001"),
+        google_embedding_model=os.getenv(
+            "GOOGLE_EMBEDDING_MODEL", "gemini-embedding-001"
+        ),
     )
 
 

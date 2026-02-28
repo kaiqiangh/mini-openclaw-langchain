@@ -12,7 +12,9 @@ def test_terminal_tool_scrubs_secret_environment(monkeypatch, tmp_path: Path):
 
     tool = TerminalTool(root_dir=tmp_path, timeout_seconds=5, output_char_limit=5000)
     context = ToolContext(workspace_root=tmp_path, trigger_type="chat")
-    result = tool.run({"command": "printf '%s' \"${OPENAI_API_KEY:-}|${SAFE_FLAG:-}\""}, context)
+    result = tool.run(
+        {"command": "printf '%s' \"${OPENAI_API_KEY:-}|${SAFE_FLAG:-}\""}, context
+    )
 
     assert result.ok is True
     combined = str(result.data.get("combined", ""))

@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any, Protocol
 
 import pytest
 
 from config import RuntimeConfig, ToolOutputLimits, ToolTimeouts
 from tools import get_all_tools, get_tool_runner
 from tools.apply_patch_tool import ApplyPatchTool
-from tools.base import ToolContext
+from tools.base import MiniTool, ToolContext
 from tools.contracts import ToolResult
 from tools.fetch_url_tool import FetchUrlTool
 from tools.langchain_tools import build_langchain_tools
@@ -21,22 +22,41 @@ def _seed_workspace(root: Path) -> None:
     (root / "knowledge").mkdir(parents=True, exist_ok=True)
     (root / "storage").mkdir(parents=True, exist_ok=True)
     (root / "memory" / "MEMORY.md").write_text("memory alpha line\n", encoding="utf-8")
-    (root / "knowledge" / "note.md").write_text("knowledge alpha beta\n", encoding="utf-8")
+    (root / "knowledge" / "note.md").write_text(
+        "knowledge alpha beta\n", encoding="utf-8"
+    )
 
 
-def _build_tool_map(root: Path) -> tuple[dict[str, object], list[object]]:
+class _InvokableTool(Protocol):
+    name: str
+
+    def invoke(self, input: dict[str, Any]) -> str: ...
+
+
+def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniTool]]:
     runtime = RuntimeConfig(
-        tool_timeouts=ToolTimeouts(terminal_seconds=5, python_repl_seconds=2, fetch_url_seconds=5),
-        tool_output_limits=ToolOutputLimits(terminal_chars=5000, fetch_url_chars=5000, read_file_chars=10000),
+        tool_timeouts=ToolTimeouts(
+            terminal_seconds=5, python_repl_seconds=2, fetch_url_seconds=5
+        ),
+        tool_output_limits=ToolOutputLimits(
+            terminal_chars=5000, fetch_url_chars=5000, read_file_chars=10000
+        ),
     )
     mini_tools = get_all_tools(root, runtime, trigger_type="chat", config_base_dir=root)
     runner = get_tool_runner(root)
-    context = ToolContext(workspace_root=root, trigger_type="chat", run_id="run-test", session_id="sess-test")
-    langchain_tools = build_langchain_tools(tools=mini_tools, runner=runner, context=context)
+    context = ToolContext(
+        workspace_root=root,
+        trigger_type="chat",
+        run_id="run-test",
+        session_id="sess-test",
+    )
+    langchain_tools = build_langchain_tools(
+        tools=mini_tools, runner=runner, context=context
+    )
     return {tool.name: tool for tool in langchain_tools}, mini_tools
 
 
-def _parse_result(payload: str) -> dict[str, object]:
+def _parse_result(payload: str) -> dict[str, Any]:
     return json.loads(payload)
 
 
@@ -180,7 +200,11 @@ def test_web_fetch_extract_mode_matrix(tmp_path, monkeypatch):
             if self._sent:
                 return b""
             self._sent = True
-            body = "<html><body><h1>Title</h1><p>" + ("Hello world " * 80) + "</p></body></html>"
+            body = (
+                "<html><body><h1>Title</h1><p>"
+                + ("Hello world " * 80)
+                + "</p></body></html>"
+            )
             return body.encode("utf-8")
 
         def geturl(self) -> str:
@@ -195,10 +219,14 @@ def test_web_fetch_extract_mode_matrix(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())  # type: ignore[no-untyped-call]
 
-    markdown = tool.run({"url": "https://example.com", "extractMode": "markdown"}, context)
+    markdown = tool.run(
+        {"url": "https://example.com", "extractMode": "markdown"}, context
+    )
     html = tool.run({"url": "https://example.com", "extractMode": "html"}, context)
     text = tool.run({"url": "https://example.com", "extractMode": "text"}, context)
-    truncated = tool.run({"url": "https://example.com", "extractMode": "html", "maxChars": 256}, context)
+    truncated = tool.run(
+        {"url": "https://example.com", "extractMode": "html", "maxChars": 256}, context
+    )
 
     assert markdown.ok is True
     assert html.ok is True
@@ -228,9 +256,21 @@ def test_web_search_filters_and_limit(tmp_path, monkeypatch):
         def text(self, query, max_results):  # noqa: D401
             _ = query, max_results
             return [
-                {"title": "Docs", "href": "https://docs.openclaw.ai/tools", "body": "doc"},
-                {"title": "Example", "href": "https://example.com/page", "body": "example"},
-                {"title": "Blocked", "href": "https://blocked.com/page", "body": "blocked"},
+                {
+                    "title": "Docs",
+                    "href": "https://docs.openclaw.ai/tools",
+                    "body": "doc",
+                },
+                {
+                    "title": "Example",
+                    "href": "https://example.com/page",
+                    "body": "example",
+                },
+                {
+                    "title": "Blocked",
+                    "href": "https://blocked.com/page",
+                    "body": "blocked",
+                },
             ]
 
     import tools.web_search_tool as search_module

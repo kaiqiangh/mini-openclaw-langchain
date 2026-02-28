@@ -95,7 +95,11 @@ class HeartbeatScheduler:
         with self._file_lock:
             if not self.audit_file.exists():
                 return []
-            lines = [line for line in self.audit_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line
+                for line in self.audit_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         rows: list[dict[str, Any]] = []
         for line in reversed(lines[-max_rows:]):
             try:
@@ -151,8 +155,12 @@ class HeartbeatScheduler:
 
             # Persist run metadata always, but suppress no-op acknowledgements from session history.
             if not suppressed:
-                self.session_manager.save_message(self.config.session_id, "user", prompt)
-                self.session_manager.save_message(self.config.session_id, "assistant", text or "HEARTBEAT_EMPTY")
+                self.session_manager.save_message(
+                    self.config.session_id, "user", prompt
+                )
+                self.session_manager.save_message(
+                    self.config.session_id, "assistant", text or "HEARTBEAT_EMPTY"
+                )
 
             self._write_run(
                 HeartbeatRun(

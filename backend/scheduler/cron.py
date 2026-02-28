@@ -107,7 +107,9 @@ def _parse_cron_field(field: str, lower: int, upper: int) -> set[int]:
 def _cron_matches(expr: str, dt: datetime) -> bool:
     parts = expr.split()
     if len(parts) != 5:
-        raise ValueError("Cron expression must have 5 fields: minute hour day month weekday")
+        raise ValueError(
+            "Cron expression must have 5 fields: minute hour day month weekday"
+        )
 
     minutes = _parse_cron_field(parts[0], 0, 59)
     hours = _parse_cron_field(parts[1], 0, 23)
@@ -187,7 +189,9 @@ class CronScheduler:
             self.jobs_file.parent.mkdir(parents=True, exist_ok=True)
             data = {"jobs": [job.to_dict() for job in jobs]}
             tmp = self.jobs_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
             tmp.replace(self.jobs_file)
 
     def _write_jsonl(self, file_path: Path, payload: dict[str, Any]) -> None:
@@ -204,7 +208,9 @@ class CronScheduler:
             limit = max(1, int(self.config.failure_retention))
             if len(rows) <= limit:
                 return
-            self.failures_file.write_text("\n".join(rows[-limit:]) + "\n", encoding="utf-8")
+            self.failures_file.write_text(
+                "\n".join(rows[-limit:]) + "\n", encoding="utf-8"
+            )
 
     def _compute_next_run(self, job: CronJob, now_ts: float) -> float | None:
         zone = self._zone()
@@ -220,7 +226,9 @@ class CronScheduler:
             return next_dt.timestamp()
         raise ValueError(f"Unsupported schedule type: {job.schedule_type}")
 
-    def create_job(self, *, name: str, schedule_type: ScheduleType, schedule: str, prompt: str) -> CronJob:
+    def create_job(
+        self, *, name: str, schedule_type: ScheduleType, schedule: str, prompt: str
+    ) -> CronJob:
         now_ts = time.time()
         zone = self._zone()
 
@@ -230,7 +238,9 @@ class CronScheduler:
         elif schedule_type == "every":
             next_run_ts = now_ts + max(5, int(schedule))
         elif schedule_type == "cron":
-            next_run_ts = _next_cron_time(schedule, datetime.fromtimestamp(now_ts, tz=zone)).timestamp()
+            next_run_ts = _next_cron_time(
+                schedule, datetime.fromtimestamp(now_ts, tz=zone)
+            ).timestamp()
         else:
             raise ValueError(f"Unsupported schedule type: {schedule_type}")
 
@@ -267,8 +277,12 @@ class CronScheduler:
                 return job
         return None
 
-    def create_and_store_job(self, *, name: str, schedule_type: ScheduleType, schedule: str, prompt: str) -> CronJob:
-        job = self.create_job(name=name, schedule_type=schedule_type, schedule=schedule, prompt=prompt)
+    def create_and_store_job(
+        self, *, name: str, schedule_type: ScheduleType, schedule: str, prompt: str
+    ) -> CronJob:
+        job = self.create_job(
+            name=name, schedule_type=schedule_type, schedule=schedule, prompt=prompt
+        )
         self.upsert_job(job)
         return job
 
@@ -285,7 +299,11 @@ class CronScheduler:
         with self._file_lock:
             if not self.runs_file.exists():
                 return []
-            lines = [line for line in self.runs_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line
+                for line in self.runs_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         rows: list[dict[str, Any]] = []
         for line in reversed(lines[-max_rows:]):
             try:
@@ -301,7 +319,11 @@ class CronScheduler:
         with self._file_lock:
             if not self.failures_file.exists():
                 return []
-            lines = [line for line in self.failures_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+            lines = [
+                line
+                for line in self.failures_file.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         rows: list[dict[str, Any]] = []
         for line in reversed(lines[-max_rows:]):
             try:
@@ -372,7 +394,8 @@ class CronScheduler:
 
             backoff = min(
                 int(self.config.retry_max_seconds),
-                int(self.config.retry_base_seconds) * (2 ** max(0, job.failure_count - 1)),
+                int(self.config.retry_base_seconds)
+                * (2 ** max(0, job.failure_count - 1)),
             )
             job.next_run_ts = now_ts + max(5, backoff)
             if job.failure_count >= int(self.config.max_failures):

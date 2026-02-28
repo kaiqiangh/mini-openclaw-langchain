@@ -92,7 +92,9 @@ def get_all_tools(
             chunk_overlap=runtime.retrieval.knowledge.chunk_overlap,
         ),
         WebSearchTool(timeout_seconds=runtime.tool_timeouts.fetch_url_seconds),
-        ApplyPatchTool(root_dir=base_dir, timeout_seconds=runtime.tool_timeouts.terminal_seconds),
+        ApplyPatchTool(
+            root_dir=base_dir, timeout_seconds=runtime.tool_timeouts.terminal_seconds
+        ),
     ]
 
     policy = ToolPolicyEngine()
@@ -123,4 +125,9 @@ def get_tool_runner(
     )
 
 
-__all__ = ["get_all_tools", "get_tool_runner", "scan_skills", "get_explicit_enabled_tools"]
+__all__ = [
+    "get_all_tools",
+    "get_tool_runner",
+    "scan_skills",
+    "get_explicit_enabled_tools",
+]

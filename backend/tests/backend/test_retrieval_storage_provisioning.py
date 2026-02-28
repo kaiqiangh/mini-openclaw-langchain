@@ -23,16 +23,29 @@ def test_existing_agent_gets_retrieval_db_on_initialize(tmp_path: Path):
     ]:
         (base / rel).mkdir(parents=True, exist_ok=True)
 
-    for name in ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"]:
+    for name in [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+    ]:
         (base / "workspace" / name).write_text(f"# {name}\n", encoding="utf-8")
     (base / "memory" / "MEMORY.md").write_text("default memory\n", encoding="utf-8")
-    (base / "SKILLS_SNAPSHOT.md").write_text("<available_skills></available_skills>\n", encoding="utf-8")
+    (base / "SKILLS_SNAPSHOT.md").write_text(
+        "<available_skills></available_skills>\n", encoding="utf-8"
+    )
 
     (base / "config.json").write_text(
         json.dumps(
             {
                 "retrieval": {
-                    "storage": {"engine": "sqlite", "db_path": "storage/retrieval.db", "fts_prefilter_k": 50}
+                    "storage": {
+                        "engine": "sqlite",
+                        "db_path": "storage/retrieval.db",
+                        "fts_prefilter_k": 50,
+                    }
                 }
             }
         )
@@ -41,10 +54,16 @@ def test_existing_agent_gets_retrieval_db_on_initialize(tmp_path: Path):
     )
 
     # Existing legacy agent with JSON index only.
-    (base / "workspaces" / "elon" / "workspace" / "SOUL.md").write_text("# SOUL\n", encoding="utf-8")
-    (base / "workspaces" / "elon" / "memory" / "MEMORY.md").write_text("hello from elon\n", encoding="utf-8")
+    (base / "workspaces" / "elon" / "workspace" / "SOUL.md").write_text(
+        "# SOUL\n", encoding="utf-8"
+    )
+    (base / "workspaces" / "elon" / "memory" / "MEMORY.md").write_text(
+        "hello from elon\n", encoding="utf-8"
+    )
     (base / "workspaces" / "elon" / "config.json").write_text("{}\n", encoding="utf-8")
-    (base / "workspaces" / "elon" / "storage" / "memory_index" / "index.json").write_text(
+    (
+        base / "workspaces" / "elon" / "storage" / "memory_index" / "index.json"
+    ).write_text(
         json.dumps(
             {
                 "digest": "legacy",
@@ -83,14 +102,25 @@ def test_existing_agent_root_memory_is_migrated_to_canonical_path(tmp_path: Path
     ]:
         (base / rel).mkdir(parents=True, exist_ok=True)
 
-    for name in ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "HEARTBEAT.md", "BOOTSTRAP.md"]:
+    for name in [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "HEARTBEAT.md",
+        "BOOTSTRAP.md",
+    ]:
         (base / "workspace" / name).write_text(f"# {name}\n", encoding="utf-8")
     (base / "memory" / "MEMORY.md").write_text("default memory\n", encoding="utf-8")
-    (base / "SKILLS_SNAPSHOT.md").write_text("<available_skills></available_skills>\n", encoding="utf-8")
+    (base / "SKILLS_SNAPSHOT.md").write_text(
+        "<available_skills></available_skills>\n", encoding="utf-8"
+    )
     (base / "config.json").write_text("{}\n", encoding="utf-8")
 
     legacy_text = "legacy root memory content\n"
-    (base / "workspaces" / "elon" / "MEMORY.md").write_text(legacy_text, encoding="utf-8")
+    (base / "workspaces" / "elon" / "MEMORY.md").write_text(
+        legacy_text, encoding="utf-8"
+    )
     (base / "workspaces" / "elon" / "memory" / "MEMORY.md").write_text(
         "# MEMORY\n\n- Keep this file concise.\n- Store stable preferences and long-lived context only.\n",
         encoding="utf-8",

@@ -36,10 +36,7 @@
     "repeat_identical_failure_limit": 2
   },
   "tool_network": {
-    "allow_http_schemes": [
-      "http",
-      "https"
-    ],
+    "allow_http_schemes": ["http", "https"],
     "block_private_networks": true,
     "max_redirects": 3,
     "max_content_bytes": 2000000

@@ -8,12 +8,16 @@ from urllib.request import Request, urlopen
 
 try:
     from duckduckgo_search import DDGS
-except ModuleNotFoundError:  # pragma: no cover - dependency is optional in scaffold stage
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - dependency is optional in scaffold stage
     DDGS = None
 
 try:
     from bs4 import BeautifulSoup
-except ModuleNotFoundError:  # pragma: no cover - dependency is optional in scaffold stage
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - dependency is optional in scaffold stage
     BeautifulSoup = None
 
 from .base import ToolContext
@@ -31,7 +35,9 @@ def _domain_match(hostname: str, domain: str) -> bool:
 
 def _normalize_domains(value: Any) -> set[str]:
     if isinstance(value, list):
-        return {str(item).lower().strip().lstrip(".") for item in value if str(item).strip()}
+        return {
+            str(item).lower().strip().lstrip(".") for item in value if str(item).strip()
+        }
     return set()
 
 
@@ -143,7 +149,9 @@ class WebSearchTool:
             if DDGS is not None:
                 with DDGS(timeout=self.timeout_seconds) as ddgs:
                     try:
-                        rows_iter = ddgs.text(query, max_results=self.max_limit * 5, timelimit=timelimit)
+                        rows_iter = ddgs.text(
+                            query, max_results=self.max_limit * 5, timelimit=timelimit
+                        )
                     except TypeError:
                         rows_iter = ddgs.text(query, max_results=self.max_limit * 5)
                     raw_rows = [row for row in rows_iter if isinstance(row, dict)]
@@ -158,9 +166,13 @@ class WebSearchTool:
                     continue
 
                 hostname = (urlparse(url).hostname or "").lower()
-                if allowed_domains and not any(_domain_match(hostname, d) for d in allowed_domains):
+                if allowed_domains and not any(
+                    _domain_match(hostname, d) for d in allowed_domains
+                ):
                     continue
-                if blocked_domains and any(_domain_match(hostname, d) for d in blocked_domains):
+                if blocked_domains and any(
+                    _domain_match(hostname, d) for d in blocked_domains
+                ):
                     continue
 
                 canonical = _canonical_url(url)
@@ -191,6 +203,10 @@ class WebSearchTool:
 
         return ToolResult.success(
             tool_name=self.name,
-            data={"query": query, "recency_days": recency_days or 0, "results": results},
+            data={
+                "query": query,
+                "recency_days": recency_days or 0,
+                "results": results,
+            },
             duration_ms=int((time.monotonic() - started) * 1000),
         )

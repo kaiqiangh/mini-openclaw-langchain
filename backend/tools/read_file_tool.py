@@ -52,7 +52,11 @@ class ReadFileTool:
 
         if isinstance(start_line, int) or isinstance(end_line, int):
             s = 1 if not isinstance(start_line, int) else max(1, start_line)
-            e = len(lines) if not isinstance(end_line, int) else min(len(lines), end_line)
+            e = (
+                len(lines)
+                if not isinstance(end_line, int)
+                else min(len(lines), end_line)
+            )
             text = "\n".join(lines[s - 1 : e])
 
         truncated = False

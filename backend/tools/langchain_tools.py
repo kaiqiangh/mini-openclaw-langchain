@@ -13,7 +13,9 @@ from .runner import ToolRunner
 
 class TerminalArgs(BaseModel):
     command: str = Field(description="Shell command to execute in workspace sandbox")
-    timeout: int | None = Field(default=None, ge=1, le=300, description="Optional timeout in seconds")
+    timeout: int | None = Field(
+        default=None, ge=1, le=300, description="Optional timeout in seconds"
+    )
 
 
 class PythonReplArgs(BaseModel):
@@ -22,20 +24,28 @@ class PythonReplArgs(BaseModel):
 
 class FetchUrlArgs(BaseModel):
     url: str = Field(description="HTTP or HTTPS URL to fetch")
-    extractMode: str | None = Field(default=None, description="One of markdown, text, html")
-    maxChars: int | None = Field(default=None, ge=256, le=100000, description="Optional max output chars")
+    extractMode: str | None = Field(
+        default=None, description="One of markdown, text, html"
+    )
+    maxChars: int | None = Field(
+        default=None, ge=256, le=100000, description="Optional max output chars"
+    )
 
 
 class ReadFileArgs(BaseModel):
     path: str = Field(description="Workspace-relative file path")
-    start_line: int | None = Field(default=None, description="Optional 1-based start line")
+    start_line: int | None = Field(
+        default=None, description="Optional 1-based start line"
+    )
     end_line: int | None = Field(default=None, description="Optional 1-based end line")
     max_chars: int | None = Field(default=None, description="Optional max char limit")
 
 
 class ReadFilesArgs(BaseModel):
     paths: list[str] = Field(description="Workspace-relative file paths")
-    start_line: int | None = Field(default=None, description="Optional 1-based start line")
+    start_line: int | None = Field(
+        default=None, description="Optional 1-based start line"
+    )
     end_line: int | None = Field(default=None, description="Optional 1-based end line")
     max_chars: int | None = Field(default=None, description="Optional max char limit")
 
@@ -47,11 +57,19 @@ class SearchKnowledgeArgs(BaseModel):
 
 class WebSearchArgs(BaseModel):
     query: str = Field(description="Search query")
-    limit: int | None = Field(default=None, ge=1, le=10, description="Optional max results")
+    limit: int | None = Field(
+        default=None, ge=1, le=10, description="Optional max results"
+    )
     count: int | None = Field(default=None, ge=1, le=10, description="Alias for limit")
-    recency_days: int | None = Field(default=None, ge=1, le=3650, description="Optional recency filter in days")
-    allowed_domains: list[str] | None = Field(default=None, description="Optional allowed domain list")
-    blocked_domains: list[str] | None = Field(default=None, description="Optional blocked domain list")
+    recency_days: int | None = Field(
+        default=None, ge=1, le=3650, description="Optional recency filter in days"
+    )
+    allowed_domains: list[str] | None = Field(
+        default=None, description="Optional allowed domain list"
+    )
+    blocked_domains: list[str] | None = Field(
+        default=None, description="Optional blocked domain list"
+    )
 
 
 class ApplyPatchArgs(BaseModel):
@@ -74,7 +92,9 @@ def _register_terminal_tool(
         return
     tool = by_name[tool_name]
 
-    def run_terminal(command: str, timeout: int | None = None, _tool: MiniTool = tool) -> str:
+    def run_terminal(
+        command: str, timeout: int | None = None, _tool: MiniTool = tool
+    ) -> str:
         args: dict[str, Any] = {"command": command}
         if timeout is not None:
             args["timeout"] = timeout
@@ -240,8 +260,12 @@ def _register_search_knowledge_tool(
         return
     tool = by_name["search_knowledge_base"]
 
-    def run_search_knowledge_base(query: str, top_k: int = 3, _tool: MiniTool = tool) -> str:
-        result = runner.run_tool(_tool, args={"query": query, "top_k": top_k}, context=context)
+    def run_search_knowledge_base(
+        query: str, top_k: int = 3, _tool: MiniTool = tool
+    ) -> str:
+        result = runner.run_tool(
+            _tool, args={"query": query, "top_k": top_k}, context=context
+        )
         return _result_to_json(result)
 
     structured.append(
@@ -332,16 +356,62 @@ def build_langchain_tools(
     by_name = {tool.name: tool for tool in tools}
     structured: list[StructuredTool] = []
 
-    _register_terminal_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="terminal")
-    _register_terminal_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="exec")
-    _register_python_tool(by_name=by_name, structured=structured, runner=runner, context=context)
-    _register_fetch_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="fetch_url")
-    _register_fetch_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="web_fetch")
-    _register_read_file_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="read_file")
-    _register_read_file_tool(by_name=by_name, structured=structured, runner=runner, context=context, tool_name="read")
-    _register_read_files_tool(by_name=by_name, structured=structured, runner=runner, context=context)
-    _register_search_knowledge_tool(by_name=by_name, structured=structured, runner=runner, context=context)
-    _register_web_search_tool(by_name=by_name, structured=structured, runner=runner, context=context)
-    _register_apply_patch_tool(by_name=by_name, structured=structured, runner=runner, context=context)
+    _register_terminal_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="terminal",
+    )
+    _register_terminal_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="exec",
+    )
+    _register_python_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_fetch_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="fetch_url",
+    )
+    _register_fetch_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="web_fetch",
+    )
+    _register_read_file_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="read_file",
+    )
+    _register_read_file_tool(
+        by_name=by_name,
+        structured=structured,
+        runner=runner,
+        context=context,
+        tool_name="read",
+    )
+    _register_read_files_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_search_knowledge_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_web_search_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_apply_patch_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
 
     return structured

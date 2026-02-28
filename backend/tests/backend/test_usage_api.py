@@ -61,7 +61,10 @@ def test_usage_summary_and_records_filters(client, api_app):
         ],
     )
 
-    records = client.get("/api/usage/records", params={"since_hours": 2, "model": "deepseek-chat", "limit": 10})
+    records = client.get(
+        "/api/usage/records",
+        params={"since_hours": 2, "model": "deepseek-chat", "limit": 10},
+    )
     assert records.status_code == 200
     payload = records.json()["data"]
     assert payload["count"] == 3
@@ -69,7 +72,9 @@ def test_usage_summary_and_records_filters(client, api_app):
     assert all(isinstance(item["input_tokens"], int) for item in payload["records"])
     assert all(item["total_tokens"] > 0 for item in payload["records"])
 
-    summary = client.get("/api/usage/summary", params={"since_hours": 2, "trigger_type": "chat"})
+    summary = client.get(
+        "/api/usage/summary", params={"since_hours": 2, "trigger_type": "chat"}
+    )
     assert summary.status_code == 200
     data = summary.json()["data"]
     assert data["totals"]["runs"] == 3
