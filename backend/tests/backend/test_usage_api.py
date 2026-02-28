@@ -20,55 +20,92 @@ def test_usage_summary_and_records_filters(client, api_app):
         api_app["base_dir"],
         [
             {
+                "schema_version": 2,
                 "timestamp_ms": now_ms - 60_000,
+                "provider": "deepseek",
                 "model": "deepseek-chat",
                 "trigger_type": "chat",
                 "session_id": "s1",
-                "input_tokens": 100,
-                "cached_input_tokens": 20,
-                "uncached_input_tokens": 80,
+                "run_id": "r1",
+                "input_tokens": 120,
+                "input_uncached_tokens": 100,
+                "input_cache_read_tokens": 20,
+                "input_cache_write_tokens_5m": 0,
+                "input_cache_write_tokens_1h": 0,
+                "input_cache_write_tokens_unknown": 0,
                 "output_tokens": 50,
                 "reasoning_tokens": 10,
-                "total_tokens": 150,
-                "estimated_cost_usd": 0.0001,
+                "tool_input_tokens": 0,
+                "total_tokens": 170,
+                "priced": True,
+                "cost_usd": 0.0001,
+                "pricing": {
+                    "priced": True,
+                    "total_cost_usd": 0.0001,
+                },
             },
             {
+                "schema_version": 2,
                 "timestamp_ms": now_ms - 30_000,
+                "provider": "deepseek",
                 "model": "deepseek-chat",
                 "trigger_type": "chat",
                 "session_id": "s2",
+                "run_id": "r2",
                 "input_tokens": 40,
-                "cached_input_tokens": 0,
-                "uncached_input_tokens": 40,
+                "input_uncached_tokens": 40,
+                "input_cache_read_tokens": 0,
+                "input_cache_write_tokens_5m": 0,
+                "input_cache_write_tokens_1h": 0,
+                "input_cache_write_tokens_unknown": 0,
                 "output_tokens": 15,
                 "reasoning_tokens": 0,
+                "tool_input_tokens": 0,
                 "total_tokens": 55,
-                "estimated_cost_usd": 0.00002,
+                "priced": True,
+                "cost_usd": 0.00002,
+                "pricing": {
+                    "priced": True,
+                    "total_cost_usd": 0.00002,
+                },
             },
             {
+                "schema_version": 2,
                 "timestamp_ms": now_ms - 15_000,
-                "model": "deepseek-chat",
+                "provider": "google",
+                "model": "gemini-2.5-flash",
                 "trigger_type": "chat",
                 "session_id": "s3",
-                "input_tokens": "[REDACTED]",
-                "cached_input_tokens": "[REDACTED]",
-                "uncached_input_tokens": "[REDACTED]",
-                "output_tokens": "[REDACTED]",
-                "reasoning_tokens": "[REDACTED]",
-                "total_tokens": "[REDACTED]",
-                "estimated_cost_usd": 0.00011,
+                "run_id": "r3",
+                "input_tokens": 90,
+                "input_uncached_tokens": 90,
+                "input_cache_read_tokens": 0,
+                "input_cache_write_tokens_5m": 0,
+                "input_cache_write_tokens_1h": 0,
+                "input_cache_write_tokens_unknown": 0,
+                "output_tokens": 25,
+                "reasoning_tokens": 0,
+                "tool_input_tokens": 0,
+                "total_tokens": 115,
+                "priced": False,
+                "cost_usd": None,
+                "pricing": {
+                    "priced": False,
+                    "total_cost_usd": None,
+                    "unpriced_reason": "model_not_in_catalog",
+                },
             },
         ],
     )
 
     records = client.get(
         "/api/usage/records",
-        params={"since_hours": 2, "model": "deepseek-chat", "limit": 10},
+        params={"since_hours": 2, "provider": "deepseek", "limit": 10},
     )
     assert records.status_code == 200
     payload = records.json()["data"]
-    assert payload["count"] == 3
-    assert all(item["model"] == "deepseek-chat" for item in payload["records"])
+    assert payload["count"] == 2
+    assert all(item["provider"] == "deepseek" for item in payload["records"])
     assert all(isinstance(item["input_tokens"], int) for item in payload["records"])
     assert all(item["total_tokens"] > 0 for item in payload["records"])
 
@@ -78,8 +115,11 @@ def test_usage_summary_and_records_filters(client, api_app):
     assert summary.status_code == 200
     data = summary.json()["data"]
     assert data["totals"]["runs"] == 3
-    assert data["totals"]["input_tokens"] >= 140
-    assert data["totals"]["cached_input_tokens"] >= 20
-    assert data["totals"]["output_tokens"] >= 65
-    assert data["totals"]["total_tokens"] > 205
-    assert len(data["by_model"]) == 1
+    assert data["totals"]["priced_runs"] == 2
+    assert data["totals"]["unpriced_runs"] == 1
+    assert data["totals"]["input_tokens"] >= 250
+    assert data["totals"]["input_cache_read_tokens"] >= 20
+    assert data["totals"]["output_tokens"] >= 90
+    assert data["totals"]["total_tokens"] >= 340
+    assert len(data["by_provider_model"]) == 2
+    assert len(data["by_provider"]) == 2
