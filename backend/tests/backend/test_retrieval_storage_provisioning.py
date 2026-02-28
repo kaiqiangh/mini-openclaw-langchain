@@ -91,7 +91,10 @@ def test_existing_agent_root_memory_is_migrated_to_canonical_path(tmp_path: Path
 
     legacy_text = "legacy root memory content\n"
     (base / "workspaces" / "elon" / "MEMORY.md").write_text(legacy_text, encoding="utf-8")
-    (base / "workspaces" / "elon" / "memory" / "MEMORY.md").write_text("# MEMORY\n", encoding="utf-8")
+    (base / "workspaces" / "elon" / "memory" / "MEMORY.md").write_text(
+        "# MEMORY\n\n- Keep this file concise.\n- Store stable preferences and long-lived context only.\n",
+        encoding="utf-8",
+    )
     (base / "workspaces" / "elon" / "config.json").write_text("{}\n", encoding="utf-8")
 
     manager = AgentManager()

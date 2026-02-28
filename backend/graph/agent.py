@@ -162,7 +162,14 @@ class AgentManager:
             return False
         if len(lines) == 1:
             return True
-        return len(lines) == 2 and lines[1].lower().startswith("- keep this file concise")
+        placeholder_prefixes = (
+            "- keep this file concise",
+            "- store stable preferences and long-lived context only",
+        )
+        for line in lines[1:]:
+            if not any(line.lower().startswith(prefix) for prefix in placeholder_prefixes):
+                return False
+        return True
 
     def _migrate_legacy_root_memory(self, workspace_root: Path) -> None:
         legacy_memory = workspace_root / "MEMORY.md"
