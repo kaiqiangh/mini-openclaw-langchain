@@ -27,19 +27,19 @@ flowchart TB
 
 ## Runtime Config Matrix
 
-| Path | Purpose |
-| --- | --- |
-| `runtime.retrieval.storage.engine` | `sqlite` (default) or fallback `json`. |
-| `runtime.retrieval.storage.db_path` | Relative DB path per agent workspace. |
-| `runtime.retrieval.storage.fts_prefilter_k` | Candidate count before semantic scoring. |
-| `runtime.tool_network.allow_http_schemes` | Allowed URL schemes for fetch tools. |
+| Path                                          | Purpose                                     |
+| --------------------------------------------- | ------------------------------------------- |
+| `runtime.retrieval.storage.engine`            | `sqlite` (default) or fallback `json`.      |
+| `runtime.retrieval.storage.db_path`           | Relative DB path per agent workspace.       |
+| `runtime.retrieval.storage.fts_prefilter_k`   | Candidate count before semantic scoring.    |
+| `runtime.tool_network.allow_http_schemes`     | Allowed URL schemes for fetch tools.        |
 | `runtime.tool_network.block_private_networks` | Block localhost/private/link-local targets. |
-| `runtime.tool_network.max_redirects` | Redirect safety cap. |
-| `runtime.tool_network.max_content_bytes` | Maximum fetched response size. |
-| `runtime.scheduler.api_enabled` | Enable/disable scheduler API routes. |
-| `runtime.scheduler.runs_query_default_limit` | Default limit for runs/failures queries. |
-| `runtime.heartbeat.*` | Heartbeat schedule + execution window. |
-| `runtime.cron.*` | Cron polling, retry/backoff, retention. |
+| `runtime.tool_network.max_redirects`          | Redirect safety cap.                        |
+| `runtime.tool_network.max_content_bytes`      | Maximum fetched response size.              |
+| `runtime.scheduler.api_enabled`               | Enable/disable scheduler API routes.        |
+| `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.    |
+| `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
+| `runtime.cron.*`                              | Cron polling, retry/backoff, retention.     |
 
 ## API Reference
 
@@ -115,10 +115,10 @@ Reference: `docs/operations/scheduler.md`.
 
 ```bash
 cd backend
-uv venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+uv venv --python=python3.13.7
+uv pip install -r requirements.txt
 cp .env.example .env
-uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8002
+uv run uvicorn app:app --host 127.0.0.1 --port 8002
 ```
 
 Health check:
