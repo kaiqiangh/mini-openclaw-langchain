@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -97,15 +98,57 @@ class AgentManager:
         return ChatOpenAI(**llm_kwargs)
 
     @staticmethod
+    def _parse_tool_loop_overrides(raw_value: str) -> dict[str, str]:
+        raw = raw_value.strip()
+        if not raw:
+            return {}
+
+        # Preferred format: JSON object for explicit model -> model mapping.
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                overrides: dict[str, str] = {}
+                for source, target in parsed.items():
+                    source_key = str(source).strip().lower()
+                    target_model = str(target).strip()
+                    if source_key and target_model:
+                        overrides[source_key] = target_model
+                if overrides:
+                    return overrides
+        except Exception:
+            pass
+
+        # Backward compatible format: "source=target,source2=target2".
+        overrides: dict[str, str] = {}
+        for item in raw.split(","):
+            source, sep, target = item.partition("=")
+            if not sep:
+                continue
+            source_key = source.strip().lower()
+            target_model = target.strip()
+            if source_key and target_model:
+                overrides[source_key] = target_model
+        return overrides
+
+    @staticmethod
     def _resolve_tool_loop_model(configured_model: str, has_tools: bool) -> str:
         """Select a tool-compatible model when provider requirements demand it."""
         model = configured_model.strip() or "deepseek-chat"
         if not has_tools:
             return model
-        if model.lower() != "deepseek-reasoner":
-            return model
-        override = (os.getenv("DEEPSEEK_TOOL_MODEL", "deepseek-chat") or "").strip()
-        return override or model
+
+        global_override = (os.getenv("TOOL_LOOP_MODEL", "") or "").strip()
+        if global_override:
+            return global_override
+
+        configured_key = model.lower()
+        map_override = AgentManager._parse_tool_loop_overrides(
+            os.getenv("TOOL_LOOP_MODEL_OVERRIDES", "") or ""
+        ).get(configured_key)
+        if map_override:
+            return map_override
+
+        return model
 
     def _require_initialized(self) -> tuple[Path, Path]:
         if self.base_dir is None or self.workspaces_dir is None:

@@ -41,6 +41,16 @@ flowchart TB
 | `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
 | `runtime.cron.*`                              | Cron polling, retry/backoff, retention.     |
 
+## LLM Model Selection (Tool Loop)
+
+- Tool-enabled loops can be overridden with:
+  - `TOOL_LOOP_MODEL` (global override for all configured models).
+  - `TOOL_LOOP_MODEL_OVERRIDES` (per-model mapping).
+- `TOOL_LOOP_MODEL_OVERRIDES` supports:
+  - JSON object format (preferred): `{"source-model": "tool-model"}`
+  - comma-separated key/value format: `source-model=tool-model,source2=tool2`
+- If no override applies, the configured model is used as-is.
+
 ## API Reference
 
 ### Chat / Sessions / Agents

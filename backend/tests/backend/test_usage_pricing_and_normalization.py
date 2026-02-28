@@ -226,8 +226,18 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     assert usage_state["total_tokens"] == 220
 
 
-def test_reasoner_tool_loop_model_defaults_to_deepseek_chat(monkeypatch):
-    monkeypatch.delenv("DEEPSEEK_TOOL_MODEL", raising=False)
+def test_tool_loop_model_keeps_configured_model_when_no_override(monkeypatch):
+    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
+    monkeypatch.delenv("TOOL_LOOP_MODEL_OVERRIDES", raising=False)
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="deepseek-reasoner",
+        has_tools=True,
+    )
+    assert selected == "deepseek-reasoner"
+
+
+def test_tool_loop_model_respects_global_override(monkeypatch):
+    monkeypatch.setenv("TOOL_LOOP_MODEL", "deepseek-chat")
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
@@ -235,10 +245,25 @@ def test_reasoner_tool_loop_model_defaults_to_deepseek_chat(monkeypatch):
     assert selected == "deepseek-chat"
 
 
-def test_reasoner_tool_loop_model_respects_override(monkeypatch):
-    monkeypatch.setenv("DEEPSEEK_TOOL_MODEL", "deepseek-v3.1")
+def test_tool_loop_model_respects_per_model_override_json(monkeypatch):
+    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
+    monkeypatch.setenv(
+        "TOOL_LOOP_MODEL_OVERRIDES",
+        '{"deepseek-reasoner": "deepseek-chat", "o3": "gpt-4.1-mini"}',
+    )
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="deepseek-reasoner",
+        has_tools=True,
+    )
+    assert selected == "deepseek-chat"
+
+
+def test_tool_loop_model_respects_per_model_override_key_value(monkeypatch):
+    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
+    monkeypatch.setenv("TOOL_LOOP_MODEL_OVERRIDES", "deepseek-reasoner=deepseek-v3.1")
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
     )
     assert selected == "deepseek-v3.1"
+
