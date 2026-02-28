@@ -94,10 +94,26 @@ class ToolNetworkConfig:
     max_content_bytes: int = 2_000_000
 
 
+DEFAULT_HEARTBEAT_ENABLED_TOOLS: tuple[str, ...] = ()
+DEFAULT_CRON_ENABLED_TOOLS: tuple[str, ...] = (
+    "web_search",
+    "web_fetch",
+    "fetch_url",
+    "read",
+    "read_file",
+    "read_files",
+    "search_knowledge_base",
+)
+
+
 @dataclass
 class AutonomousToolsConfig:
-    heartbeat_enabled_tools: list[str] = field(default_factory=list)
-    cron_enabled_tools: list[str] = field(default_factory=list)
+    heartbeat_enabled_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_HEARTBEAT_ENABLED_TOOLS)
+    )
+    cron_enabled_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CRON_ENABLED_TOOLS)
+    )
 
 
 @dataclass
@@ -298,6 +314,21 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     except ValueError:
         injection_mode = InjectionMode.EVERY_TURN
 
+    def _normalized_tool_list(
+        value: Any, fallback: tuple[str, ...], *, fallback_on_empty: bool = False
+    ) -> list[str]:
+        if not isinstance(value, list):
+            return list(fallback)
+        normalized: list[str] = []
+        for item in value:
+            tool_name = str(item).strip()
+            if not tool_name or tool_name in normalized:
+                continue
+            normalized.append(tool_name)
+        if not normalized and fallback_on_empty:
+            return list(fallback)
+        return normalized
+
     return RuntimeConfig(
         rag_mode=bool(payload.get("rag_mode", False)),
         injection_mode=injection_mode,
@@ -371,10 +402,15 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             read_file_chars=int(tool_output_limits.get("read_file_chars", 10000)),
         ),
         autonomous_tools=AutonomousToolsConfig(
-            heartbeat_enabled_tools=list(
-                autonomous_tools.get("heartbeat_enabled_tools", [])
+            heartbeat_enabled_tools=_normalized_tool_list(
+                autonomous_tools.get("heartbeat_enabled_tools"),
+                DEFAULT_HEARTBEAT_ENABLED_TOOLS,
             ),
-            cron_enabled_tools=list(autonomous_tools.get("cron_enabled_tools", [])),
+            cron_enabled_tools=_normalized_tool_list(
+                autonomous_tools.get("cron_enabled_tools"),
+                DEFAULT_CRON_ENABLED_TOOLS,
+                fallback_on_empty=True,
+            ),
         ),
         scheduler=SchedulerRuntimeConfig(
             api_enabled=bool(scheduler.get("api_enabled", True)),

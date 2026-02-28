@@ -20,6 +20,14 @@ ScheduleType = Literal["at", "every", "cron"]
 
 _LOCK_REGISTRY_GUARD = threading.Lock()
 _FILE_LOCKS: dict[str, threading.RLock] = {}
+CRON_EXECUTION_SUFFIX = """
+[Scheduled Execution Rules]
+- Execute the user job prompt directly.
+- If the task needs current external data (prices, markets, weather, news, status), use available tools first.
+- Prefer `web_search`, then `web_fetch`/`fetch_url` to verify key facts from sources.
+- For external facts, include source URLs and retrieval timestamp in your final answer.
+- If a required tool fails, state that explicitly and continue with the best verified fallback.
+""".strip()
 
 
 def _lock_for(path: Path) -> threading.RLock:
@@ -344,13 +352,20 @@ class CronScheduler:
             self.upsert_job(target)
             return target
 
+    @staticmethod
+    def _compose_job_prompt(prompt: str) -> str:
+        base_prompt = prompt.strip()
+        if not base_prompt:
+            return ""
+        return f"{base_prompt}\n\n{CRON_EXECUTION_SUFFIX}"
+
     async def _run_job(self, job: CronJob, now_ts: float) -> None:
         session_id = f"__cron__:{job.id}"
         history = self.session_manager.load_session_for_agent(session_id)
 
         try:
             result = await self.agent_manager.run_once(
-                message=job.prompt,
+                message=self._compose_job_prompt(job.prompt),
                 history=history,
                 session_id=session_id,
                 is_first_turn=len(history) == 0,

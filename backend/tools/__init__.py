@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from config import RuntimeConfig
+from config import DEFAULT_CRON_ENABLED_TOOLS, RuntimeConfig
 from storage.run_store import AuditStore
 
 from .apply_patch_tool import ApplyPatchTool
@@ -23,7 +23,14 @@ def get_explicit_enabled_tools(runtime: RuntimeConfig, trigger_type: str) -> lis
     if trigger_type == "heartbeat":
         return list(runtime.autonomous_tools.heartbeat_enabled_tools)
     if trigger_type == "cron":
-        return list(runtime.autonomous_tools.cron_enabled_tools)
+        configured = [
+            str(name).strip()
+            for name in runtime.autonomous_tools.cron_enabled_tools
+            if str(name).strip()
+        ]
+        if configured:
+            return configured
+        return list(DEFAULT_CRON_ENABLED_TOOLS)
     return []
 
 
