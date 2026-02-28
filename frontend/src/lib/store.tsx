@@ -147,6 +147,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [fileDirty, setFileDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const agentSwitchEpochRef = useRef(0);
+  const streamConnectionRef = useRef(false);
 
   const refreshAgents = useCallback(async () => {
     const next = await getAgents();
@@ -168,16 +169,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loadSession = useCallback(
     async (sessionId: string, archived = false, agentId: string) => {
       const history = await getSessionHistory(sessionId, archived, agentId);
-      const mapped: ChatMessage[] = history.messages.map((msg, idx) => ({
-        id: `${sessionId}-${idx}`,
-        role: msg.role,
-        content: msg.content,
-        toolCalls: msg.tool_calls ?? [],
-        retrievals: [],
-        debugEvents: [],
-      }));
+      const mapped: ChatMessage[] = history.messages.map((msg, idx) => {
+        const base: ChatMessage = {
+          id: `${sessionId}-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          toolCalls: msg.tool_calls ?? [],
+          retrievals: [],
+          debugEvents: [],
+        };
+        if (!msg.streaming) {
+          return base;
+        }
+        return appendDebugEvent(base, "streaming_recovery", {
+          run_id: msg.run_id ?? "",
+        });
+      });
+      const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
       setMessages(mapped);
       setCurrentSessionId(sessionId);
+      setIsStreaming(hasStreaming);
     },
     [],
   );
@@ -193,6 +204,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSessions([]);
       setCurrentSessionId(null);
       setMessages([]);
+      setIsStreaming(false);
       setSelectedFilePathState("memory/MEMORY.md");
       setSelectedFileContent("");
       setFileDirty(false);
@@ -314,6 +326,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (scope: "active" | "archived") => {
       setError(null);
       setSessionsScopeState(scope);
+      if (scope === "archived") {
+        setIsStreaming(false);
+      }
       const list = await refreshSessions(scope, currentAgentId);
       if (list.length > 0) {
         await loadSession(
@@ -377,12 +392,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       setError(null);
       setIsStreaming(true);
+      streamConnectionRef.current = true;
+      let activeSessionId = currentSessionId;
 
       try {
         let sessionId = currentSessionId;
         if (!sessionId) {
           const created = await createSession(undefined, currentAgentId);
           sessionId = created.session_id;
+          activeSessionId = created.session_id;
           setCurrentSessionId(sessionId);
           await refreshSessions(undefined, currentAgentId);
         }
@@ -540,7 +558,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to send message");
       } finally {
-        setIsStreaming(false);
+        streamConnectionRef.current = false;
+        try {
+          if (activeSessionId) {
+            const refreshed = await getSessionHistory(
+              activeSessionId,
+              false,
+              currentAgentId,
+            );
+            const mapped: ChatMessage[] = refreshed.messages.map((msg, idx) => ({
+              id: `${activeSessionId}-${idx}`,
+              role: msg.role,
+              content: msg.content,
+              toolCalls: msg.tool_calls ?? [],
+              retrievals: [],
+              debugEvents: [],
+            }));
+            setMessages(mapped);
+            const hasStreaming = refreshed.messages.some((item) =>
+              Boolean(item.streaming),
+            );
+            setIsStreaming(hasStreaming);
+          } else {
+            setIsStreaming(false);
+          }
+        } catch {
+          setIsStreaming(false);
+        }
       }
     },
     [
@@ -551,6 +595,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sessionsScope,
     ],
   );
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!currentSessionId) return;
+    if (sessionsScope === "archived") return;
+    if (!isStreaming) return;
+    if (streamConnectionRef.current) return;
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const history = await getSessionHistory(
+          currentSessionId,
+          false,
+          currentAgentId,
+        );
+        if (cancelled) return;
+
+        const mapped: ChatMessage[] = history.messages.map((msg, idx) => {
+          const base: ChatMessage = {
+            id: `${currentSessionId}-${idx}`,
+            role: msg.role,
+            content: msg.content,
+            toolCalls: msg.tool_calls ?? [],
+            retrievals: [],
+            debugEvents: [],
+          };
+          if (!msg.streaming) {
+            return base;
+          }
+          return appendDebugEvent(base, "streaming_recovery", {
+            run_id: msg.run_id ?? "",
+          });
+        });
+        const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
+        setMessages(mapped);
+        setIsStreaming(hasStreaming);
+        if (!hasStreaming) {
+          void refreshSessions("active", currentAgentId);
+        }
+      } catch {
+        // Keep background polling best-effort only.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    currentAgentId,
+    currentSessionId,
+    initialized,
+    isStreaming,
+    refreshSessions,
+    sessionsScope,
+  ]);
 
   useEffect(() => {
     let cancelled = false;

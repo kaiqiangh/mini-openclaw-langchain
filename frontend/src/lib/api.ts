@@ -32,6 +32,8 @@ export type ChatHistoryResponse = {
     role: "user" | "assistant";
     content: string;
     tool_calls?: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    streaming?: boolean;
+    run_id?: string;
   }>;
   compressed_context?: string;
 };

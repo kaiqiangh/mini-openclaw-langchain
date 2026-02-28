@@ -62,20 +62,48 @@ export function Navbar() {
         </nav>
       </div>
       <div className="flex items-center gap-3">
-        <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
-          <span>RAG</span>
-          <input
-            type="checkbox"
-            name="rag-enabled"
-            aria-label="Enable retrieval augmented generation"
-            className="h-4 w-4 rounded border-[var(--border-strong)] bg-[var(--surface-3)] text-[var(--accent)]"
-            checked={ragEnabled}
+        {workspaceActive ? (
+          <button
+            type="button"
+            aria-label="Toggle RAG mode"
+            title="Retrieval-augmented generation"
             disabled={isStreaming}
-            onChange={(event) => {
-              void toggleRag(event.target.checked);
+            onClick={() => {
+              void toggleRag(!ragEnabled);
             }}
-          />
-        </label>
+            className={`group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+              ragEnabled
+                ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                : "border-[var(--border)] bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--text)]"
+            } ${isStreaming ? "cursor-not-allowed opacity-60" : "hover:border-[var(--accent)]"}`}
+          >
+            <span
+              aria-hidden
+              className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
+                ragEnabled
+                  ? "border-[var(--accent-strong)] bg-[var(--accent)]/20"
+                  : "border-[var(--border-strong)] bg-[var(--surface-2)]"
+              }`}
+            >
+              <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none">
+                <path
+                  d="M3.5 8.5a6.5 6.5 0 0 1 13 0v3.25a1.75 1.75 0 0 1-1.75 1.75h-9.5a1.75 1.75 0 0 1-1.75-1.75V8.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                />
+                <path
+                  d="M7.25 6.5h5.5M10 6.5v7"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </span>
+            <span className="ui-mono tracking-[0.04em]">
+              RAG {ragEnabled ? "ON" : "OFF"}
+            </span>
+          </button>
+        ) : null}
       </div>
     </header>
   );
