@@ -1,48 +1,67 @@
-# Mini-OpenClaw Frontend
+# Frontend
 
 Next.js App Router frontend for Mini-OpenClaw.
 
-## What It Provides
+## Route Map
 
-- Multi-agent workspace management (switch/create/delete agent workspaces).
-- Agent-scoped session list with active/archive/restore/delete.
-- Streaming chat UI with tool/reasoning/usage debug traces.
-- Inspector with Monaco editor for workspace files.
-- Usage analytics page (`/usage`) with token + cost breakdown.
+| Route | Purpose |
+| --- | --- |
+| `/` | Main workspace UI (agents/sessions + chat + inspector). |
+| `/usage` | Usage analytics, trend chart, CSV export. |
+| `/scheduler` | Cron + heartbeat control plane and run history. |
 
-## Architecture
+## UI Model
 
-```text
-frontend/src/
-  app/
-    layout.tsx            # app root + provider
-    page.tsx              # main tri-panel workspace UI
-    usage/page.tsx        # usage analytics page
-    globals.css           # visual system
-  lib/
-    api.ts                # typed API client (agent-aware)
-    store.tsx             # global state + stream orchestration
-  components/
-    layout/               # Navbar, Sidebar, ResizeHandle
-    chat/                 # Chat panels + debug rendering
-    editor/               # InspectorPanel (Monaco)
-```
+- Desktop workspace: draggable split panes (`Sidebar | Chat | Inspector`) with localStorage persistence.
+- Mobile workspace: tab-switched panels.
+- Inspector modes:
+  - workspace file editing
+  - per-agent runtime config editing (`/api/config/runtime`)
+- Chat rendering:
+  - markdown + GFM
+  - sanitization
+  - fenced code copy action
+  - retrieval + tool debug cards
 
-## UX Model
+## State Model (`src/lib/store.tsx`)
 
-- Desktop: `Agents/Sessions | Chat | Inspector` panels.
-- Mobile: tab-switched panel layout.
-- Agent switch updates:
-  - sessions,
-  - message history,
-  - inspected workspace files (`memory/`, `workspace/`, `knowledge/`).
+- Global app context (`AppProvider`) tracks:
+  - `currentAgentId`
+  - sessions + current session
+  - chat message stream state
+  - inspector file state
+  - RAG toggle state (agent-scoped)
+- Agent switch performs:
+  1. load rag mode for selected agent
+  2. load sessions/history
+  3. load default inspected file (`memory/MEMORY.md`)
 
-## Requirements
+## Streaming Event Model
 
-- Node.js 18+ (Node 22 LTS recommended)
-- npm
+`streamChat()` parses SSE payloads and forwards typed events to store reducer logic:
 
-## Quick Start
+- `token`
+- `retrieval`
+- `tool_start`
+- `tool_end`
+- `reasoning`
+- `usage`
+- `done`
+- `title`
+
+The UI accumulates assistant tokens incrementally while preserving run debug traces.
+
+## API Integration
+
+`src/lib/api.ts` includes typed wrappers for:
+
+- agent/sessions/chat/files/tokens/usage
+- config: rag mode + runtime config
+- scheduler: cron jobs, runs/failures, heartbeat config/runs
+
+All agent-scoped calls append `agent_id`.
+
+## Local Development
 
 ```bash
 cd frontend
@@ -50,39 +69,21 @@ npm install
 npm run dev
 ```
 
-Open: `http://localhost:3000`
+Open [http://localhost:3000](http://localhost:3000).
 
-Backend is expected at: `http://<current-host>:8002`.
+Backend default target is `http://<host>:8002`.
 
-## Build
+## Test + Build Flow
 
 ```bash
 cd frontend
+npm run test:run
 npm run build
-npm run start
 ```
 
-## Backend Integration
+Current tests cover:
 
-The frontend calls:
-
-- `/api/agents`
-- `/api/sessions*` (with `agent_id`)
-- `/api/chat` (body `agent_id`)
-- `/api/files` (with `agent_id`)
-- `/api/usage/*` (with `agent_id`)
-- `/api/config/rag-mode`
-- `/api/tokens/*`
-
-## Notes
-
-- Monaco editor is dynamically imported (`ssr: false`).
-- SSE parsing is custom and supports segmented events.
-- Usage page shows explicit token counters:
-  - input,
-  - cached input,
-  - uncached input,
-  - output,
-  - reasoning,
-  - total,
-  - estimated USD.
+- SSE parsing
+- store agent/file flows
+- chat rendering (retrieval/tool cards + markdown sanitization)
+- API agent scoping for rag mode
