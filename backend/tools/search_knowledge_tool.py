@@ -7,8 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config import load_config
+from config import RetrievalStorageConfig, load_config, load_effective_runtime_config, load_runtime_config
 from graph.embedding_client import EmbeddingClient, cosine_similarity
+from graph.retrieval_store import RetrievalChunk, SQLiteRetrievalStore
 
 from .base import ToolContext
 from .contracts import ToolResult
@@ -101,6 +102,148 @@ class SearchKnowledgeTool:
             "rows": rows,
         }
 
+    def _resolve_storage_settings(self) -> RetrievalStorageConfig:
+        config_base = self.config_base_dir or self.root_dir
+        global_config = config_base / "config.json"
+        agent_config = self.root_dir / "config.json"
+        if global_config.exists() and agent_config.exists() and global_config.resolve() != agent_config.resolve():
+            runtime = load_effective_runtime_config(global_config, agent_config)
+        elif agent_config.exists():
+            runtime = load_runtime_config(agent_config)
+        else:
+            runtime = load_config(config_base).runtime
+        storage = runtime.retrieval.storage
+        return RetrievalStorageConfig(
+            engine=str(storage.engine).strip().lower() or "sqlite",
+            db_path=str(storage.db_path).strip() or "storage/retrieval.db",
+            fts_prefilter_k=max(1, int(storage.fts_prefilter_k)),
+        )
+
+    def _sqlite_store(self, storage: RetrievalStorageConfig) -> SQLiteRetrievalStore:
+        return SQLiteRetrievalStore(root_dir=self.root_dir, db_path=storage.db_path)
+
+    @staticmethod
+    def _safe_int(value: object, fallback: int) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return fallback
+
+    def _migrate_json_to_sqlite(
+        self,
+        *,
+        store: SQLiteRetrievalStore,
+        payload: dict[str, Any],
+        digest_fallback: str,
+        chunk_size_fallback: int,
+        chunk_overlap_fallback: int,
+    ) -> bool:
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            return False
+        digest = str(payload.get("digest", digest_fallback))
+        chunk_size = max(64, self._safe_int(payload.get("chunk_size"), chunk_size_fallback))
+        chunk_overlap = max(0, self._safe_int(payload.get("chunk_overlap"), chunk_overlap_fallback))
+        provider = str(payload.get("embedding_provider", "openai"))
+        model = str(payload.get("embedding_model", "text-embedding-3-small"))
+
+        chunks: list[RetrievalChunk] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            source = str(row.get("source", "knowledge/unknown"))
+            text = str(row.get("text", ""))
+            embedding = row.get("embedding", [])
+            parsed_embedding: list[float] = []
+            if isinstance(embedding, list):
+                for item in embedding:
+                    try:
+                        parsed_embedding.append(float(item))
+                    except Exception:
+                        continue
+            chunks.append(RetrievalChunk(source=source, text=text, embedding=parsed_embedding))
+
+        store.replace_domain_index(
+            domain="knowledge",
+            digest=digest,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            embedding_provider=provider,
+            embedding_model=model,
+            chunks=chunks,
+        )
+        return True
+
+    def _ensure_sqlite_index(
+        self,
+        *,
+        files: list[Path],
+        chunk_size: int,
+        chunk_overlap: int,
+        storage: RetrievalStorageConfig,
+    ) -> SQLiteRetrievalStore | None:
+        try:
+            store = self._sqlite_store(storage)
+        except Exception:
+            return None
+
+        digest = self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        meta = store.get_meta("knowledge")
+        if meta is None and self._index_file.exists():
+            try:
+                payload = json.loads(self._index_file.read_text(encoding="utf-8"))
+                if isinstance(payload, dict):
+                    self._migrate_json_to_sqlite(
+                        store=store,
+                        payload=payload,
+                        digest_fallback=digest,
+                        chunk_size_fallback=chunk_size,
+                        chunk_overlap_fallback=chunk_overlap,
+                    )
+                    meta = store.get_meta("knowledge")
+            except Exception:
+                meta = None
+
+        if meta is not None and str(meta.get("digest", "")) == digest:
+            return store
+
+        payload = self._build_index(files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        rows = payload.get("rows", [])
+        if not isinstance(rows, list):
+            rows = []
+        chunks: list[RetrievalChunk] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            embedding = row.get("embedding", [])
+            parsed_embedding: list[float] = []
+            if isinstance(embedding, list):
+                for item in embedding:
+                    try:
+                        parsed_embedding.append(float(item))
+                    except Exception:
+                        continue
+            chunks.append(
+                RetrievalChunk(
+                    source=str(row.get("source", "knowledge/unknown")),
+                    text=str(row.get("text", "")),
+                    embedding=parsed_embedding,
+                )
+            )
+        try:
+            store.replace_domain_index(
+                domain="knowledge",
+                digest=digest,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                embedding_provider=str(payload.get("embedding_provider", "openai")),
+                embedding_model=str(payload.get("embedding_model", "text-embedding-3-small")),
+                chunks=chunks,
+            )
+            return store
+        except Exception:
+            return None
+
     def _load_or_rebuild_index(self, files: list[Path], *, chunk_size: int, chunk_overlap: int) -> dict[str, Any]:
         digest = self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         if self._index_file.exists():
@@ -131,10 +274,6 @@ class SearchKnowledgeTool:
 
         knowledge_dir = resolve_workspace_path(self.root_dir, "knowledge")
         files = [p for p in knowledge_dir.rglob("*") if p.is_file()]
-        payload = self._load_or_rebuild_index(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        rows = payload.get("rows", [])
-        if not isinstance(rows, list):
-            rows = []
 
         query_embedding: list[float] = []
         try:
@@ -144,6 +283,36 @@ class SearchKnowledgeTool:
                 query_embedding = embedded[0]
         except Exception:
             query_embedding = []
+
+        storage = self._resolve_storage_settings()
+        if storage.engine == "sqlite":
+            store = self._ensure_sqlite_index(
+                files=files,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                storage=storage,
+            )
+            if store is not None:
+                results = store.retrieve(
+                    domain="knowledge",
+                    query=query,
+                    top_k=top_k,
+                    fts_prefilter_k=storage.fts_prefilter_k,
+                    semantic_weight=float(self.semantic_weight),
+                    lexical_weight=float(self.lexical_weight),
+                    query_embedding=query_embedding,
+                )
+                if results:
+                    return ToolResult.success(
+                        tool_name=self.name,
+                        data={"query": query, "results": results},
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+
+        payload = self._load_or_rebuild_index(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        rows = payload.get("rows", [])
+        if not isinstance(rows, list):
+            rows = []
 
         terms = {term for term in query.split() if term}
         scored: list[tuple[float, str, str]] = []

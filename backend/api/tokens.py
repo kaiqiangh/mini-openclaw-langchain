@@ -56,9 +56,10 @@ async def session_tokens(
     session = session_manager.load_session(session_id)
     if agent_manager.config is None:
         raise ApiError(status_code=500, code="not_initialized", message="Agent config unavailable")
+    runtime = agent_manager.get_runtime(agent_id)
 
     system_prompt = agent_manager.build_system_prompt(
-        rag_mode=agent_manager.config.runtime.rag_mode,
+        rag_mode=runtime.runtime_config.rag_mode,
         is_first_turn=len(session.get("messages", [])) == 0,
         agent_id=agent_id,
     )

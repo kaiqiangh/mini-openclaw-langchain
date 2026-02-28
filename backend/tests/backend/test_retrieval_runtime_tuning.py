@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from config import RetrievalDomainConfig
@@ -26,9 +27,20 @@ def test_memory_indexer_honors_top_k_and_chunk_settings(tmp_path: Path):
     )
     indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
     indexer.rebuild_index(settings=settings)
-    payload = json.loads((tmp_path / "storage" / "memory_index" / "index.json").read_text(encoding="utf-8"))
-    assert payload["chunk_size"] == 64  # runtime sanitizer lower-bound
-    assert payload["chunk_overlap"] == 2
+    json_index = tmp_path / "storage" / "memory_index" / "index.json"
+    sqlite_index = tmp_path / "storage" / "retrieval.db"
+    if json_index.exists():
+        payload = json.loads(json_index.read_text(encoding="utf-8"))
+        assert payload["chunk_size"] == 64  # runtime sanitizer lower-bound
+        assert payload["chunk_overlap"] == 2
+    else:
+        with sqlite3.connect(sqlite_index) as conn:
+            row = conn.execute(
+                "SELECT chunk_size, chunk_overlap FROM index_meta WHERE domain = 'memory'"
+            ).fetchone()
+        assert row is not None
+        assert int(row[0]) == 64
+        assert int(row[1]) == 2
 
     rows = indexer.retrieve("alpha", settings=settings)
     assert len(rows) == 1
@@ -56,6 +68,17 @@ def test_search_knowledge_tool_honors_runtime_tuning(tmp_path: Path):
     assert result.ok is True
     assert len(result.data["results"]) == 1
 
-    index_payload = json.loads((tmp_path / "storage" / "knowledge_index" / "index.json").read_text(encoding="utf-8"))
-    assert index_payload["chunk_size"] == 64
-    assert index_payload["chunk_overlap"] == 8
+    json_index = tmp_path / "storage" / "knowledge_index" / "index.json"
+    sqlite_index = tmp_path / "storage" / "retrieval.db"
+    if json_index.exists():
+        index_payload = json.loads(json_index.read_text(encoding="utf-8"))
+        assert index_payload["chunk_size"] == 64
+        assert index_payload["chunk_overlap"] == 8
+    else:
+        with sqlite3.connect(sqlite_index) as conn:
+            row = conn.execute(
+                "SELECT chunk_size, chunk_overlap FROM index_meta WHERE domain = 'knowledge'"
+            ).fetchone()
+        assert row is not None
+        assert int(row[0]) == 64
+        assert int(row[1]) == 8

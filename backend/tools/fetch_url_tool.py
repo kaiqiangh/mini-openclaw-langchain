@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 try:
     import html2text
@@ -27,11 +30,67 @@ class FetchUrlTool:
     timeout_seconds: int = 15
     output_char_limit: int = 5000
     max_output_char_limit: int = 100000
+    allowed_schemes: tuple[str, ...] = ("http", "https")
     allow_hosts: tuple[str, ...] = ()
+    block_private_networks: bool = True
+    max_redirects: int = 3
+    max_content_bytes: int = 2_000_000
 
     name: str = "fetch_url"
     description: str = "Fetch remote URL and convert content to compact text"
     permission_level: PermissionLevel = PermissionLevel.L2_NETWORK
+
+    @staticmethod
+    def _is_blocked_ip(value: str) -> bool:
+        try:
+            ip = ipaddress.ip_address(value)
+        except ValueError:
+            return False
+        return bool(
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        )
+
+    def _is_blocked_host(self, host: str) -> bool:
+        lowered = host.strip().lower()
+        if not lowered:
+            return True
+        if lowered in {"localhost", "localhost.localdomain"}:
+            return True
+        if lowered.endswith(".local"):
+            return True
+        if self._is_blocked_ip(lowered):
+            return True
+        try:
+            infos = socket.getaddrinfo(lowered, None, type=socket.SOCK_STREAM)
+        except OSError:
+            return False
+        for info in infos:
+            sockaddr = info[4]
+            if not isinstance(sockaddr, tuple) or not sockaddr:
+                continue
+            ip_value = str(sockaddr[0])
+            if self._is_blocked_ip(ip_value):
+                return True
+        return False
+
+    def _validate_url(self, raw_url: str) -> tuple[str, str]:
+        parsed = urlparse(raw_url)
+        scheme = parsed.scheme.lower().strip()
+        host = (parsed.hostname or "").strip()
+        if not scheme or scheme not in self.allowed_schemes:
+            raise ValueError(f"URL scheme '{scheme or 'unknown'}' is not allowed")
+        if not host:
+            raise ValueError("URL host is missing")
+        if self.allow_hosts and host not in self.allow_hosts:
+            raise ValueError(f"Host '{host}' is not allowlisted")
+        if self.block_private_networks and self._is_blocked_host(host):
+            raise ValueError(f"Host '{host}' resolves to a private or loopback address")
+        return scheme, host
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
@@ -68,22 +127,80 @@ class FetchUrlTool:
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        if self.allow_hosts and host not in self.allow_hosts:
+        try:
+            _scheme, _host = self._validate_url(url)
+        except ValueError as exc:
             return ToolResult.failure(
                 tool_name=self.name,
                 code="E_POLICY_DENIED",
-                message=f"Host '{host}' is not allowlisted",
+                message=str(exc),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
+        class _RedirectLimiter(HTTPRedirectHandler):
+            def __init__(self, max_redirects: int, validator) -> None:
+                super().__init__()
+                self.max_redirects = max_redirects
+                self.validator = validator
+                self.redirect_count = 0
+
+            def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+                self.redirect_count += 1
+                if self.redirect_count > self.max_redirects:
+                    raise HTTPError(newurl, code, "Too many redirects", headers, fp)
+                self.validator(newurl)
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        redirect_handler = _RedirectLimiter(max(0, int(self.max_redirects)), self._validate_url)
+        opener = build_opener(redirect_handler)
         request = Request(url, headers={"User-Agent": "mini-openclaw/0.1"})
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                raw = response.read()
+            with opener.open(request, timeout=self.timeout_seconds) as response:
+                final_url = str(response.geturl() or url)
+                try:
+                    _scheme, _host = self._validate_url(final_url)
+                except ValueError as exc:
+                    return ToolResult.failure(
+                        tool_name=self.name,
+                        code="E_POLICY_DENIED",
+                        message=str(exc),
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                    )
+
+                content_length_raw = (response.headers.get("Content-Length", "") or "").strip()
+                if content_length_raw:
+                    try:
+                        if int(content_length_raw) > int(self.max_content_bytes):
+                            return ToolResult.failure(
+                                tool_name=self.name,
+                                code="E_POLICY_DENIED",
+                                message=f"Response body exceeds max_content_bytes={self.max_content_bytes}",
+                                duration_ms=int((time.monotonic() - started) * 1000),
+                            )
+                    except ValueError:
+                        pass
+
+                chunks: list[bytes] = []
+                total_read = 0
+                max_bytes = max(1024, int(self.max_content_bytes))
+                while True:
+                    piece = response.read(64 * 1024)
+                    if not piece:
+                        break
+                    chunks.append(piece)
+                    total_read += len(piece)
+                    if total_read > max_bytes:
+                        return ToolResult.failure(
+                            tool_name=self.name,
+                            code="E_POLICY_DENIED",
+                            message=f"Response body exceeds max_content_bytes={self.max_content_bytes}",
+                            duration_ms=int((time.monotonic() - started) * 1000),
+                        )
+
+                raw = b"".join(chunks)
                 content_type = (response.headers.get("Content-Type", "") or "").lower()
                 status = int(getattr(response, "status", 200))
+                effective_url = final_url
         except TimeoutError:
             return ToolResult.failure(
                 tool_name=self.name,
@@ -136,7 +253,7 @@ class FetchUrlTool:
             tool_name=self.name,
             data={
                 "status": status,
-                "url": url,
+                "url": effective_url,
                 "content": text,
                 "truncated": truncated,
                 "extract_mode": extract_mode,

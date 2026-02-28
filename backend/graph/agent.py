@@ -80,6 +80,7 @@ class AgentManager:
         self.memory_indexer = default_runtime.memory_indexer
         self.audit_store = default_runtime.audit_store
         self.usage_store = default_runtime.usage_store
+        self._provision_retrieval_storage_for_all_agents()
 
     @staticmethod
     def _build_llm(config: AppConfig, runtime: RuntimeConfig) -> ChatOpenAI:
@@ -151,6 +152,42 @@ class AgentManager:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
+
+    @staticmethod
+    def _is_memory_placeholder(content: str) -> bool:
+        lines = [line.strip() for line in content.splitlines() if line.strip()]
+        if not lines:
+            return True
+        if lines[0].lower() != "# memory":
+            return False
+        if len(lines) == 1:
+            return True
+        return len(lines) == 2 and lines[1].lower().startswith("- keep this file concise")
+
+    def _migrate_legacy_root_memory(self, workspace_root: Path) -> None:
+        legacy_memory = workspace_root / "MEMORY.md"
+        if not legacy_memory.exists() or not legacy_memory.is_file():
+            return
+        try:
+            legacy_text = legacy_memory.read_text(encoding="utf-8")
+        except Exception:
+            return
+        if not legacy_text.strip():
+            return
+
+        canonical_memory = workspace_root / "memory" / "MEMORY.md"
+        canonical_text = ""
+        if canonical_memory.exists() and canonical_memory.is_file():
+            try:
+                canonical_text = canonical_memory.read_text(encoding="utf-8")
+            except Exception:
+                return
+
+        if canonical_text.strip() and not self._is_memory_placeholder(canonical_text):
+            return
+
+        canonical_memory.parent.mkdir(parents=True, exist_ok=True)
+        canonical_memory.write_text(legacy_text, encoding="utf-8")
 
     def _ensure_workspace_template(self) -> None:
         base_dir, _ = self._require_initialized()
@@ -240,6 +277,7 @@ class AgentManager:
             if legacy_knowledge.exists() and not any(default_knowledge.rglob("*")):
                 shutil.copytree(legacy_knowledge, default_knowledge, dirs_exist_ok=True)
 
+        self._migrate_legacy_root_memory(root)
         self._sync_skills_directory(root)
         self._sync_skills_snapshot(root)
         if self.base_dir is not None:
@@ -266,6 +304,7 @@ class AgentManager:
             agent_config_mtime_ns=self._config_mtime_ns(agent_config_path),
         )
         runtime.audit_store.ensure_schema_descriptor()
+        runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
         return runtime
 
     def _refresh_runtime_config(self, runtime: AgentRuntime) -> None:
@@ -286,6 +325,19 @@ class AgentManager:
         runtime.runtime_config_digest = runtime_config_digest(effective_runtime)
         runtime.global_config_mtime_ns = global_mtime
         runtime.agent_config_mtime_ns = agent_mtime
+        runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
+
+    def _provision_retrieval_storage_for_all_agents(self) -> None:
+        _, workspaces_dir = self._require_initialized()
+        for item in sorted(workspaces_dir.iterdir(), key=lambda p: p.name):
+            if not item.is_dir():
+                continue
+            agent_id = item.name
+            try:
+                runtime = self.get_runtime(agent_id)
+                runtime.memory_indexer.ensure_storage(settings=runtime.runtime_config.retrieval.memory)
+            except Exception:
+                continue
 
     def _get_runtime_llm(self, runtime: AgentRuntime) -> ChatOpenAI:
         if self.config is None:
@@ -692,6 +744,7 @@ class AgentManager:
         message: str,
         history: list[dict[str, Any]],
         session_id: str,
+        is_first_turn: bool = False,
         output_format: str = "text",
         trigger_type: str = "chat",
         agent_id: str = "default",
@@ -716,7 +769,7 @@ class AgentManager:
         messages = self._build_messages(history=history, message=message, rag_context=rag_context)
         system_prompt = self.build_system_prompt(
             rag_mode=effective_runtime.rag_mode,
-            is_first_turn=False,
+            is_first_turn=is_first_turn,
             agent_id=agent_id,
         )
 

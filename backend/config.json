@@ -25,10 +25,24 @@
       "lexical_weight": 0.3,
       "chunk_size": 400,
       "chunk_overlap": 80
+    },
+    "storage": {
+      "engine": "sqlite",
+      "db_path": "storage/retrieval.db",
+      "fts_prefilter_k": 50
     }
   },
   "tool_retry_guard": {
     "repeat_identical_failure_limit": 2
+  },
+  "tool_network": {
+    "allow_http_schemes": [
+      "http",
+      "https"
+    ],
+    "block_private_networks": true,
+    "max_redirects": 3,
+    "max_content_bytes": 2000000
   },
   "tool_timeouts": {
     "terminal_seconds": 30,
@@ -43,6 +57,10 @@
   "autonomous_tools": {
     "heartbeat_enabled_tools": [],
     "cron_enabled_tools": []
+  },
+  "scheduler": {
+    "api_enabled": true,
+    "runs_query_default_limit": 100
   },
   "heartbeat": {
     "enabled": false,

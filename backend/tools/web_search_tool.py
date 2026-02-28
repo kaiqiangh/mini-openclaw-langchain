@@ -3,8 +3,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 try:
@@ -34,6 +33,29 @@ def _normalize_domains(value: Any) -> set[str]:
     if isinstance(value, list):
         return {str(item).lower().strip().lstrip(".") for item in value if str(item).strip()}
     return set()
+
+
+def _canonical_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url)
+    scheme = (parsed.scheme or "https").lower()
+    hostname = (parsed.hostname or "").lower().strip(".")
+    if not hostname:
+        return raw_url
+    path = parsed.path or "/"
+    # Keep path but discard query/fragment for stable dedupe.
+    return urlunparse((scheme, hostname, path, "", "", ""))
+
+
+def _resolve_timelimit(recency_days: int | None) -> str | None:
+    if recency_days is None or recency_days <= 0:
+        return None
+    if recency_days <= 1:
+        return "d"
+    if recency_days <= 7:
+        return "w"
+    if recency_days <= 31:
+        return "m"
+    return "y"
 
 
 def _fallback_web_search(query: str, timeout_seconds: int) -> list[dict[str, str]]:
@@ -100,13 +122,31 @@ class WebSearchTool:
 
         allowed_domains = _normalize_domains(args.get("allowed_domains"))
         blocked_domains = _normalize_domains(args.get("blocked_domains"))
+        recency_days_raw = args.get("recency_days", args.get("recency"))
+        recency_days: int | None = None
+        if recency_days_raw is not None:
+            try:
+                recency_days = max(1, int(recency_days_raw))
+            except (TypeError, ValueError):
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_INVALID_ARGS",
+                    message="recency_days must be an integer",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+        timelimit = _resolve_timelimit(recency_days)
 
         results: list[dict[str, Any]] = []
+        seen: set[str] = set()
         try:
             raw_rows: list[dict[str, Any]]
             if DDGS is not None:
                 with DDGS(timeout=self.timeout_seconds) as ddgs:
-                    raw_rows = [row for row in ddgs.text(query, max_results=self.max_limit * 5) if isinstance(row, dict)]
+                    try:
+                        rows_iter = ddgs.text(query, max_results=self.max_limit * 5, timelimit=timelimit)
+                    except TypeError:
+                        rows_iter = ddgs.text(query, max_results=self.max_limit * 5)
+                    raw_rows = [row for row in rows_iter if isinstance(row, dict)]
             else:
                 raw_rows = _fallback_web_search(query, self.timeout_seconds)
 
@@ -123,12 +163,18 @@ class WebSearchTool:
                 if blocked_domains and any(_domain_match(hostname, d) for d in blocked_domains):
                     continue
 
+                canonical = _canonical_url(url)
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+
                 results.append(
                     {
                         "title": title,
                         "url": url,
                         "snippet": snippet,
                         "source": "duckduckgo",
+                        "canonical_url": canonical,
                     }
                 )
                 if len(results) >= limit:
@@ -145,6 +191,6 @@ class WebSearchTool:
 
         return ToolResult.success(
             tool_name=self.name,
-            data={"query": query, "results": results},
+            data={"query": query, "recency_days": recency_days or 0, "results": results},
             duration_ms=int((time.monotonic() - started) * 1000),
         )

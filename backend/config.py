@@ -60,6 +60,13 @@ class RetrievalDomainConfig:
 
 
 @dataclass
+class RetrievalStorageConfig:
+    engine: str = "sqlite"
+    db_path: str = "storage/retrieval.db"
+    fts_prefilter_k: int = 50
+
+
+@dataclass
 class RetrievalConfig:
     memory: RetrievalDomainConfig = field(default_factory=RetrievalDomainConfig)
     knowledge: RetrievalDomainConfig = field(
@@ -71,11 +78,20 @@ class RetrievalConfig:
             chunk_overlap=80,
         )
     )
+    storage: RetrievalStorageConfig = field(default_factory=RetrievalStorageConfig)
 
 
 @dataclass
 class ToolRetryGuardConfig:
     repeat_identical_failure_limit: int = 2
+
+
+@dataclass
+class ToolNetworkConfig:
+    allow_http_schemes: list[str] = field(default_factory=lambda: ["http", "https"])
+    block_private_networks: bool = True
+    max_redirects: int = 3
+    max_content_bytes: int = 2_000_000
 
 
 @dataclass
@@ -106,6 +122,12 @@ class CronRuntimeConfig:
 
 
 @dataclass
+class SchedulerRuntimeConfig:
+    api_enabled: bool = True
+    runs_query_default_limit: int = 100
+
+
+@dataclass
 class RuntimeConfig:
     rag_mode: bool = False
     injection_mode: InjectionMode = InjectionMode.EVERY_TURN
@@ -115,9 +137,11 @@ class RuntimeConfig:
     llm_runtime: LlmRuntimeConfig = field(default_factory=LlmRuntimeConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     tool_retry_guard: ToolRetryGuardConfig = field(default_factory=ToolRetryGuardConfig)
+    tool_network: ToolNetworkConfig = field(default_factory=ToolNetworkConfig)
     tool_timeouts: ToolTimeouts = field(default_factory=ToolTimeouts)
     tool_output_limits: ToolOutputLimits = field(default_factory=ToolOutputLimits)
     autonomous_tools: AutonomousToolsConfig = field(default_factory=AutonomousToolsConfig)
+    scheduler: SchedulerRuntimeConfig = field(default_factory=SchedulerRuntimeConfig)
     heartbeat: HeartbeatRuntimeConfig = field(default_factory=HeartbeatRuntimeConfig)
     cron: CronRuntimeConfig = field(default_factory=CronRuntimeConfig)
 
@@ -195,9 +219,20 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
                 "chunk_size": runtime.retrieval.knowledge.chunk_size,
                 "chunk_overlap": runtime.retrieval.knowledge.chunk_overlap,
             },
+            "storage": {
+                "engine": runtime.retrieval.storage.engine,
+                "db_path": runtime.retrieval.storage.db_path,
+                "fts_prefilter_k": runtime.retrieval.storage.fts_prefilter_k,
+            },
         },
         "tool_retry_guard": {
             "repeat_identical_failure_limit": runtime.tool_retry_guard.repeat_identical_failure_limit,
+        },
+        "tool_network": {
+            "allow_http_schemes": list(runtime.tool_network.allow_http_schemes),
+            "block_private_networks": runtime.tool_network.block_private_networks,
+            "max_redirects": runtime.tool_network.max_redirects,
+            "max_content_bytes": runtime.tool_network.max_content_bytes,
         },
         "tool_timeouts": {
             "terminal_seconds": runtime.tool_timeouts.terminal_seconds,
@@ -212,6 +247,10 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         "autonomous_tools": {
             "heartbeat_enabled_tools": list(runtime.autonomous_tools.heartbeat_enabled_tools),
             "cron_enabled_tools": list(runtime.autonomous_tools.cron_enabled_tools),
+        },
+        "scheduler": {
+            "api_enabled": runtime.scheduler.api_enabled,
+            "runs_query_default_limit": runtime.scheduler.runs_query_default_limit,
         },
         "heartbeat": {
             "enabled": runtime.heartbeat.enabled,
@@ -244,7 +283,10 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     retrieval = payload.get("retrieval", {})
     memory_retrieval = retrieval.get("memory", {})
     knowledge_retrieval = retrieval.get("knowledge", {})
+    storage_retrieval = retrieval.get("storage", {})
     tool_retry_guard = payload.get("tool_retry_guard", {})
+    tool_network = payload.get("tool_network", {})
+    scheduler = payload.get("scheduler", {})
 
     injection_value = payload.get("injection_mode", InjectionMode.EVERY_TURN.value)
     try:
@@ -280,9 +322,25 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
                 chunk_size=max(64, int(knowledge_retrieval.get("chunk_size", 400))),
                 chunk_overlap=max(0, int(knowledge_retrieval.get("chunk_overlap", 80))),
             ),
+            storage=RetrievalStorageConfig(
+                engine=str(storage_retrieval.get("engine", "sqlite")).strip().lower() or "sqlite",
+                db_path=str(storage_retrieval.get("db_path", "storage/retrieval.db")).strip() or "storage/retrieval.db",
+                fts_prefilter_k=max(1, int(storage_retrieval.get("fts_prefilter_k", 50))),
+            ),
         ),
         tool_retry_guard=ToolRetryGuardConfig(
             repeat_identical_failure_limit=max(1, int(tool_retry_guard.get("repeat_identical_failure_limit", 2))),
+        ),
+        tool_network=ToolNetworkConfig(
+            allow_http_schemes=[
+                str(item).strip().lower()
+                for item in list(tool_network.get("allow_http_schemes", ["http", "https"]))
+                if str(item).strip()
+            ]
+            or ["http", "https"],
+            block_private_networks=bool(tool_network.get("block_private_networks", True)),
+            max_redirects=max(0, int(tool_network.get("max_redirects", 3))),
+            max_content_bytes=max(1024, int(tool_network.get("max_content_bytes", 2_000_000))),
         ),
         tool_timeouts=ToolTimeouts(
             terminal_seconds=int(tool_timeouts.get("terminal_seconds", 30)),
@@ -297,6 +355,10 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         autonomous_tools=AutonomousToolsConfig(
             heartbeat_enabled_tools=list(autonomous_tools.get("heartbeat_enabled_tools", [])),
             cron_enabled_tools=list(autonomous_tools.get("cron_enabled_tools", [])),
+        ),
+        scheduler=SchedulerRuntimeConfig(
+            api_enabled=bool(scheduler.get("api_enabled", True)),
+            runs_query_default_limit=max(1, int(scheduler.get("runs_query_default_limit", 100))),
         ),
         heartbeat=HeartbeatRuntimeConfig(
             enabled=bool(heartbeat.get("enabled", False)),
@@ -350,6 +412,14 @@ def runtime_config_digest(runtime: RuntimeConfig) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
+    return _runtime_to_payload(runtime)
+
+
+def runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
+    return _runtime_from_payload(payload)
+
+
 def _load_secrets() -> SecretConfig:
     provider_raw = os.getenv("EMBEDDING_PROVIDER", EmbeddingProvider.OPENAI.value)
     try:
@@ -398,7 +468,9 @@ def save_runtime_config(base_dir: Path, runtime: RuntimeConfig) -> None:
 def save_runtime_config_to_path(config_path: Path, runtime: RuntimeConfig) -> None:
     payload = _runtime_to_payload(runtime)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
+    tmp_path.write_text(
         json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    tmp_path.replace(config_path)

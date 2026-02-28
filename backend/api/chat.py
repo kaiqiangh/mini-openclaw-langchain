@@ -52,6 +52,7 @@ async def chat(request: ChatRequest) -> Any:
             message=request.message,
             history=history,
             session_id=request.session_id,
+            is_first_turn=is_first_turn,
             output_format="text",
             trigger_type="chat",
             agent_id=request.agent_id,

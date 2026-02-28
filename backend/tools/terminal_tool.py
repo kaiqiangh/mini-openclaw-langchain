@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,6 +30,34 @@ class TerminalTool:
     name: str = "terminal"
     description: str = "Execute shell commands in workspace sandbox"
     permission_level: PermissionLevel = PermissionLevel.L3_SYSTEM
+
+    @staticmethod
+    def _sanitized_env() -> dict[str, str]:
+        keep_exact = {
+            "PATH",
+            "HOME",
+            "PWD",
+            "SHELL",
+            "LANG",
+            "LC_ALL",
+            "LC_CTYPE",
+            "TERM",
+            "TMPDIR",
+            "USER",
+            "LOGNAME",
+            "TZ",
+        }
+        sensitive_markers = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL", "COOKIE")
+        sanitized: dict[str, str] = {}
+        for key, value in os.environ.items():
+            upper = key.upper()
+            if key in keep_exact:
+                sanitized[key] = value
+                continue
+            if any(marker in upper for marker in sensitive_markers):
+                continue
+            sanitized[key] = value
+        return sanitized
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         started = time.monotonic()
@@ -72,6 +101,7 @@ class TerminalTool:
                     cwd=str(self.root_dir),
                     shell=True,
                     executable="/bin/bash",
+                    env=self._sanitized_env(),
                     capture_output=True,
                     text=True,
                     timeout=effective_timeout,

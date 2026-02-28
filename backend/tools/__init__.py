@@ -53,10 +53,18 @@ def get_all_tools(
         FetchUrlTool(
             timeout_seconds=runtime.tool_timeouts.fetch_url_seconds,
             output_char_limit=runtime.tool_output_limits.fetch_url_chars,
+            allowed_schemes=tuple(runtime.tool_network.allow_http_schemes),
+            block_private_networks=runtime.tool_network.block_private_networks,
+            max_redirects=runtime.tool_network.max_redirects,
+            max_content_bytes=runtime.tool_network.max_content_bytes,
         ),
         FetchUrlTool(
             timeout_seconds=runtime.tool_timeouts.fetch_url_seconds,
             output_char_limit=runtime.tool_output_limits.fetch_url_chars,
+            allowed_schemes=tuple(runtime.tool_network.allow_http_schemes),
+            block_private_networks=runtime.tool_network.block_private_networks,
+            max_redirects=runtime.tool_network.max_redirects,
+            max_content_bytes=runtime.tool_network.max_content_bytes,
             name="web_fetch",
             description="Fetch remote URL and extract content",
         ),

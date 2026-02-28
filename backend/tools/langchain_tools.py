@@ -49,6 +49,7 @@ class WebSearchArgs(BaseModel):
     query: str = Field(description="Search query")
     limit: int | None = Field(default=None, ge=1, le=10, description="Optional max results")
     count: int | None = Field(default=None, ge=1, le=10, description="Alias for limit")
+    recency_days: int | None = Field(default=None, ge=1, le=3650, description="Optional recency filter in days")
     allowed_domains: list[str] | None = Field(default=None, description="Optional allowed domain list")
     blocked_domains: list[str] | None = Field(default=None, description="Optional blocked domain list")
 
@@ -268,6 +269,7 @@ def _register_web_search_tool(
         query: str,
         limit: int | None = None,
         count: int | None = None,
+        recency_days: int | None = None,
         allowed_domains: list[str] | None = None,
         blocked_domains: list[str] | None = None,
         _tool: MiniTool = tool,
@@ -277,6 +279,8 @@ def _register_web_search_tool(
             args["limit"] = limit
         if count is not None:
             args["count"] = count
+        if recency_days is not None:
+            args["recency_days"] = recency_days
         if allowed_domains is not None:
             args["allowed_domains"] = allowed_domains
         if blocked_domains is not None:

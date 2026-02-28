@@ -95,6 +95,9 @@ def test_alias_parity_exec_read_and_web_fetch(tmp_path, monkeypatch):
         status = 200
         headers = {"Content-Type": "text/html; charset=utf-8"}
 
+        def __init__(self) -> None:
+            self._sent = False
+
         def __enter__(self):
             return self
 
@@ -102,12 +105,23 @@ def test_alias_parity_exec_read_and_web_fetch(tmp_path, monkeypatch):
             _ = exc_type, exc, tb
             return None
 
-        def read(self) -> bytes:
+        def read(self, n=0) -> bytes:  # noqa: ARG002
+            if self._sent:
+                return b""
+            self._sent = True
             return b"<html><body><h1>Title</h1><p>Hello</p></body></html>"
+
+        def geturl(self) -> str:
+            return "https://example.com"
 
     import tools.fetch_url_tool as fetch_module
 
-    monkeypatch.setattr(fetch_module, "urlopen", lambda request, timeout: _FakeResponse())  # type: ignore[no-untyped-call]
+    class _FakeOpener:
+        def open(self, request, timeout=0):  # noqa: D401
+            _ = request, timeout
+            return _FakeResponse()
+
+    monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())  # type: ignore[no-untyped-call]
 
     command = "printf 'a|b' | tr '|' ':'"
     terminal_result = _parse_result(tool_map["terminal"].invoke({"command": command}))  # type: ignore[call-arg]
@@ -152,6 +166,9 @@ def test_web_fetch_extract_mode_matrix(tmp_path, monkeypatch):
         status = 200
         headers = {"Content-Type": "text/html; charset=utf-8"}
 
+        def __init__(self) -> None:
+            self._sent = False
+
         def __enter__(self):
             return self
 
@@ -159,13 +176,24 @@ def test_web_fetch_extract_mode_matrix(tmp_path, monkeypatch):
             _ = exc_type, exc, tb
             return None
 
-        def read(self) -> bytes:
+        def read(self, n=0) -> bytes:  # noqa: ARG002
+            if self._sent:
+                return b""
+            self._sent = True
             body = "<html><body><h1>Title</h1><p>" + ("Hello world " * 80) + "</p></body></html>"
             return body.encode("utf-8")
 
+        def geturl(self) -> str:
+            return "https://example.com"
+
     import tools.fetch_url_tool as fetch_module
 
-    monkeypatch.setattr(fetch_module, "urlopen", lambda request, timeout: _FakeResponse())  # type: ignore[no-untyped-call]
+    class _FakeOpener:
+        def open(self, request, timeout=0):  # noqa: D401
+            _ = request, timeout
+            return _FakeResponse()
+
+    monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())  # type: ignore[no-untyped-call]
 
     markdown = tool.run({"url": "https://example.com", "extractMode": "markdown"}, context)
     html = tool.run({"url": "https://example.com", "extractMode": "html"}, context)
@@ -224,6 +252,46 @@ def test_web_search_filters_and_limit(tmp_path, monkeypatch):
     assert len(rows) == 2
     assert rows[0]["url"].startswith("https://docs.openclaw.ai")
     assert rows[1]["url"].startswith("https://example.com")
+
+
+def test_web_search_dedupe_and_recency(tmp_path, monkeypatch):
+    _seed_workspace(tmp_path)
+    context = ToolContext(workspace_root=tmp_path, trigger_type="chat")
+    tool = WebSearchTool(timeout_seconds=1)
+
+    calls: dict[str, object] = {}
+
+    class _FakeDDGS:
+        def __init__(self, timeout):
+            _ = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            _ = exc_type, exc, tb
+            return None
+
+        def text(self, query, max_results, timelimit=None):  # noqa: D401
+            calls["query"] = query
+            calls["max_results"] = max_results
+            calls["timelimit"] = timelimit
+            return [
+                {"title": "A", "href": "https://example.com/docs?a=1", "body": "one"},
+                {"title": "B", "href": "https://example.com/docs?a=2", "body": "two"},
+                {"title": "C", "href": "https://example.com/guide", "body": "three"},
+            ]
+
+    import tools.web_search_tool as search_module
+
+    monkeypatch.setattr(search_module, "DDGS", _FakeDDGS)
+
+    result = tool.run({"query": "alpha", "limit": 5, "recency_days": 1}, context)
+    assert result.ok is True
+    assert calls["timelimit"] == "d"
+    rows = result.data["results"]
+    assert len(rows) == 2
+    assert rows[0]["canonical_url"] == "https://example.com/docs"
 
 
 def test_apply_patch_happy_path_and_path_guard(tmp_path):

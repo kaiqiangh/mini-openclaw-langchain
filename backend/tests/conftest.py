@@ -15,11 +15,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from api import agents, chat, compress, config_api, files, sessions, tokens, usage  # noqa: E402
+from api import agents, chat, compress, config_api, files, scheduler_api, sessions, tokens, usage  # noqa: E402
 from api.errors import ApiError, error_payload  # noqa: E402
 from config import RuntimeConfig, load_runtime_config  # noqa: E402
 from graph.memory_indexer import MemoryIndexer  # noqa: E402
 from graph.session_manager import SessionManager  # noqa: E402
+from scheduler.cron import CronScheduler  # noqa: E402
+from scheduler.heartbeat import HeartbeatScheduler  # noqa: E402
 from storage.run_store import AuditStore  # noqa: E402
 from storage.usage_store import UsageStore  # noqa: E402
 
@@ -156,8 +158,12 @@ class FakeAgentManager:
         return True
 
     def build_system_prompt(self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default") -> str:
-        _ = rag_mode, is_first_turn, agent_id
-        return "SYSTEM PROMPT"
+        if rag_mode:
+            return (
+                f"SYSTEM PROMPT RAG=1 first={int(bool(is_first_turn))} agent={agent_id}\n"
+                + ("MEMORY_CONTEXT " * 40)
+            )
+        return f"SYSTEM PROMPT RAG=0 first={int(bool(is_first_turn))} agent={agent_id}"
 
     async def generate_title(self, seed_text: str, agent_id: str = "default") -> str:
         _ = seed_text, agent_id
@@ -168,8 +174,7 @@ class FakeAgentManager:
         return "Compressed Summary"
 
     async def run_once(self, *, message: str, **kwargs):
-        _ = kwargs
-        return {"text": f"RUN:{message[:40]}"}
+        return {"text": f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"}
 
     async def astream(self, message: str, history: list[dict[str, object]], session_id: str, **kwargs):
         _ = history, kwargs
@@ -261,6 +266,27 @@ def api_app(backend_base_dir: Path):
     config_api.set_dependencies(backend_base_dir, agent_manager)
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
+    runtime = agent_manager.get_runtime("default")
+    heartbeat_scheduler = HeartbeatScheduler(
+        base_dir=runtime.root_dir,
+        config=runtime.runtime_config.heartbeat,
+        agent_manager=agent_manager,
+        session_manager=runtime.session_manager,
+        agent_id="default",
+    )
+    cron_scheduler = CronScheduler(
+        base_dir=runtime.root_dir,
+        config=runtime.runtime_config.cron,
+        agent_manager=agent_manager,
+        session_manager=runtime.session_manager,
+        agent_id="default",
+    )
+    scheduler_api.set_dependencies(
+        backend_base_dir,
+        agent_manager,
+        default_heartbeat_scheduler=heartbeat_scheduler,
+        default_cron_scheduler=cron_scheduler,
+    )
 
     @app.exception_handler(ApiError)
     async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
@@ -296,6 +322,7 @@ def api_app(backend_base_dir: Path):
     app.include_router(config_api.router, prefix="/api")
     app.include_router(usage.router, prefix="/api")
     app.include_router(agents.router, prefix="/api")
+    app.include_router(scheduler_api.router, prefix="/api")
 
     return {
         "app": app,
@@ -303,6 +330,8 @@ def api_app(backend_base_dir: Path):
         "session_manager": session_manager,
         "agent_manager": agent_manager,
         "memory_indexer": agent_manager.get_memory_indexer("default"),
+        "heartbeat_scheduler": heartbeat_scheduler,
+        "cron_scheduler": cron_scheduler,
     }
 
 
