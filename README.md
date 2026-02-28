@@ -80,6 +80,47 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Repo-local CLI (`./oml`)
+
+Use the repo-local command runner to manage backend/frontend lifecycle:
+
+```bash
+./oml help
+./oml version
+./oml start
+./oml status
+./oml logs --follow
+./oml stop
+```
+
+### Command Reference
+
+| Command | Description |
+| --- | --- |
+| `./oml help` | Show all available commands and examples. |
+| `./oml version` | Print CLI version, backend API version, frontend version, and git SHA. |
+| `./oml start [all\|backend\|frontend]` | Start services in detached mode with PID/log management. |
+| `./oml stop [all\|backend\|frontend]` | Stop managed services safely. |
+| `./oml restart [all\|backend\|frontend]` | Restart managed services. |
+| `./oml status` | Show runtime status with PID + health summary. |
+| `./oml logs [all\|backend\|frontend] [--follow] [--lines N]` | Show service logs. |
+| `./oml ports` | Print effective backend/frontend URLs. |
+| `./oml update` | Safe local dependency sync (`uv` + `npm`) with no git history mutation. |
+| `./oml doctor` | Validate prerequisites, env readiness, and port conflicts. |
+
+### Runtime State
+
+- PID files: `.oml/run/backend.pid`, `.oml/run/frontend.pid`
+- Log files: `.oml/log/backend.log`, `.oml/log/frontend.log`
+- Optional local overrides: `.oml/config.env`
+  - `OML_BACKEND_HOST` (default `127.0.0.1`)
+  - `OML_BACKEND_PORT` (default `8002`)
+  - `OML_FRONTEND_HOST` (default `127.0.0.1`)
+  - `OML_FRONTEND_PORT` (default `3000`)
+  - `OML_HEALTH_TIMEOUT_SECONDS` (default `30`)
+
+Full CLI guide: [`docs/cli/oml.md`](docs/cli/oml.md)
+
 ## Testing
 
 ### Backend
