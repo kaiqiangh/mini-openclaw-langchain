@@ -8,6 +8,7 @@ from observability import tracing
 
 def test_build_optional_callbacks_disabled_by_langsmith_flag(monkeypatch):
     monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
+    monkeypatch.delenv("OBS_TRACING_ENABLED", raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "false")
 
     callbacks = tracing.build_optional_callbacks(run_id="run-1")
@@ -25,6 +26,7 @@ def test_build_optional_callbacks_disabled_by_global_override(monkeypatch):
 
 def test_build_optional_callbacks_disabled_by_langchain_v2_flag(monkeypatch):
     monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
+    monkeypatch.delenv("OBS_TRACING_ENABLED", raising=False)
     monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
     monkeypatch.setenv("LANGCHAIN_TRACING_V2", "false")
 
@@ -34,6 +36,7 @@ def test_build_optional_callbacks_disabled_by_langchain_v2_flag(monkeypatch):
 
 def test_build_optional_callbacks_langsmith_enabled_with_stub(monkeypatch):
     monkeypatch.delenv("OBS_TRACING_PROVIDER", raising=False)
+    monkeypatch.delenv("OBS_TRACING_ENABLED", raising=False)
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
 
     fake_module = types.ModuleType("langchain_core.tracers")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,7 @@ from config import (
     save_runtime_config_to_path,
 )
 from graph.agent import AgentManager
+from observability.tracing import is_langsmith_tracing_enabled
 
 router = APIRouter(tags=["config"])
 
@@ -29,6 +32,10 @@ class RagModeRequest(BaseModel):
 
 class RuntimeConfigRequest(BaseModel):
     config: dict[str, Any]
+
+
+class TracingConfigRequest(BaseModel):
+    enabled: bool
 
 
 def set_base_dir(base_dir: Path) -> None:
@@ -54,6 +61,23 @@ def _require_base_dir() -> Path:
             message="Config base directory is unavailable",
         )
     return _BASE_DIR
+
+
+def _persist_env_flag(base_dir: Path, key: str, enabled: bool) -> None:
+    env_path = base_dir / ".env"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    value = "true" if enabled else "false"
+    line = f"{key}={value}"
+    text = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+    pattern = re.compile(rf"(?m)^\\s*{re.escape(key)}\\s*=.*$")
+    if pattern.search(text):
+        updated = pattern.sub(line, text)
+    elif text.strip():
+        suffix = "" if text.endswith("\n") else "\n"
+        updated = f"{text}{suffix}{line}\n"
+    else:
+        updated = f"{line}\n"
+    env_path.write_text(updated, encoding="utf-8")
 
 
 @router.get("/config/rag-mode")
@@ -170,5 +194,31 @@ async def set_runtime_config(
         "data": {
             "agent_id": refreshed.agent_id,
             "config": runtime_to_payload(refreshed.runtime_config),
+        }
+    }
+
+
+@router.get("/config/tracing")
+async def get_tracing_config() -> dict[str, Any]:
+    return {
+        "data": {
+            "provider": "langsmith",
+            "config_key": "OBS_TRACING_ENABLED",
+            "enabled": bool(is_langsmith_tracing_enabled()),
+        }
+    }
+
+
+@router.put("/config/tracing")
+async def set_tracing_config(request: TracingConfigRequest) -> dict[str, Any]:
+    base_dir = _require_base_dir()
+    enabled = bool(request.enabled)
+    os.environ["OBS_TRACING_ENABLED"] = "true" if enabled else "false"
+    _persist_env_flag(base_dir, "OBS_TRACING_ENABLED", enabled)
+    return {
+        "data": {
+            "provider": "langsmith",
+            "config_key": "OBS_TRACING_ENABLED",
+            "enabled": bool(is_langsmith_tracing_enabled()),
         }
     }

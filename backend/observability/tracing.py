@@ -40,6 +40,10 @@ def _is_langsmith_tracing_enabled() -> bool:
     return False
 
 
+def is_langsmith_tracing_enabled() -> bool:
+    return _is_langsmith_tracing_enabled()
+
+
 def build_optional_callbacks(*, run_id: str) -> list[Any]:
     if not _is_langsmith_tracing_enabled():
         return []

@@ -52,6 +52,8 @@ def test_heartbeat_comment_only_prompt_is_skipped(client, api_app):
     prompt_path.write_text("# comment only\n\n   # still comment\n", encoding="utf-8")
 
     heartbeat_scheduler = api_app["heartbeat_scheduler"]
+    heartbeat_scheduler.config.active_start_hour = 0
+    heartbeat_scheduler.config.active_end_hour = 0
     asyncio.run(heartbeat_scheduler._tick_once())
 
     rows = client.get("/api/scheduler/heartbeat/runs")
