@@ -69,14 +69,30 @@ def _persist_env_flag(base_dir: Path, key: str, enabled: bool) -> None:
     value = "true" if enabled else "false"
     line = f"{key}={value}"
     text = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    pattern = re.compile(rf"(?m)^\\s*{re.escape(key)}\\s*=.*$")
-    if pattern.search(text):
-        updated = pattern.sub(line, text)
-    elif text.strip():
-        suffix = "" if text.endswith("\n") else "\n"
-        updated = f"{text}{suffix}{line}\n"
-    else:
-        updated = f"{line}\n"
+    key_pattern = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=")
+
+    updated_lines: list[str] = []
+    wrote_key = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.lstrip()
+        if stripped.startswith("#") or not key_pattern.match(raw_line):
+            updated_lines.append(raw_line)
+            continue
+        if not wrote_key:
+            updated_lines.append(line)
+            wrote_key = True
+
+    if not wrote_key:
+        if updated_lines and updated_lines[-1].strip():
+            updated_lines.append(line)
+        elif not updated_lines:
+            updated_lines = [line]
+        else:
+            updated_lines[-1] = line
+
+    updated = "\n".join(updated_lines)
+    if updated and not updated.endswith("\n"):
+        updated += "\n"
     env_path.write_text(updated, encoding="utf-8")
 
 

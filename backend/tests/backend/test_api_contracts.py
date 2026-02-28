@@ -75,9 +75,18 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert tracing_put.status_code == 200
     assert tracing_put.json()["data"]["enabled"] is True
 
+    tracing_put_false = client.put("/api/config/tracing", json={"enabled": False})
+    assert tracing_put_false.status_code == 200
+    assert tracing_put_false.json()["data"]["enabled"] is False
+
+    env_path = api_app["base_dir"] / ".env"
+    env_text = env_path.read_text(encoding="utf-8")
+    assert env_text.count("OBS_TRACING_ENABLED=") == 1
+    assert "OBS_TRACING_ENABLED=false" in env_text
+
     tracing_after = client.get("/api/config/tracing")
     assert tracing_after.status_code == 200
-    assert tracing_after.json()["data"]["enabled"] is True
+    assert tracing_after.json()["data"]["enabled"] is False
 
     # compression error envelope for <4 messages
     compress_small = client.post(f"/api/sessions/{session_id}/compress")
