@@ -207,6 +207,8 @@ marimo/_lsp/
 __marimo__/
 
 docs/
+!docs/cli/
+!docs/cli/oml.md
 plan/
 .DS_Store
 .codex/
@@ -221,6 +223,8 @@ frontend/coverage/
 backend/.env
 backend/SKILLS_SNAPSHOT.md
 backend/workspaces/*
+.oml/run/
+.oml/log/
 # Keep application source libs tracked.
 !frontend/src/lib/
 !frontend/src/lib/**
