@@ -1,4 +1,10 @@
-import { getRagMode, setRagMode, streamChat } from "@/lib/api";
+import {
+  getRagMode,
+  getTracingConfig,
+  setRagMode,
+  setTracingConfig,
+  streamChat,
+} from "@/lib/api";
 
 function createStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -60,5 +66,43 @@ describe("agent-scoped rag mode requests", () => {
     const secondUrl = String(fetchMock.mock.calls[1][0]);
     expect(firstUrl).toContain("agent_id=alpha");
     expect(secondUrl).toContain("agent_id=alpha");
+  });
+});
+
+describe("tracing config requests", () => {
+  it("calls global tracing endpoints without agent_id", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            provider: "langsmith",
+            config_key: "OBS_TRACING_ENABLED",
+            enabled: false,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            provider: "langsmith",
+            config_key: "OBS_TRACING_ENABLED",
+            enabled: true,
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTracingConfig();
+    await setTracingConfig(true);
+
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    const secondUrl = String(fetchMock.mock.calls[1][0]);
+    expect(firstUrl).toContain("/api/config/tracing");
+    expect(secondUrl).toContain("/api/config/tracing");
+    expect(firstUrl).not.toContain("agent_id=");
+    expect(secondUrl).not.toContain("agent_id=");
   });
 });

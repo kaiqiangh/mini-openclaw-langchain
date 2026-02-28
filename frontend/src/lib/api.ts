@@ -168,6 +168,12 @@ export type HeartbeatConfig = {
   session_id: string;
 };
 
+export type TracingConfig = {
+  provider: "langsmith";
+  config_key: "OBS_TRACING_ENABLED";
+  enabled: boolean;
+};
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const payload = await response.json();
@@ -420,6 +426,27 @@ export async function setRuntimeConfig(
     },
   );
   return payload.data.config;
+}
+
+export async function getTracingConfig(): Promise<TracingConfig> {
+  const payload = await requestJson<{ data: TracingConfig }>(
+    `${API_BASE}/api/config/tracing`,
+  );
+  return payload.data;
+}
+
+export async function setTracingConfig(
+  enabled: boolean,
+): Promise<TracingConfig> {
+  const payload = await requestJson<{ data: TracingConfig }>(
+    `${API_BASE}/api/config/tracing`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
+  return payload.data;
 }
 
 export async function listCronJobs(agentId = "default"): Promise<CronJob[]> {
