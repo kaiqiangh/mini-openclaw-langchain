@@ -1,0 +1,21 @@
+name: Dependency Review
+
+on:
+  pull_request:
+    paths:
+      - "backend/requirements*.txt"
+      - "frontend/package*.json"
+      - ".github/workflows/dependency-review.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high

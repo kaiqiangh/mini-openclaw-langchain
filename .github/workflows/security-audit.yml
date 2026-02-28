@@ -2,14 +2,31 @@ name: Security Audit
 
 on:
   pull_request:
+    paths:
+      - "backend/requirements*.txt"
+      - "frontend/package*.json"
+      - ".github/workflows/security-audit.yml"
   push:
     branches: ["main", "master"]
+    paths:
+      - "backend/requirements*.txt"
+      - "frontend/package*.json"
+      - ".github/workflows/security-audit.yml"
   schedule:
     - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend-pip-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,6 +41,7 @@ jobs:
 
   frontend-npm-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
