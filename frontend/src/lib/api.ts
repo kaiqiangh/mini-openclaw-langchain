@@ -89,6 +89,33 @@ export type UsageSummary = {
   count: number;
 };
 
+export type RuntimeConfigPayload = Record<string, unknown>;
+
+export type CronJob = {
+  id: string;
+  name: string;
+  schedule_type: "at" | "every" | "cron";
+  schedule: string;
+  prompt: string;
+  enabled: boolean;
+  next_run_ts: number;
+  created_at: number;
+  updated_at: number;
+  last_run_ts: number;
+  last_success_ts: number;
+  failure_count: number;
+  last_error: string;
+};
+
+export type HeartbeatConfig = {
+  enabled: boolean;
+  interval_seconds: number;
+  timezone: string;
+  active_start_hour: number;
+  active_end_hour: number;
+  session_id: string;
+};
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
   const payload = await response.json();
@@ -215,17 +242,22 @@ export async function getUsageRecords(params: {
   return payload.data.records;
 }
 
-export async function getRagMode(): Promise<boolean> {
-  const payload = await requestJson<{ data: { enabled: boolean } }>(`${API_BASE}/api/config/rag-mode`);
+export async function getRagMode(agentId = "default"): Promise<boolean> {
+  const payload = await requestJson<{ data: { enabled: boolean } }>(
+    withAgent(`${API_BASE}/api/config/rag-mode`, agentId),
+  );
   return payload.data.enabled;
 }
 
-export async function setRagMode(enabled: boolean): Promise<boolean> {
-  const payload = await requestJson<{ data: { enabled: boolean } }>(`${API_BASE}/api/config/rag-mode`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
+export async function setRagMode(enabled: boolean, agentId = "default"): Promise<boolean> {
+  const payload = await requestJson<{ data: { enabled: boolean } }>(
+    withAgent(`${API_BASE}/api/config/rag-mode`, agentId),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
   return payload.data.enabled;
 }
 
@@ -254,6 +286,133 @@ export async function listWorkspaceFiles(agentId = "default"): Promise<Workspace
     withAgent(`${API_BASE}/api/files/index`, agentId),
   );
   return payload.data;
+}
+
+export async function getRuntimeConfig(agentId = "default"): Promise<RuntimeConfigPayload> {
+  const payload = await requestJson<{ data: { config: RuntimeConfigPayload } }>(
+    withAgent(`${API_BASE}/api/config/runtime`, agentId),
+  );
+  return payload.data.config;
+}
+
+export async function setRuntimeConfig(config: RuntimeConfigPayload, agentId = "default"): Promise<RuntimeConfigPayload> {
+  const payload = await requestJson<{ data: { config: RuntimeConfigPayload } }>(
+    withAgent(`${API_BASE}/api/config/runtime`, agentId),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config }),
+    },
+  );
+  return payload.data.config;
+}
+
+export async function listCronJobs(agentId = "default"): Promise<CronJob[]> {
+  const payload = await requestJson<{ data: { jobs: CronJob[] } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/jobs`, agentId),
+  );
+  return payload.data.jobs;
+}
+
+export async function createCronJob(
+  request: {
+    name: string;
+    schedule_type: "at" | "every" | "cron";
+    schedule: string;
+    prompt: string;
+    enabled?: boolean;
+  },
+  agentId = "default",
+): Promise<CronJob> {
+  const payload = await requestJson<{ data: { job: CronJob } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/jobs`, agentId),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+  return payload.data.job;
+}
+
+export async function updateCronJob(
+  jobId: string,
+  request: Partial<{
+    name: string;
+    schedule_type: "at" | "every" | "cron";
+    schedule: string;
+    prompt: string;
+    enabled: boolean;
+  }>,
+  agentId = "default",
+): Promise<CronJob> {
+  const payload = await requestJson<{ data: { job: CronJob } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/jobs/${encodeURIComponent(jobId)}`, agentId),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+  return payload.data.job;
+}
+
+export async function deleteCronJob(jobId: string, agentId = "default"): Promise<void> {
+  await requestJson<{ data: { deleted: boolean } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/jobs/${encodeURIComponent(jobId)}`, agentId),
+    { method: "DELETE" },
+  );
+}
+
+export async function runCronJob(jobId: string, agentId = "default"): Promise<CronJob> {
+  const payload = await requestJson<{ data: { job: CronJob } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/jobs/${encodeURIComponent(jobId)}/run`, agentId),
+    { method: "POST" },
+  );
+  return payload.data.job;
+}
+
+export async function listCronRuns(agentId = "default", limit = 100): Promise<Array<Record<string, unknown>>> {
+  const payload = await requestJson<{ data: { runs: Array<Record<string, unknown>> } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/runs?limit=${limit}`, agentId),
+  );
+  return payload.data.runs;
+}
+
+export async function listCronFailures(agentId = "default", limit = 100): Promise<Array<Record<string, unknown>>> {
+  const payload = await requestJson<{ data: { failures: Array<Record<string, unknown>> } }>(
+    withAgent(`${API_BASE}/api/scheduler/cron/failures?limit=${limit}`, agentId),
+  );
+  return payload.data.failures;
+}
+
+export async function getHeartbeatConfig(agentId = "default"): Promise<HeartbeatConfig> {
+  const payload = await requestJson<{ data: { config: HeartbeatConfig } }>(
+    withAgent(`${API_BASE}/api/scheduler/heartbeat`, agentId),
+  );
+  return payload.data.config;
+}
+
+export async function updateHeartbeatConfig(
+  request: Partial<HeartbeatConfig>,
+  agentId = "default",
+): Promise<HeartbeatConfig> {
+  const payload = await requestJson<{ data: { config: HeartbeatConfig } }>(
+    withAgent(`${API_BASE}/api/scheduler/heartbeat`, agentId),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+  return payload.data.config;
+}
+
+export async function listHeartbeatRuns(agentId = "default", limit = 100): Promise<Array<Record<string, unknown>>> {
+  const payload = await requestJson<{ data: { runs: Array<Record<string, unknown>> } }>(
+    withAgent(`${API_BASE}/api/scheduler/heartbeat/runs?limit=${limit}`, agentId),
+  );
+  return payload.data.runs;
 }
 
 export async function streamChat(

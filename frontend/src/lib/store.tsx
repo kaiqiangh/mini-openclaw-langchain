@@ -187,6 +187,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setFileDirty(false);
 
       try {
+        const rag = await getRagMode(agentId);
+        if (agentSwitchEpochRef.current !== switchEpoch) return;
+        setRagEnabledState(rag);
+
         const list = await refreshSessions("active", agentId);
         if (agentSwitchEpochRef.current !== switchEpoch) return;
         if (list.length > 0) {
@@ -274,9 +278,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const toggleRag = useCallback(async (enabled: boolean) => {
     setError(null);
-    const next = await setRagMode(enabled);
+    const next = await setRagMode(enabled, currentAgentId);
     setRagEnabledState(next);
-  }, []);
+  }, [currentAgentId]);
 
   const setSessionsScope = useCallback(
     async (scope: "active" | "archived") => {
@@ -486,10 +490,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     async function boot() {
       try {
-        const [rag, listedAgents] = await Promise.all([getRagMode(), refreshAgents()]);
+        const listedAgents = await refreshAgents();
         if (cancelled) return;
-
-        setRagEnabledState(rag);
 
         let effectiveAgents = listedAgents;
         if (effectiveAgents.length === 0) {
@@ -502,6 +504,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           effectiveAgents[0]?.agent_id ??
           "default";
         setCurrentAgentId(selected);
+
+        const rag = await getRagMode(selected);
+        if (cancelled) return;
+        setRagEnabledState(rag);
 
         const nextSessions = await getSessions("active", selected);
         if (cancelled) return;

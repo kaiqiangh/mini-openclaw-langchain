@@ -1,4 +1,4 @@
-import { streamChat } from "@/lib/api";
+import { getRagMode, setRagMode, streamChat } from "@/lib/api";
 
 function createStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -36,5 +36,29 @@ describe("streamChat", () => {
       { event: "token", data: '{"content":"A"}' },
       { event: "done", data: '{"content":"AB"}' },
     ]);
+  });
+});
+
+describe("agent-scoped rag mode requests", () => {
+  it("appends agent_id to rag mode endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { enabled: false } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ data: { enabled: true } }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getRagMode("alpha");
+    await setRagMode(true, "alpha");
+
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    const secondUrl = String(fetchMock.mock.calls[1][0]);
+    expect(firstUrl).toContain("agent_id=alpha");
+    expect(secondUrl).toContain("agent_id=alpha");
   });
 });

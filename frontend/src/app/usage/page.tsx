@@ -30,6 +30,76 @@ function formatNumber(value: number): string {
   return numberFormatter.format(value);
 }
 
+function buildTrendBuckets(records: UsageRecord[], sinceHours: number) {
+  if (records.length === 0) return [];
+  const bucketHours = sinceHours <= 48 ? 1 : 24;
+  const bucketMs = bucketHours * 60 * 60 * 1000;
+  const now = Date.now();
+  const start = now - sinceHours * 60 * 60 * 1000;
+  const buckets: Array<{ label: string; total_tokens: number; estimated_cost_usd: number }> = [];
+  const map = new Map<number, { total_tokens: number; estimated_cost_usd: number }>();
+
+  for (const row of records) {
+    if (row.timestamp_ms < start) continue;
+    const offset = Math.floor((row.timestamp_ms - start) / bucketMs);
+    const key = start + offset * bucketMs;
+    const current = map.get(key) ?? { total_tokens: 0, estimated_cost_usd: 0 };
+    current.total_tokens += row.total_tokens;
+    current.estimated_cost_usd += row.estimated_cost_usd;
+    map.set(key, current);
+  }
+
+  const count = Math.max(1, Math.ceil((now - start) / bucketMs));
+  for (let i = 0; i < count; i += 1) {
+    const ts = start + i * bucketMs;
+    const row = map.get(ts) ?? { total_tokens: 0, estimated_cost_usd: 0 };
+    buckets.push({
+      label: bucketHours === 1
+        ? new Date(ts).toISOString().slice(5, 13).replace("T", " ")
+        : new Date(ts).toISOString().slice(0, 10),
+      total_tokens: row.total_tokens,
+      estimated_cost_usd: row.estimated_cost_usd,
+    });
+  }
+  return buckets;
+}
+
+function toCsv(records: UsageRecord[]): string {
+  const header = [
+    "timestamp_ms",
+    "run_id",
+    "session_id",
+    "trigger_type",
+    "model",
+    "input_tokens",
+    "cached_input_tokens",
+    "uncached_input_tokens",
+    "output_tokens",
+    "reasoning_tokens",
+    "total_tokens",
+    "estimated_cost_usd",
+  ];
+  const rows = records.map((row) =>
+    [
+      row.timestamp_ms,
+      row.run_id,
+      row.session_id,
+      row.trigger_type,
+      row.model,
+      row.input_tokens,
+      row.cached_input_tokens,
+      row.uncached_input_tokens,
+      row.output_tokens,
+      row.reasoning_tokens,
+      row.total_tokens,
+      row.estimated_cost_usd,
+    ]
+      .map((item) => `"${String(item).replace(/"/g, '""')}"`)
+      .join(","),
+  );
+  return [header.join(","), ...rows].join("\n");
+}
+
 export default function UsagePage() {
   const [agents, setAgents] = useState<string[]>(["default"]);
   const [agentId, setAgentId] = useState<string>("default");
@@ -129,6 +199,9 @@ export default function UsagePage() {
     estimated_cost_usd: 0,
   };
 
+  const trendBuckets = useMemo(() => buildTrendBuckets(records, sinceHours), [records, sinceHours]);
+  const maxTrend = useMemo(() => Math.max(1, ...trendBuckets.map((item) => item.total_tokens)), [trendBuckets]);
+
   async function copyRunId(runId: string) {
     try {
       await navigator.clipboard.writeText(runId);
@@ -136,6 +209,18 @@ export default function UsagePage() {
     } catch {
       setCopyState("");
     }
+  }
+
+  function exportCsv() {
+    const blob = new Blob([toCsv(records)], { type: "text/csv;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = `usage-${agentId}-${sinceHours}h.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
   }
 
   return (
@@ -149,6 +234,14 @@ export default function UsagePage() {
               {loading ? <Badge tone="accent">Running</Badge> : <Badge tone="success">Ready</Badge>}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Records {records.length}</Badge>
+              <Button
+                type="button"
+                className="min-h-[28px] px-2 text-[11px]"
+                disabled={records.length === 0}
+                onClick={exportCsv}
+              >
+                Export CSV
+              </Button>
             </div>
           </div>
 
@@ -248,6 +341,43 @@ export default function UsagePage() {
             <div className="ui-label">Reasoning / Total</div>
             <div className="ui-tabular mt-1 text-lg font-semibold">
               {formatNumber(totals.reasoning_tokens)} / {formatNumber(totals.total_tokens)}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-shell">
+          <div className="ui-panel-header">
+            <h2 className="ui-panel-title">Token Trend</h2>
+            <Badge tone="neutral">{trendBuckets.length} buckets</Badge>
+          </div>
+          <div className="p-4">
+            <div className="h-32 w-full">
+              <svg viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`} preserveAspectRatio="none" className="h-full w-full">
+                {trendBuckets.map((bucket, index) => {
+                  const height = (bucket.total_tokens / maxTrend) * 92;
+                  const y = 96 - height;
+                  return (
+                    <g key={`${bucket.label}-${index}`}>
+                      <rect
+                        x={index + 0.12}
+                        y={y}
+                        width={0.76}
+                        height={Math.max(2, height)}
+                        rx={0.1}
+                        fill="var(--accent)"
+                        opacity={0.85}
+                      />
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--muted)]">
+              {trendBuckets.slice(Math.max(0, trendBuckets.length - 6)).map((bucket) => (
+                <span key={bucket.label} className="rounded border border-[var(--border)] px-2 py-0.5">
+                  {bucket.label}: {formatNumber(bucket.total_tokens)}
+                </span>
+              ))}
             </div>
           </div>
         </div>

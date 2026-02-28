@@ -1,8 +1,19 @@
-export function ResizeHandle() {
+import type { PointerEvent } from "react";
+
+export function ResizeHandle({
+  onPointerDown,
+  dragging = false,
+}: {
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void;
+  dragging?: boolean;
+}) {
   return (
-    <div
-      className="h-full w-2 cursor-col-resize rounded bg-[var(--surface-header)] transition-colors duration-150 hover:bg-[var(--border-strong)]"
-      aria-hidden
+    <button
+      type="button"
+      className="ui-split-handle"
+      onPointerDown={onPointerDown}
+      aria-label="Resize panels"
+      data-dragging={dragging ? "true" : "false"}
     />
   );
 }

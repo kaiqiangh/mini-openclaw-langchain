@@ -1,6 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 
+import { ChatMessage } from "@/components/chat/ChatMessage";
 import { RetrievalCard } from "@/components/chat/RetrievalCard";
 import { ThoughtChain } from "@/components/chat/ThoughtChain";
 
@@ -40,5 +41,29 @@ describe("chat rendering components", () => {
     expect(screen.getByText("read_file")).toBeInTheDocument();
     expect(screen.getByText(/memory\/MEMORY.md/)).toBeInTheDocument();
     expect(screen.getByText(/output: ok/)).toBeInTheDocument();
+  });
+
+  it("renders markdown for assistant messages with sanitization", () => {
+    const markdown = [
+      "# Heading",
+      "",
+      "[Link](https://example.com)",
+      "",
+      "```ts",
+      "const x = 1",
+      "```",
+      "",
+      "<script>alert('xss')</script>",
+    ].join("\n");
+
+    const { container } = render(
+      <ChatMessage role="assistant" content={markdown} toolCalls={[]} retrievals={[]} debugEvents={[]} />,
+    );
+
+    expect(screen.getByText("Heading")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Link" });
+    expect(link).toHaveAttribute("href", "https://example.com");
+    expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
   });
 });

@@ -12,6 +12,7 @@ export function Navbar() {
 
   const workspaceActive = pathname === "/";
   const usageActive = pathname?.startsWith("/usage");
+  const schedulerActive = pathname?.startsWith("/scheduler");
 
   return (
     <header className="z-20 flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-2)] px-4 backdrop-blur-md">
@@ -41,6 +42,16 @@ export function Navbar() {
             }`}
           >
             Usage
+          </Link>
+          <Link
+            href="/scheduler"
+            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors duration-200 ${
+              schedulerActive
+                ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
+                : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
+            }`}
+          >
+            Scheduler
           </Link>
         </nav>
       </div>
