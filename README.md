@@ -1,6 +1,6 @@
 # Mini-OpenClaw LangChain
 
-[![Backend Tests](https://img.shields.io/badge/backend_tests-47%20passing-15803d)](#testing) [![Frontend Tests](https://img.shields.io/badge/frontend_tests-7%20passing-15803d)](#testing) [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart) [![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture)
+[![Build](https://img.shields.io/badge/build-passing-15803d)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/version-0.1.0-blue) [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart) [![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture) ![LangChain](https://img.shields.io/badge/LangChain-1.x-15803d)
 
 Reliability-first, local-first agent workspace inspired by OpenClaw patterns with minimal overhead on top of LangChain 1.x:
 
@@ -30,16 +30,16 @@ flowchart LR
 
 ## Feature Matrix
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| Multi-agent workspaces | Ready | Per-agent sessions, memory, knowledge, usage, scheduler state. |
-| Chat + streaming | Ready | SSE streaming, debug events, tool/retrieval traces. |
-| Tool hardening | Ready | URL scheme/host controls, private network blocking, env scrubbing. |
-| Scheduler API | Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs. |
-| Scheduler UI | Ready | `/scheduler` page for cron + heartbeat controls and history. |
-| Retrieval engine | Ready | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration. |
-| Runtime config editor | Ready | Agent-scoped JSON editor in Inspector via `/api/config/runtime`. |
-| Usage analytics | Ready | Model breakdown, trend chart, CSV export. |
+| Area                   | Status | Notes                                                                      |
+| ---------------------- | ------ | -------------------------------------------------------------------------- |
+| Multi-agent workspaces | Ready  | Per-agent sessions, memory, knowledge, usage, scheduler state.             |
+| Chat + streaming       | Ready  | SSE streaming, debug events, tool/retrieval traces.                        |
+| Tool hardening         | Ready  | URL scheme/host controls, private network blocking, env scrubbing.         |
+| Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                  |
+| Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.               |
+| Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration. |
+| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/config/runtime`.           |
+| Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                  |
 
 ## Security Model
 
@@ -95,18 +95,18 @@ Use the repo-local command runner to manage backend/frontend lifecycle:
 
 ### Command Reference
 
-| Command | Description |
-| --- | --- |
-| `./oml help` | Show all available commands and examples. |
-| `./oml version` | Print CLI version, backend API version, frontend version, and git SHA. |
-| `./oml start [all\|backend\|frontend]` | Start services in detached mode with PID/log management. |
-| `./oml stop [all\|backend\|frontend]` | Stop managed services safely. |
-| `./oml restart [all\|backend\|frontend]` | Restart managed services. |
-| `./oml status` | Show runtime status with PID + health summary. |
-| `./oml logs [all\|backend\|frontend] [--follow] [--lines N]` | Show service logs. |
-| `./oml ports` | Print effective backend/frontend URLs. |
-| `./oml update` | Safe local dependency sync (`uv` + `npm`) with no git history mutation. |
-| `./oml doctor` | Validate prerequisites, env readiness, and port conflicts. |
+| Command                                                      | Description                                                             |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `./oml help`                                                 | Show all available commands and examples.                               |
+| `./oml version`                                              | Print CLI version, backend API version, frontend version, and git SHA.  |
+| `./oml start [all\|backend\|frontend]`                       | Start services in detached mode with PID/log management.                |
+| `./oml stop [all\|backend\|frontend]`                        | Stop managed services safely.                                           |
+| `./oml restart [all\|backend\|frontend]`                     | Restart managed services.                                               |
+| `./oml status`                                               | Show runtime status with PID + health summary.                          |
+| `./oml logs [all\|backend\|frontend] [--follow] [--lines N]` | Show service logs.                                                      |
+| `./oml ports`                                                | Print effective backend/frontend URLs.                                  |
+| `./oml update`                                               | Safe local dependency sync (`uv` + `npm`) with no git history mutation. |
+| `./oml doctor`                                               | Validate prerequisites, env readiness, and port conflicts.              |
 
 ### Runtime State
 
