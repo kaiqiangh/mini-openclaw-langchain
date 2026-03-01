@@ -1,8 +1,8 @@
 # Mini-OpenClaw LangChain
 
-[![Build](https://img.shields.io/badge/build-passing-15803d)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/version-0.1.0-blue) [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart) [![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture) ![LangChain](https://img.shields.io/badge/LangChain-1.x-15803d)
+[![Build](https://img.shields.io/badge/build-passing-15803d)](#testing) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) ![Version](https://img.shields.io/badge/version-0.1.0-blue) [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart) [![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture) ![LangChain](https://img.shields.io/badge/LangChain-1.2.10-15803d)
 
-Reliability-first, local-first agent workspace inspired by OpenClaw patterns with minimal overhead on top of LangChain 1.x:
+Reliability-first, local-first agent workspace inspired by OpenClaw patterns with minimal overhead on top of LangChain:
 
 - Multi-agent isolated workspaces.
 - Safer tool/network controls (`fetch_url`, `web_search`, terminal env scrubbing).
