@@ -43,12 +43,12 @@ export function Navbar() {
   }, [workspaceActive]);
 
   return (
-    <header className="z-20 flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-2)] px-4 backdrop-blur-md">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="min-w-0 text-sm font-semibold tracking-[0.06em] text-[var(--text)]">
+    <header className="z-20 flex min-h-16 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 backdrop-blur-md sm:px-4">
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+        <div className="min-w-0 text-sm font-semibold tracking-[0.05em] text-[var(--text)]">
           mini OpenClaw
         </div>
-        <Badge tone="neutral" className="max-w-[220px] truncate">
+        <Badge tone="neutral" className="hidden max-w-[220px] truncate sm:inline-flex">
           Agent: {currentAgentId}
         </Badge>
         {isStreaming ? (
@@ -56,10 +56,13 @@ export function Navbar() {
         ) : (
           <Badge tone="success">Idle</Badge>
         )}
-        <nav className="flex items-center gap-2 text-xs">
+        <nav
+          className="flex min-w-0 items-center gap-2 text-sm"
+          aria-label="Primary"
+        >
           <Link
             href="/"
-            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors duration-200 ${
+            className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
               workspaceActive
                 ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                 : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
@@ -69,7 +72,7 @@ export function Navbar() {
           </Link>
           <Link
             href="/usage"
-            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors duration-200 ${
+            className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
               usageActive
                 ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                 : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
@@ -79,7 +82,7 @@ export function Navbar() {
           </Link>
           <Link
             href="/scheduler"
-            className={`rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors duration-200 ${
+            className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
               schedulerActive
                 ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                 : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
@@ -89,7 +92,7 @@ export function Navbar() {
           </Link>
         </nav>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-shrink-0 items-center gap-2">
         {workspaceActive ? (
           <>
             <button
@@ -100,7 +103,7 @@ export function Navbar() {
               onClick={() => {
                 void toggleRag(!ragEnabled);
               }}
-              className={`group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+              className={`group inline-flex min-h-[40px] items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
                 ragEnabled
                   ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                   : "border-[var(--border)] bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--text)]"
@@ -128,7 +131,7 @@ export function Navbar() {
                   />
                 </svg>
               </span>
-              <span className="ui-mono tracking-[0.04em]">
+              <span className="ui-mono hidden tracking-[0.04em] sm:inline">
                 RAG {ragEnabled ? "ON" : "OFF"}
               </span>
             </button>
@@ -157,7 +160,7 @@ export function Navbar() {
                     setTraceLoading(false);
                   });
               }}
-              className={`group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+              className={`group inline-flex min-h-[40px] items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
                 traceEnabled
                   ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
                   : "border-[var(--border)] bg-[var(--surface-3)] text-[var(--muted)] hover:text-[var(--text)]"
@@ -186,7 +189,7 @@ export function Navbar() {
                   />
                 </svg>
               </span>
-              <span className="ui-mono tracking-[0.04em]">
+              <span className="ui-mono hidden tracking-[0.04em] sm:inline">
                 Trace {traceEnabled ? "ON" : "OFF"}
               </span>
             </button>

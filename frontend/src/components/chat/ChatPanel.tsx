@@ -33,7 +33,7 @@ export function ChatPanel() {
   }, [messages, isStreaming]);
 
   return (
-    <section className="panel-shell flex min-h-0 flex-col">
+    <section className="panel-shell flex min-h-0 min-w-0 flex-col">
       <div className="ui-panel-header">
         <h2 className="ui-panel-title">Agent Log</h2>
         {isStreaming ? (
@@ -43,7 +43,10 @@ export function ChatPanel() {
         )}
       </div>
 
-      <div ref={scrollRef} className="ui-scroll-area mb-3 flex-1 px-4 pt-4">
+      <div
+        ref={scrollRef}
+        className="ui-scroll-area mb-3 flex-1 px-3 pt-3 sm:px-4 sm:pt-4"
+      >
         {messages.length === 0 ? (
           <EmptyState
             title={
@@ -70,10 +73,7 @@ export function ChatPanel() {
           </div>
         ) : null}
         {error ? (
-          <div
-            className="ui-status mb-2 text-[var(--danger)]"
-            aria-live="polite"
-          >
+          <div className="ui-alert mb-2" aria-live="polite" role="alert">
             {error}
           </div>
         ) : null}

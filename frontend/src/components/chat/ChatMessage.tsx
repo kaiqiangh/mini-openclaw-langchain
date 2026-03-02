@@ -74,7 +74,7 @@ function PreBlock({ children }: { children?: ReactNode }) {
     <div className="ui-md-code-wrap">
       <button
         type="button"
-        className="ui-btn ui-btn-ghost absolute right-2 top-2 min-h-[24px] px-2 text-[10px]"
+        className="ui-btn ui-btn-ghost ui-btn-sm absolute right-2 top-2 px-2"
         onClick={async () => {
           if (!navigator?.clipboard) return;
           await navigator.clipboard.writeText(value);
@@ -147,7 +147,7 @@ function ChatMessageComponent({
 }: Props) {
   return (
     <article
-      className={`mb-3 rounded-md border p-3 text-sm ${
+      className={`mb-3 rounded-md border p-3 text-sm sm:p-4 ${
         role === "user"
           ? "ml-8 border-[var(--accent-strong)] bg-[var(--accent-soft)]"
           : "mr-8 border-[var(--border)] bg-[var(--surface-3)]"

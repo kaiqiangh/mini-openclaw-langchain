@@ -11,7 +11,7 @@ export function RetrievalCard({ retrievals }: Props) {
       <summary className="cursor-pointer font-medium text-[var(--text)]">
         RAG Retrieval
       </summary>
-      <div className="mt-2 space-y-2 text-xs">
+      <div className="mt-2 space-y-2 text-sm">
         {retrievals.map((item, index) => (
           <div
             key={`${item.source}-${index}`}

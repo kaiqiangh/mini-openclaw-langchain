@@ -31,7 +31,7 @@ export function DebugTrace({ events }: Props) {
       <summary className="cursor-pointer font-medium text-[var(--text)]">
         Agent Debug Trace
       </summary>
-      <div className="mt-2 space-y-2 text-xs">
+      <div className="mt-2 space-y-2 text-sm">
         {events.map((event) => (
           <div
             key={event.id}
@@ -39,14 +39,14 @@ export function DebugTrace({ events }: Props) {
           >
             <div className="flex items-center justify-between gap-2">
               <Badge tone="neutral">{event.type}</Badge>
-              <span className="ui-mono text-[10px] text-[var(--muted)]">
+              <span className="ui-mono text-xs text-[var(--muted)]">
                 {new Date(event.timestamp).toLocaleTimeString()}
               </span>
             </div>
             <div className="mt-1 break-all text-[var(--muted)]">
               {summarize(event.data)}
             </div>
-            <pre className="ui-mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--surface-3)] p-2 text-[11px] text-[var(--text)]">
+            <pre className="ui-mono mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-[var(--border)] bg-[var(--surface-3)] p-2 text-xs text-[var(--text)]">
               {pretty(event.data)}
             </pre>
           </div>

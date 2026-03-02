@@ -200,7 +200,8 @@ export function InspectorPanel() {
         <h2 className="ui-panel-title">Inspector</h2>
         <Button
           type="button"
-          className="px-3 text-[11px]"
+          size="sm"
+          className="px-3"
           disabled={mode === "file" ? !fileDirty : !runtimeConfigDirty}
           onClick={() => {
             if (mode === "file") {
@@ -214,25 +215,30 @@ export function InspectorPanel() {
         </Button>
       </div>
 
-      <TabsList className="mx-4 mt-3 grid-cols-2">
+      <TabsList
+        className="mx-4 mt-3 grid-cols-2"
+        ariaLabel="Inspector mode"
+        value={mode}
+        onChange={(value) => setMode(value as EditorMode)}
+      >
         <TabButton
-          type="button"
-          active={mode === "file"}
-          onClick={() => setMode("file")}
+          id="inspector-tab-file"
+          controls="inspector-panel-file"
+          value="file"
         >
           Files
         </TabButton>
         <TabButton
-          type="button"
-          active={mode === "runtime"}
-          onClick={() => setMode("runtime")}
+          id="inspector-tab-runtime"
+          controls="inspector-panel-runtime"
+          value="runtime"
         >
           Runtime Config
         </TabButton>
       </TabsList>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-        <div className="flex flex-wrap gap-2 text-[11px]">
+        <div className="flex flex-wrap gap-2 text-xs">
           <Badge tone="neutral">Agent {currentAgentId}</Badge>
           {mode === "file" ? (
             <Badge tone="accent">Workspace</Badge>
@@ -253,7 +259,12 @@ export function InspectorPanel() {
             description="No workspace or skill files were found."
           />
         ) : mode === "file" ? (
-          <>
+          <div
+            id="inspector-panel-file"
+            role="tabpanel"
+            aria-labelledby="inspector-tab-file"
+            className="flex min-h-0 flex-1 flex-col gap-3"
+          >
             <label className="ui-label" htmlFor="inspector-file-select">
               File
             </label>
@@ -292,15 +303,20 @@ export function InspectorPanel() {
                 }}
               />
             </div>
-          </>
+          </div>
         ) : (
-          <>
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-xs text-[var(--muted)]">
+          <div
+            id="inspector-panel-runtime"
+            role="tabpanel"
+            aria-labelledby="inspector-tab-runtime"
+            className="flex min-h-0 flex-1 flex-col gap-3"
+          >
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--muted)]">
               Edit validated runtime settings for this agent. Save will call
               `/api/v1/agents/&lt;agent_id&gt;/config/runtime`.
             </div>
             {runtimeConfigError ? (
-              <div className="rounded-md border border-[var(--danger)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">
+              <div className="ui-alert" role="alert">
                 {runtimeConfigError}
               </div>
             ) : null}
@@ -327,7 +343,7 @@ export function InspectorPanel() {
                 }}
               />
             </div>
-          </>
+          </div>
         )}
       </div>
     </aside>

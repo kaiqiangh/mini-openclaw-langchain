@@ -13,6 +13,7 @@ export function ResizeHandle({
       className="ui-split-handle"
       onPointerDown={onPointerDown}
       aria-label="Resize panels"
+      aria-orientation="vertical"
       data-dragging={dragging ? "true" : "false"}
     />
   );

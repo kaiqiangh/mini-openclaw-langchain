@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import {
   Badge,
   Button,
+  EmptyState,
   Input,
   Select,
   TabButton,
@@ -75,7 +76,8 @@ export function Sidebar() {
             />
             <Button
               type="button"
-              className="min-w-[64px] px-2 text-[11px]"
+              size="sm"
+              className="min-w-[72px] px-2"
               disabled={!agentDraft.trim()}
               onClick={() => {
                 const value = agentDraft.trim();
@@ -88,7 +90,8 @@ export function Sidebar() {
             <Button
               type="button"
               variant="danger"
-              className="min-w-[64px] px-2 text-[11px]"
+              size="sm"
+              className="min-w-[72px] px-2"
               disabled={currentAgentId === "default"}
               onClick={() => {
                 void deleteAgentById(currentAgentId);
@@ -103,7 +106,8 @@ export function Sidebar() {
           <h2 className="ui-panel-title">Sessions</h2>
           <Button
             type="button"
-            className="px-3 text-[11px]"
+            size="sm"
+            className="px-3"
             disabled={sessionsScope !== "active"}
             onClick={() => {
               void createNewSession();
@@ -113,119 +117,137 @@ export function Sidebar() {
           </Button>
         </div>
 
-        <TabsList className="mb-1">
-          <TabButton
-            type="button"
-            active={sessionsScope === "active"}
-            onClick={() => {
-              void setSessionsScope("active");
+        <div className="mb-1 flex items-center justify-between gap-2">
+          <TabsList
+            className="flex-1 grid-cols-2"
+            ariaLabel="Session scope"
+            value={sessionsScope}
+            onChange={(value) => {
+              void setSessionsScope(value as "active" | "archived");
             }}
           >
-            Active
-          </TabButton>
-          <TabButton
-            type="button"
-            active={sessionsScope === "archived"}
-            onClick={() => {
-              void setSessionsScope("archived");
-            }}
-          >
-            Archived
-          </TabButton>
-          <div className="flex items-center justify-center">
-            <Badge tone="neutral">{sessions.length} items</Badge>
-          </div>
-        </TabsList>
+            <TabButton
+              id="sessions-tab-active"
+              controls="sessions-panel-active"
+              value="active"
+            >
+              Active
+            </TabButton>
+            <TabButton
+              id="sessions-tab-archived"
+              controls="sessions-panel-archived"
+              value="archived"
+            >
+              Archived
+            </TabButton>
+          </TabsList>
+          <Badge tone="neutral">{sessions.length} items</Badge>
+        </div>
 
         {!initialized ? (
           <div className="ui-status" aria-live="polite">
             Loading…
           </div>
         ) : (
-          <ul className="ui-scroll-area space-y-2 pr-1">
-            {sessions.map((session) => (
-              <li key={session.session_id}>
-                <div
-                  className={`rounded-md border p-2 text-xs transition-colors duration-200 ${
-                    session.session_id === currentSessionId
-                      ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-                      : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
-                  }`}
-                >
-                  <button
-                    className="w-full text-left"
-                    onClick={() => {
-                      void selectSession(session.session_id);
-                    }}
+          <div
+            id={
+              sessionsScope === "active"
+                ? "sessions-panel-active"
+                : "sessions-panel-archived"
+            }
+            role="tabpanel"
+            aria-labelledby={
+              sessionsScope === "active"
+                ? "sessions-tab-active"
+                : "sessions-tab-archived"
+            }
+            className="min-h-0 flex-1"
+          >
+            <ul className="ui-scroll-area space-y-2 pr-1">
+              {sessions.map((session) => (
+                <li key={session.session_id}>
+                  <div
+                    className={`rounded-md border p-3 text-sm transition-colors duration-200 ${
+                      session.session_id === currentSessionId
+                        ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                        : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
+                    }`}
                   >
-                    <div className="truncate font-semibold text-[var(--text)]">
-                      {session.title || "New Session"}
+                    <button
+                      className="w-full text-left"
+                      onClick={() => {
+                        void selectSession(session.session_id);
+                      }}
+                    >
+                      <div className="truncate font-semibold text-[var(--text)]">
+                        {session.title || "New Session"}
+                      </div>
+                      <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
+                        {session.session_id.slice(0, 8)}
+                      </div>
+                    </button>
+                    <div className="mt-3 flex flex-wrap gap-1">
+                      {sessionsScope === "active" ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              void archiveSessionById(session.session_id);
+                            }}
+                          >
+                            Archive
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="danger"
+                            onClick={() => {
+                              void deleteSessionById(session.session_id, false);
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => {
+                              void restoreSessionById(session.session_id);
+                            }}
+                          >
+                            Restore
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="danger"
+                            onClick={() => {
+                              void deleteSessionById(session.session_id, true);
+                            }}
+                          >
+                            Delete
+                          </Button>
+                        </>
+                      )}
                     </div>
-                    <div className="ui-mono mt-1 text-[11px] text-[var(--muted)]">
-                      {session.session_id.slice(0, 8)}
-                    </div>
-                  </button>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {sessionsScope === "active" ? (
-                      <>
-                        <Button
-                          type="button"
-                          className="min-h-[28px] px-2 text-[10px]"
-                          onClick={() => {
-                            void archiveSessionById(session.session_id);
-                          }}
-                        >
-                          Archive
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="danger"
-                          className="min-h-[28px] px-2 text-[10px]"
-                          onClick={() => {
-                            void deleteSessionById(session.session_id, false);
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button
-                          type="button"
-                          className="min-h-[28px] px-2 text-[10px]"
-                          onClick={() => {
-                            void restoreSessionById(session.session_id);
-                          }}
-                        >
-                          Restore
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="danger"
-                          className="min-h-[28px] px-2 text-[10px]"
-                          onClick={() => {
-                            void deleteSessionById(session.session_id, true);
-                          }}
-                        >
-                          Delete
-                        </Button>
-                      </>
-                    )}
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         {initialized && sessions.length === 0 ? (
-          <div className="ui-empty">
-            <strong>No Sessions</strong>
-            <span>
-              {sessionsScope === "active"
+          <EmptyState
+            title="No Sessions"
+            description={
+              sessionsScope === "active"
                 ? "Create a new session to begin."
-                : "No archived sessions."}
-            </span>
-          </div>
+                : "No archived sessions."
+            }
+          />
         ) : null}
       </div>
     </aside>

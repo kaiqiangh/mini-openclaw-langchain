@@ -12,7 +12,7 @@ export function ChatInput() {
 
   return (
     <form
-      className="flex items-center gap-2 border-t border-[var(--border)] pt-3"
+      className="space-y-2 border-t border-[var(--border)] pt-3"
       onSubmit={(event) => {
         event.preventDefault();
         const toSend = draft;
@@ -20,26 +20,36 @@ export function ChatInput() {
         void sendMessage(toSend);
       }}
     >
-      <Input
-        name="chat-message"
-        aria-label="Chat message"
-        autoComplete="off"
-        className="w-full"
-        placeholder={
-          readOnly ? "Archived session (read-only)" : "Type a message…"
-        }
-        value={draft}
-        disabled={isStreaming || readOnly}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      <Button
-        type="submit"
-        variant="primary"
-        className="min-w-[108px] px-3 text-sm"
-        disabled={isStreaming || readOnly || draft.trim().length === 0}
-      >
-        {isStreaming ? "Streaming…" : "Send"}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Input
+          name="chat-message"
+          aria-label="Chat message"
+          autoComplete="off"
+          className="w-full"
+          hintId="chat-input-hint"
+          placeholder={
+            readOnly ? "Archived session (read-only)" : "Type a message…"
+          }
+          value={draft}
+          disabled={isStreaming || readOnly}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button
+          type="submit"
+          size="lg"
+          variant="primary"
+          loading={isStreaming}
+          className="min-w-[116px] px-3 text-sm"
+          disabled={readOnly || draft.trim().length === 0}
+        >
+          {isStreaming ? "Streaming…" : "Send"}
+        </Button>
+      </div>
+      <div id="chat-input-hint" className="ui-helper">
+        {readOnly
+          ? "Archived sessions are read-only."
+          : "Press Enter to send."}
+      </div>
     </form>
   );
 }

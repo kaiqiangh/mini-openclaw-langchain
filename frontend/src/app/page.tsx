@@ -13,10 +13,10 @@ type MobilePanel = "sidebar" | "chat" | "inspector";
 type DragTarget = "left" | "right" | null;
 
 const LAYOUT_KEY = "mini-openclaw:layout:v1";
-const DEFAULT_LAYOUT = { left: 280, right: 360 };
-const MIN_LEFT = 220;
-const MIN_RIGHT = 280;
-const MIN_CENTER = 360;
+const DEFAULT_LAYOUT = { left: 300, right: 360 };
+const MIN_LEFT = 260;
+const MIN_RIGHT = 340;
+const MIN_CENTER = 420;
 
 export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
@@ -91,35 +91,11 @@ export default function Home() {
     >
       <Navbar />
 
-      <TabsList className="mobile-tabs md:hidden">
-        <TabButton
-          type="button"
-          active={mobilePanel === "sidebar"}
-          onClick={() => setMobilePanel("sidebar")}
-        >
-          Sessions
-        </TabButton>
-        <TabButton
-          type="button"
-          active={mobilePanel === "chat"}
-          onClick={() => setMobilePanel("chat")}
-        >
-          Chat
-        </TabButton>
-        <TabButton
-          type="button"
-          active={mobilePanel === "inspector"}
-          onClick={() => setMobilePanel("inspector")}
-        >
-          Inspector
-        </TabButton>
-      </TabsList>
-
       <section
         ref={containerRef}
-        className="hidden h-full gap-0 p-3 md:grid"
+        className="hidden h-full min-w-0 gap-0 p-3 md:grid"
         style={{
-          gridTemplateColumns: `${layout.left}px 8px minmax(0,1fr) 8px ${layout.right}px`,
+          gridTemplateColumns: `${layout.left}px 10px minmax(0,1fr) 10px ${layout.right}px`,
         }}
       >
         <Sidebar />
@@ -141,11 +117,64 @@ export default function Home() {
         <InspectorPanel />
       </section>
 
-      <section className="h-full p-3 md:hidden">
-        {mobilePanel === "sidebar" ? <Sidebar /> : null}
-        {mobilePanel === "chat" ? <ChatPanel /> : null}
-        {mobilePanel === "inspector" ? <InspectorPanel /> : null}
+      <section className="h-full min-w-0 p-3 pb-24 md:hidden">
+        <div
+          id="mobile-panel-sessions"
+          role="tabpanel"
+          aria-labelledby="mobile-tab-sessions"
+          hidden={mobilePanel !== "sidebar"}
+          className="h-full"
+        >
+          <Sidebar />
+        </div>
+        <div
+          id="mobile-panel-chat"
+          role="tabpanel"
+          aria-labelledby="mobile-tab-chat"
+          hidden={mobilePanel !== "chat"}
+          className="h-full"
+        >
+          <ChatPanel />
+        </div>
+        <div
+          id="mobile-panel-inspector"
+          role="tabpanel"
+          aria-labelledby="mobile-tab-inspector"
+          hidden={mobilePanel !== "inspector"}
+          className="h-full"
+        >
+          <InspectorPanel />
+        </div>
       </section>
+
+      <TabsList
+        className="mobile-tabs md:hidden"
+        ariaLabel="Workspace panels"
+        value={mobilePanel}
+        onChange={(value) => setMobilePanel(value as MobilePanel)}
+      >
+        <TabButton
+          id="mobile-tab-sessions"
+          controls="mobile-panel-sessions"
+          value="sidebar"
+        >
+          Sessions
+        </TabButton>
+        <TabButton
+          id="mobile-tab-chat"
+          controls="mobile-panel-chat"
+          value="chat"
+        >
+          Chat
+        </TabButton>
+        <TabButton
+          id="mobile-tab-inspector"
+          controls="mobile-panel-inspector"
+          value="inspector"
+        >
+          Inspector
+        </TabButton>
+      </TabsList>
     </main>
   );
 }
