@@ -212,6 +212,7 @@ docs/
 plan/
 .DS_Store
 .codex/
+backend/storage/runtime_state.json
 
 # Node.js runtime artifacts
 node_modules/

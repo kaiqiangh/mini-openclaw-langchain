@@ -30,16 +30,16 @@ flowchart LR
 
 ## Feature Matrix
 
-| Area                   | Status | Notes                                                                      |
-| ---------------------- | ------ | -------------------------------------------------------------------------- |
-| Multi-agent workspaces | Ready  | Per-agent sessions, memory, knowledge, usage, scheduler state.             |
-| Chat + streaming       | Ready  | SSE streaming, debug events, tool/retrieval traces.                        |
-| Tool hardening         | Ready  | URL scheme/host controls, private network blocking, env scrubbing.         |
-| Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                  |
-| Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.               |
-| Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration. |
+| Area                   | Status | Notes                                                                                 |
+| ---------------------- | ------ | ------------------------------------------------------------------------------------- |
+| Multi-agent workspaces | Ready  | Per-agent sessions, memory, knowledge, usage, scheduler state.                        |
+| Chat + streaming       | Ready  | SSE streaming, debug events, tool/retrieval traces.                                   |
+| Tool hardening         | Ready  | URL scheme/host controls, private network blocking, env scrubbing.                    |
+| Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                             |
+| Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.                          |
+| Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration.            |
 | Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/agents/{agent_id}/config/runtime`. |
-| Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                  |
+| Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                             |
 
 ## Security Model
 
@@ -52,12 +52,6 @@ flowchart LR
   - redirect cap + content-size cap
 - Terminal tool executes with sanitized environment (secret-like vars stripped).
 - CORS + trusted hosts + rate limit middleware enabled by default.
-
-Detailed docs:
-
-- `docs/security/sandbox-and-network.md`
-- `docs/operations/scheduler.md`
-- `docs/retrieval/sqlite-index.md`
 
 ## Quickstart
 
@@ -151,11 +145,9 @@ npm run build
 
 - `backend/`: FastAPI APIs, AgentManager, tools, scheduler, retrieval.
 - `frontend/`: Next.js app router UI, API client, app store, scheduler/usage/workspace pages.
-- `docs/`: operations, security, retrieval, product/reference docs.
 
 ## Roadmap (Near-term)
 
 - Add stronger process-level sandboxing for terminal execution (beyond env scrubbing).
 - Expand scheduler observability (job duration/latency aggregates).
 - Add richer agent management UX (bulk actions, templates, diffable runtime config).
-- Add retrieval quality eval fixtures to compare ranking drift across releases.

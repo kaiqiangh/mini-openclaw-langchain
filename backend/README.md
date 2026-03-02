@@ -40,7 +40,7 @@ flowchart TB
 | `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.    |
 | `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
 | `runtime.cron.*`                              | Cron polling, retry/backoff, retention.     |
-| `runtime.llm_runtime.profile`                 | Active LLM profile name override.            |
+| `runtime.llm_runtime.profile`                 | Active LLM profile name override.           |
 
 ## LLM Profiles
 
@@ -111,7 +111,7 @@ flowchart TB
 
 Known limitation:
 
-- Terminal execution is not a full process/container sandbox yet. See `docs/security/sandbox-and-network.md`.
+- Terminal execution is not a full process/container sandbox yet.
 
 ## Retrieval Notes
 
@@ -121,15 +121,11 @@ Known limitation:
 - Semantic + lexical blending is preserved from previous scoring.
 - Legacy JSON index is imported on first SQLite use, and JSON read fallback remains available.
 
-Reference: `docs/retrieval/sqlite-index.md`.
-
 ## Operations
 
 - Scheduler run/failure logs are JSONL in each workspace `storage/`.
 - Heartbeat skip states include `skipped_no_prompt` for empty/comment-only prompts.
 - Cron and heartbeat write paths are lock-protected.
-
-Reference: `docs/operations/scheduler.md`.
 
 ## Local Run
 
