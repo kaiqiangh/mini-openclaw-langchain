@@ -85,44 +85,63 @@ Direct frontend dev server remains available at [http://localhost:3000](http://l
 
 ## Repo-local CLI (`./oml`)
 
-Use the repo-local command runner to manage backend/frontend lifecycle:
+`oml` is a repo-local command (`./oml`) for running and operating Mini-OpenClaw locally without requiring global installation. It manages both backend and frontend execution, handles logs and PIDs, and runs health checks.
+
+### Requirements
+
+- `bash`
+- `uv`
+- `node` + `npm`
+- `curl`
+
+### Quick Start
 
 ```bash
 ./oml help
-./oml version
 ./oml start
 ./oml status
 ./oml logs --follow
 ./oml stop
 ```
 
-### Command Reference
+When started via `./oml start`, the backend runs with the frontend proxy enabled, allowing you to access the app directly at [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-| Command                                                      | Description                                                             |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `./oml help`                                                 | Show all available commands and examples.                               |
-| `./oml version`                                              | Print CLI version, backend API version, frontend version, and git SHA.  |
-| `./oml start [all\|backend\|frontend]`                       | Start services in detached mode with PID/log management.                |
-| `./oml stop [all\|backend\|frontend]`                        | Stop managed services safely.                                           |
-| `./oml restart [all\|backend\|frontend]`                     | Restart managed services.                                               |
-| `./oml status`                                               | Show runtime status with PID + health summary.                          |
-| `./oml logs [all\|backend\|frontend] [--follow] [--lines N]` | Show service logs.                                                      |
-| `./oml ports`                                                | Print effective backend/frontend URLs.                                  |
-| `./oml update`                                               | Safe local dependency sync (`uv` + `npm`) with no git history mutation. |
-| `./oml doctor`                                               | Validate prerequisites, env readiness, and port conflicts.              |
+### Core Commands
 
-### Runtime State
+- **`start [target]`**: Starts services (`all`, `backend`, or `frontend`) in detached mode. It writes PID files to `.oml/run/`, logs to `.oml/log/`, and waits for health checks to pass. Idempotent if already running.
+- **`stop [target]`**: Stops managed services safely. Uses graceful SIGTERM first, with a SIGKILL fallback. Refuses to kill unmanaged PIDs.
+- **`restart [target]`**: Equivalent to `stop` followed by `start`.
+- **`status`**: Prints service-level status including state (`running`/`stopped`), PID, health (`ok`, `degraded`, `down`), and service URL.
+- **`logs [target]`**: Shows logs from `.oml/log`. Supports `--follow` and `--lines N`.
+- **`update`**: Safely syncs local dependencies (`uv` for Python, `npm ci` for Node) without mutating git history.
+- **`doctor`**: Validates prerequisites, checks `backend/.env`, and detects port conflicts.
+- **`ports`**: Prints effective URL/ports used by the runtime config.
+- **`version` / `help`**: Prints component versions and CLI usage.
 
-- PID files: `.oml/run/backend.pid`, `.oml/run/frontend.pid`
-- Log files: `.oml/log/backend.log`, `.oml/log/frontend.log`
-- Optional local overrides: `.oml/config.env`
-  - `OML_BACKEND_HOST` (default `127.0.0.1`)
-  - `OML_BACKEND_PORT` (default `8000`)
-  - `OML_FRONTEND_HOST` (default `127.0.0.1`)
-  - `OML_FRONTEND_PORT` (default `3000`)
-  - `OML_HEALTH_TIMEOUT_SECONDS` (default `30`)
+### Runtime State & Configuration
 
-Full CLI guide: [`docs/cli/oml.md`](docs/cli/oml.md)
+The CLI stores its runtime state in `.oml/run/` and `.oml/log/`.
+
+You can override defaults by creating an `.oml/config.env` file (or by exporting environment variables):
+
+```bash
+OML_BACKEND_HOST=127.0.0.1
+OML_BACKEND_PORT=8000
+OML_FRONTEND_HOST=127.0.0.1
+OML_FRONTEND_PORT=3000
+OML_HEALTH_TIMEOUT_SECONDS=30
+```
+
+### Exit Codes
+
+- `0`: Success | `1`: Invalid command/argument | `2`: Missing binary
+- `3`: Health/start timeout | `4`: Unsafe stop or runtime failure
+- `5`: Update failure | `6`: Doctor critical failure
+
+### Troubleshooting
+
+- **Start fails with timeout**: Check `.oml/log/*.log`. Ensure `backend/.env` is correctly configured and `frontend/node_modules` exists.
+- **Stop refuses to kill PID**: The PID file doesn't match an expected managed process. Run `rm -f .oml/run/*.pid` to clear stale PIDs, then retry.
 
 ## Testing
 
