@@ -51,11 +51,11 @@ describe("agent-scoped rag mode requests", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { enabled: false } }),
+        text: async () => JSON.stringify({ data: { enabled: false } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { enabled: true } }),
+        text: async () => JSON.stringify({ data: { enabled: true } }),
       });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -75,23 +75,25 @@ describe("tracing config requests", () => {
       .fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          data: {
-            provider: "langsmith",
-            config_key: "OBS_TRACING_ENABLED",
-            enabled: false,
-          },
-        }),
+        text: async () =>
+          JSON.stringify({
+            data: {
+              provider: "langsmith",
+              config_key: "OBS_TRACING_ENABLED",
+              enabled: false,
+            },
+          }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({
-          data: {
-            provider: "langsmith",
-            config_key: "OBS_TRACING_ENABLED",
-            enabled: true,
-          },
-        }),
+        text: async () =>
+          JSON.stringify({
+            data: {
+              provider: "langsmith",
+              config_key: "OBS_TRACING_ENABLED",
+              enabled: true,
+            },
+          }),
       });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -100,8 +102,8 @@ describe("tracing config requests", () => {
 
     const firstUrl = String(fetchMock.mock.calls[0][0]);
     const secondUrl = String(fetchMock.mock.calls[1][0]);
-    expect(firstUrl).toContain("/api/config/tracing");
-    expect(secondUrl).toContain("/api/config/tracing");
+    expect(firstUrl).toContain("/api/v1/config/tracing");
+    expect(secondUrl).toContain("/api/v1/config/tracing");
     expect(firstUrl).not.toContain("agent_id=");
     expect(secondUrl).not.toContain("agent_id=");
   });
