@@ -63,6 +63,8 @@ def test_auth_accepts_valid_token(monkeypatch):
         )
         raw_response = client.get("/api/v1/secure", headers={"Authorization": "secret-1"})
         alt_response = client.get("/api/v1/secure", headers={"X-Admin-Token": "secret-1"})
+        cookie_response = client.get("/api/v1/secure", cookies={"app_admin_token": "secret-1"})
     assert bearer_response.status_code == 200
     assert raw_response.status_code == 200
     assert alt_response.status_code == 200
+    assert cookie_response.status_code == 200

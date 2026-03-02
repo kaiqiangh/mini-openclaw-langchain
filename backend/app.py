@@ -199,6 +199,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 token = authorization
         if not token:
             token = (request.headers.get("X-Admin-Token", "") or "").strip()
+        if not token:
+            token = (request.cookies.get("app_admin_token", "") or "").strip()
         if not token or not hmac.compare_digest(token, configured):
             return JSONResponse(
                 status_code=401,
@@ -443,4 +445,17 @@ if _env_bool("APP_ENABLE_FRONTEND_PROXY", default=False):
         _ = full_path
         if request.url.path.startswith("/api/v1"):
             raise ApiError(status_code=404, code="not_found", message="Not found")
-        return await _proxy_to_frontend(request)
+        response = await _proxy_to_frontend(request)
+        configured = (os.getenv("APP_ADMIN_TOKEN", "") or "").strip()
+        existing = (request.cookies.get("app_admin_token", "") or "").strip()
+        if configured and (not existing or not hmac.compare_digest(existing, configured)):
+            response.set_cookie(
+                key="app_admin_token",
+                value=configured,
+                httponly=True,
+                samesite="lax",
+                secure=False,
+                path="/",
+                max_age=60 * 60 * 12,
+            )
+        return response

@@ -192,6 +192,7 @@ export type TracingConfig = {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: withAuthHeaders(init?.headers),
   });
   const text = await response.text();
@@ -591,6 +592,7 @@ export async function streamChat(
 ): Promise<void> {
   const response = await fetch(`${agentBase(agentId)}/chat`, {
     method: "POST",
+    credentials: "include",
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       message,
