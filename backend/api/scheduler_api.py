@@ -5,7 +5,7 @@ from pathlib import Path
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
 from api.errors import ApiError
@@ -129,9 +129,10 @@ async def list_cron_jobs(
     return {"data": {"agent_id": agent_id, "jobs": jobs}}
 
 
-@router.post("/scheduler/cron/jobs")
+@router.post("/scheduler/cron/jobs", status_code=status.HTTP_201_CREATED)
 async def create_cron_job(
     request: CronJobCreateRequest,
+    response: Response,
     agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     scheduler = _cron_scheduler(agent_id)
@@ -150,6 +151,9 @@ async def create_cron_job(
         job.enabled = False
         job.next_run_ts = 0
         scheduler.upsert_job(job)
+    response.headers["Location"] = (
+        f"/api/v1/agents/{agent_id}/scheduler/cron-jobs/{job.id}"
+    )
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(job)}}
 
 
@@ -213,16 +217,16 @@ async def update_cron_job(
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(current)}}
 
 
-@router.delete("/scheduler/cron/jobs/{job_id}")
+@router.delete("/scheduler/cron/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_cron_job(
     job_id: str,
     agent_id: str = Query(default="default", min_length=1, max_length=64),
-) -> dict[str, Any]:
+) -> Response:
     scheduler = _cron_scheduler(agent_id)
     deleted = scheduler.delete_job(job_id)
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Cron job not found")
-    return {"data": {"agent_id": agent_id, "deleted": True, "job_id": job_id}}
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/scheduler/cron/jobs/{job_id}/run")

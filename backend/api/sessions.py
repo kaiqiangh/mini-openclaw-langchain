@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
 from api.errors import ApiError
@@ -58,8 +58,9 @@ async def list_sessions(
     return {"data": manager.list_sessions(scope=scope)}
 
 
-@router.post("/sessions")
+@router.post("/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(
+    response: Response,
     request: CreateSessionRequest | None = None,
     agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
@@ -71,6 +72,7 @@ async def create_session(
         payload["title"] = request.title.strip()
         manager.save_session(session_id, payload)
 
+    response.headers["Location"] = f"/api/v1/agents/{agent_id}/sessions/{session_id}"
     return {
         "data": {"session_id": session_id, "title": payload.get("title", "New Session")}
     }
@@ -91,17 +93,17 @@ async def rename_session(
     return {"data": {"session_id": session_id, "title": session.get("title", "")}}
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: str,
     archived: bool = False,
     agent_id: str = Query(default="default", min_length=1, max_length=64),
-) -> dict[str, Any]:
+) -> Response:
     _, manager = _resolve_session_manager(agent_id)
     deleted = manager.delete_session(session_id, archived=archived)
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Session not found")
-    return {"data": {"deleted": True, "session_id": session_id, "archived": archived}}
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/sessions/{session_id}/archive")

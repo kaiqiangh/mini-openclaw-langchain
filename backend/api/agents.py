@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
 from pydantic import BaseModel, Field
 
 from api.errors import ApiError
@@ -38,8 +38,8 @@ async def list_agents() -> dict[str, Any]:
     return {"data": manager.list_agents()}
 
 
-@router.post("/agents")
-async def create_agent(req: CreateAgentRequest) -> dict[str, Any]:
+@router.post("/agents", status_code=status.HTTP_201_CREATED)
+async def create_agent(req: CreateAgentRequest, response: Response) -> dict[str, Any]:
     manager = _require_agent_manager()
     try:
         created = manager.create_agent(req.agent_id)
@@ -47,11 +47,12 @@ async def create_agent(req: CreateAgentRequest) -> dict[str, Any]:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
+    response.headers["Location"] = f"/api/v1/agents/{req.agent_id}"
     return {"data": created}
 
 
-@router.delete("/agents/{agent_id}")
-async def delete_agent(agent_id: str) -> dict[str, Any]:
+@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(agent_id: str) -> Response:
     manager = _require_agent_manager()
     try:
         deleted = manager.delete_agent(agent_id)
@@ -61,4 +62,4 @@ async def delete_agent(agent_id: str) -> dict[str, Any]:
         ) from exc
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
-    return {"data": {"deleted": True, "agent_id": agent_id}}
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -368,15 +368,15 @@ def api_app(backend_base_dir: Path):
             ),
         )
 
-    app.include_router(chat.router, prefix="/api")
-    app.include_router(sessions.router, prefix="/api")
-    app.include_router(files.router, prefix="/api")
-    app.include_router(tokens.router, prefix="/api")
-    app.include_router(compress.router, prefix="/api")
-    app.include_router(config_api.router, prefix="/api")
-    app.include_router(usage.router, prefix="/api")
-    app.include_router(agents.router, prefix="/api")
-    app.include_router(scheduler_api.router, prefix="/api")
+    app.include_router(chat.router, prefix="/api/v1")
+    app.include_router(sessions.router, prefix="/api/v1")
+    app.include_router(files.router, prefix="/api/v1")
+    app.include_router(tokens.router, prefix="/api/v1")
+    app.include_router(compress.router, prefix="/api/v1")
+    app.include_router(config_api.router, prefix="/api/v1")
+    app.include_router(usage.router, prefix="/api/v1")
+    app.include_router(agents.router, prefix="/api/v1")
+    app.include_router(scheduler_api.router, prefix="/api/v1")
 
     return {
         "app": app,

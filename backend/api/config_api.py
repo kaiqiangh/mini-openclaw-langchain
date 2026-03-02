@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -63,37 +63,58 @@ def _require_base_dir() -> Path:
     return _BASE_DIR
 
 
-def _persist_env_flag(base_dir: Path, key: str, enabled: bool) -> None:
-    env_path = base_dir / ".env"
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    value = "true" if enabled else "false"
-    line = f"{key}={value}"
-    text = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
-    key_pattern = re.compile(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=")
+def _runtime_state_path(base_dir: Path) -> Path:
+    return base_dir / "storage" / "runtime_state.json"
 
-    updated_lines: list[str] = []
-    wrote_key = False
-    for raw_line in text.splitlines():
-        stripped = raw_line.lstrip()
-        if stripped.startswith("#") or not key_pattern.match(raw_line):
-            updated_lines.append(raw_line)
-            continue
-        if not wrote_key:
-            updated_lines.append(line)
-            wrote_key = True
 
-    if not wrote_key:
-        if updated_lines and updated_lines[-1].strip():
-            updated_lines.append(line)
-        elif not updated_lines:
-            updated_lines = [line]
-        else:
-            updated_lines[-1] = line
+def _load_runtime_state(base_dir: Path) -> dict[str, Any]:
+    path = _runtime_state_path(base_dir)
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
-    updated = "\n".join(updated_lines)
-    if updated and not updated.endswith("\n"):
-        updated += "\n"
-    env_path.write_text(updated, encoding="utf-8")
+
+def _save_runtime_state(base_dir: Path, payload: dict[str, Any]) -> None:
+    path = _runtime_state_path(base_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _read_tracing_override(base_dir: Path) -> bool | None:
+    payload = _load_runtime_state(base_dir)
+    observability = payload.get("observability", {})
+    if not isinstance(observability, dict):
+        return None
+    raw = observability.get("langsmith_tracing_enabled")
+    if isinstance(raw, bool):
+        return raw
+    return None
+
+
+def _write_tracing_override(base_dir: Path, enabled: bool) -> None:
+    payload = _load_runtime_state(base_dir)
+    observability = payload.get("observability", {})
+    if not isinstance(observability, dict):
+        observability = {}
+    observability["langsmith_tracing_enabled"] = bool(enabled)
+    payload["observability"] = observability
+    _save_runtime_state(base_dir, payload)
+
+
+def apply_persisted_tracing_state(base_dir: Path) -> None:
+    persisted = _read_tracing_override(base_dir)
+    if persisted is None:
+        return
+    os.environ["OBS_TRACING_ENABLED"] = "true" if persisted else "false"
 
 
 @router.get("/config/rag-mode")
@@ -216,6 +237,8 @@ async def set_runtime_config(
 
 @router.get("/config/tracing")
 async def get_tracing_config() -> dict[str, Any]:
+    base_dir = _require_base_dir()
+    apply_persisted_tracing_state(base_dir)
     return {
         "data": {
             "provider": "langsmith",
@@ -230,7 +253,7 @@ async def set_tracing_config(request: TracingConfigRequest) -> dict[str, Any]:
     base_dir = _require_base_dir()
     enabled = bool(request.enabled)
     os.environ["OBS_TRACING_ENABLED"] = "true" if enabled else "false"
-    _persist_env_flag(base_dir, "OBS_TRACING_ENABLED", enabled)
+    _write_tracing_override(base_dir, enabled)
     return {
         "data": {
             "provider": "langsmith",

@@ -38,13 +38,13 @@ async def test_stream_continues_after_client_disconnect(api_app):
 
     transport = ASGITransport(app=api_app["app"])
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        created = await client.post("/api/sessions", json={})
+        created = await client.post("/api/v1/sessions", json={})
         created.raise_for_status()
         session_id = created.json()["data"]["session_id"]
 
         async with client.stream(
             "POST",
-            "/api/chat",
+            "/api/v1/chat",
             json={"message": "hello", "session_id": session_id, "stream": True},
         ) as response:
             response.raise_for_status()
@@ -54,7 +54,7 @@ async def test_stream_continues_after_client_disconnect(api_app):
         # Disconnecting the stream should not stop the backend run.
         await asyncio.sleep(1.0)
         final_history = (
-            await client.get(f"/api/sessions/{session_id}/history")
+            await client.get(f"/api/v1/sessions/{session_id}/history")
         ).json()["data"]["messages"]
 
     assert any(

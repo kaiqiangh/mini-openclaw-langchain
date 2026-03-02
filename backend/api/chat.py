@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from api.errors import ApiError
+from control import LocalCoordinator
 from graph.agent import AgentManager
 
 router = APIRouter(tags=["chat"])
@@ -39,9 +41,11 @@ class _StreamRunState:
     current_content: str = ""
     current_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     last_live_sync_ms: int = 0
+    lock_owner: str = ""
 
 
 _agent_manager: AgentManager | None = None
+_coordinator: LocalCoordinator | None = None
 _active_runs: dict[str, _StreamRunState] = {}
 _active_runs_lock = asyncio.Lock()
 
@@ -49,6 +53,11 @@ _active_runs_lock = asyncio.Lock()
 def set_agent_manager(agent_manager: AgentManager) -> None:
     global _agent_manager
     _agent_manager = agent_manager
+
+
+def set_coordinator(coordinator: LocalCoordinator) -> None:
+    global _coordinator
+    _coordinator = coordinator
 
 
 def _require_agent_manager() -> AgentManager:
@@ -158,6 +167,8 @@ async def _close_run(state: _StreamRunState) -> None:
         current = _active_runs.get(state.key)
         if current is state:
             _active_runs.pop(state.key, None)
+    if _coordinator is not None and state.lock_owner:
+        _coordinator.release_stream_lock(state.key, state.lock_owner)
 
 
 async def _persist_final_segments(state: _StreamRunState, runtime: Any) -> None:
@@ -353,6 +364,7 @@ async def chat(request: ChatRequest) -> Any:
 
     key = _run_key(request.agent_id, request.session_id)
     start_task = False
+    lock_owner = ""
 
     async with _active_runs_lock:
         state = _active_runs.get(key)
@@ -361,12 +373,24 @@ async def chat(request: ChatRequest) -> Any:
             state = None
 
         if state is None:
+            if _coordinator is not None:
+                lock_owner = str(uuid.uuid4())
+                acquired = _coordinator.acquire_stream_lock(
+                    key, lock_owner, ttl_seconds=300
+                )
+                if not acquired:
+                    raise ApiError(
+                        status_code=409,
+                        code="session_busy",
+                        message="A streaming run is already active for this session.",
+                    )
             state = _StreamRunState(
                 key=key,
                 agent_id=request.agent_id,
                 session_id=request.session_id,
                 message=request.message,
                 is_first_turn=is_first_turn,
+                lock_owner=lock_owner,
             )
             _active_runs[key] = state
             start_task = True
