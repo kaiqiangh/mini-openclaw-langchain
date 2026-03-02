@@ -16,7 +16,7 @@ Next.js App Router frontend for Mini-OpenClaw.
 - Mobile workspace: tab-switched panels.
 - Inspector modes:
   - workspace file editing
-  - per-agent runtime config editing (`/api/config/runtime`)
+  - per-agent runtime config editing (`/api/v1/config/runtime`)
 - Chat rendering:
   - markdown + GFM
   - sanitization
@@ -59,7 +59,11 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 - config: rag mode + runtime config
 - scheduler: cron jobs, runs/failures, heartbeat config/runs
 
-All agent-scoped calls append `agent_id`.
+All agent-scoped calls append `agent_id`, and all API calls target `/api/v1/*`.
+Auth token source order:
+
+- `NEXT_PUBLIC_APP_ADMIN_TOKEN`
+- `localStorage["mini-openclaw:admin-token"]`
 
 ## Local Development
 
@@ -71,7 +75,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-Backend default target is `http://<host>:8002`.
+API client default is relative (`/api/v1/*`), so no hardcoded backend host/port is required.
+Optional override: `NEXT_PUBLIC_API_BASE_URL`.
 
 ## Test + Build Flow
 

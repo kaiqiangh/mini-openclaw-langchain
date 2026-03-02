@@ -24,8 +24,8 @@ flowchart LR
   WS --> STORE["storage/retrieval.db, usage, audits"]
   API --> SCH["Scheduler (cron + heartbeat)"]
   AM --> TOOLS["ToolRunner + policy gates"]
-  AM --> LLM["DeepSeek-compatible chat model"]
-  AM --> EMB["Embeddings (OpenAI/Google)"]
+  AM --> LLM["Provider profiles (OpenAI-compatible/Azure Foundry)"]
+  AM --> EMB["Embeddings (OpenAI-compatible/Google)"]
 ```
 
 ## Feature Matrix
@@ -38,11 +38,12 @@ flowchart LR
 | Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                  |
 | Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.               |
 | Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration. |
-| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/config/runtime`.           |
+| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/config/runtime`.        |
 | Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                  |
 
 ## Security Model
 
+- `/api/v1/*` routes are protected by `Authorization: Bearer <APP_ADMIN_TOKEN>` (except health/readiness).
 - File APIs are workspace-root scoped and path-guarded.
 - Tool policy gates autonomous triggers (`heartbeat`, `cron`) with explicit allowlists.
 - `fetch_url` defaults:
@@ -67,8 +68,13 @@ cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 cp .env.example .env
-uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8002
+uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000
 ```
+
+Set at least:
+
+- `APP_ADMIN_TOKEN`
+- one key for your active `DEFAULT_LLM_PROFILE` (for example `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, or `AZURE_FOUNDRY_API_KEY`)
 
 ### 2) Frontend
 
@@ -78,7 +84,10 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Optional (recommended for local auth): set `NEXT_PUBLIC_APP_ADMIN_TOKEN` in `frontend/.env.local`.
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) when using `./oml start` (backend single-origin proxy enabled).
+Direct frontend dev server remains available at [http://localhost:3000](http://localhost:3000).
 
 ## Repo-local CLI (`./oml`)
 
@@ -114,7 +123,7 @@ Use the repo-local command runner to manage backend/frontend lifecycle:
 - Log files: `.oml/log/backend.log`, `.oml/log/frontend.log`
 - Optional local overrides: `.oml/config.env`
   - `OML_BACKEND_HOST` (default `127.0.0.1`)
-  - `OML_BACKEND_PORT` (default `8002`)
+  - `OML_BACKEND_PORT` (default `8000`)
   - `OML_FRONTEND_HOST` (default `127.0.0.1`)
   - `OML_FRONTEND_PORT` (default `3000`)
   - `OML_HEALTH_TIMEOUT_SECONDS` (default `30`)

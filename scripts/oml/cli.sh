@@ -46,7 +46,7 @@ load_config_env() {
   local env_health_timeout="${OML_HEALTH_TIMEOUT_SECONDS-}"
 
   OML_BACKEND_HOST="127.0.0.1"
-  OML_BACKEND_PORT="8002"
+  OML_BACKEND_PORT="8000"
   OML_FRONTEND_HOST="127.0.0.1"
   OML_FRONTEND_PORT="3000"
   OML_HEALTH_TIMEOUT_SECONDS="30"
@@ -119,7 +119,7 @@ service_url() {
   host="$(service_host "$service")"
   port="$(service_port "$service")"
   if [ "$service" = "backend" ]; then
-    printf 'http://%s:%s/api/health' "$host" "$port"
+    printf 'http://%s:%s/api/v1/health' "$host" "$port"
     return
   fi
   printf 'http://%s:%s' "$host" "$port"
@@ -254,7 +254,7 @@ backend_command() {
     printf '%s' "$OML_BACKEND_CMD"
     return
   fi
-  printf '%s' "cd '$REPO_ROOT/backend' && exec uv run --python .venv/bin/python uvicorn app:app --host '$OML_BACKEND_HOST' --port '$OML_BACKEND_PORT'"
+  printf '%s' "cd '$REPO_ROOT/backend' && APP_ENABLE_FRONTEND_PROXY='true' APP_FRONTEND_PROXY_URL='http://$OML_FRONTEND_HOST:$OML_FRONTEND_PORT' exec uv run --python .venv/bin/python uvicorn app:app --host '$OML_BACKEND_HOST' --port '$OML_BACKEND_PORT'"
 }
 
 frontend_command() {
@@ -618,7 +618,7 @@ cmd_logs() {
 }
 
 cmd_ports() {
-  printf 'backend_url: http://%s:%s/api/health\n' "$OML_BACKEND_HOST" "$OML_BACKEND_PORT"
+  printf 'backend_url: http://%s:%s/api/v1/health\n' "$OML_BACKEND_HOST" "$OML_BACKEND_PORT"
   printf 'frontend_url: http://%s:%s\n' "$OML_FRONTEND_HOST" "$OML_FRONTEND_PORT"
 }
 

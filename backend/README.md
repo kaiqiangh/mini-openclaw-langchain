@@ -15,7 +15,7 @@ FastAPI backend for Mini-OpenClaw LangChain.
 
 ```mermaid
 flowchart TB
-  API["FastAPI /api/*"] --> AM["AgentManager"]
+  API["FastAPI /api/v1/*"] --> AM["AgentManager"]
   AM --> PROMPT["PromptBuilder"]
   AM --> TOOLS["ToolRunner + policy"]
   AM --> RETR["MemoryIndexer + knowledge tool"]
@@ -40,6 +40,14 @@ flowchart TB
 | `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.    |
 | `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
 | `runtime.cron.*`                              | Cron polling, retry/backoff, retention.     |
+| `runtime.llm_runtime.profile`                 | Active LLM profile name override.            |
+
+## LLM Profiles
+
+- Provider resolution is profile-driven (`llm_profiles` + `default_llm_profile`).
+- Driver model is `openai_compatible` for OpenAI-compatible providers.
+- Azure AI Foundry is supported through the `azure_foundry` profile template.
+- Usage accounting prefers explicit profile provider IDs.
 
 ## LLM Model Selection (Tool Loop)
 
@@ -55,37 +63,38 @@ flowchart TB
 
 ### Chat / Sessions / Agents
 
-- `POST /api/chat`
-- `GET|POST /api/sessions`
-- `PUT|DELETE /api/sessions/{session_id}`
-- `POST /api/sessions/{session_id}/archive`
-- `POST /api/sessions/{session_id}/restore`
-- `GET|POST|DELETE /api/agents`
+- `POST /api/v1/chat`
+- `GET|POST /api/v1/sessions`
+- `PUT|DELETE /api/v1/sessions/{session_id}`
+- `POST /api/v1/sessions/{session_id}/archive`
+- `POST /api/v1/sessions/{session_id}/restore`
+- `GET|POST|DELETE /api/v1/agents`
 
 ### Files / Tokens / Usage
 
-- `GET|POST /api/files`
-- `GET /api/files/index`
-- `GET /api/skills`
-- `GET /api/tokens/session/{session_id}`
-- `POST /api/tokens/files`
-- `GET /api/usage/summary`
-- `GET /api/usage/records`
+- `GET|POST /api/v1/files`
+- `GET /api/v1/files/index`
+- `GET /api/v1/skills`
+- `GET /api/v1/tokens/session/{session_id}`
+- `POST /api/v1/tokens/files`
+- `GET /api/v1/usage/summary`
+- `GET /api/v1/usage/records`
 
 ### Config
 
-- `GET|PUT /api/config/rag-mode`
-- `GET|PUT /api/config/runtime` (validated, atomic write)
+- `GET|PUT /api/v1/config/rag-mode`
+- `GET|PUT /api/v1/config/runtime` (validated, atomic write)
+- `GET|PUT /api/v1/config/tracing` (persisted in `storage/runtime_state.json`)
 
 ### Scheduler
 
-- `GET|POST /api/scheduler/cron/jobs`
-- `PUT|DELETE /api/scheduler/cron/jobs/{job_id}`
-- `POST /api/scheduler/cron/jobs/{job_id}/run`
-- `GET /api/scheduler/cron/runs`
-- `GET /api/scheduler/cron/failures`
-- `GET|PUT /api/scheduler/heartbeat`
-- `GET /api/scheduler/heartbeat/runs`
+- `GET|POST /api/v1/scheduler/cron/jobs`
+- `PUT|DELETE /api/v1/scheduler/cron/jobs/{job_id}`
+- `POST /api/v1/scheduler/cron/jobs/{job_id}/run`
+- `GET /api/v1/scheduler/cron/runs`
+- `GET /api/v1/scheduler/cron/failures`
+- `GET|PUT /api/v1/scheduler/heartbeat`
+- `GET /api/v1/scheduler/heartbeat/runs`
 
 ## Threat Model (Current)
 
@@ -94,6 +103,7 @@ flowchart TB
 - Terminal command deny-list plus environment secret scrubbing.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
+  - admin bearer token gate (`APP_ADMIN_TOKEN`)
   - trusted hosts
   - CORS restrictions
   - rate limiting
@@ -128,13 +138,18 @@ cd backend
 uv venv --python=python3.13.7
 uv pip install -r requirements.txt
 cp .env.example .env
-uv run uvicorn app:app --host 127.0.0.1 --port 8002
+uv run uvicorn app:app --host 127.0.0.1 --port 8000
 ```
+
+Minimum required env:
+
+- `APP_ADMIN_TOKEN`
+- one API key for the active LLM profile (for example `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, or `AZURE_FOUNDRY_API_KEY`)
 
 Health check:
 
 ```bash
-curl http://127.0.0.1:8002/api/health
+curl http://127.0.0.1:8000/api/v1/health
 ```
 
 ## Tests

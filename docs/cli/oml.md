@@ -41,7 +41,7 @@ Starts services in detached mode.
 Defaults:
 
 - target: `all`
-- backend URL: `http://127.0.0.1:8002`
+- backend URL: `http://127.0.0.1:8000`
 - frontend URL: `http://127.0.0.1:3000`
 
 Behavior:
@@ -50,6 +50,7 @@ Behavior:
 - writes PID files to `.oml/run/*.pid`
 - writes logs to `.oml/log/*.log`
 - health-checks services before returning success
+- backend starts with frontend proxy enabled (`APP_ENABLE_FRONTEND_PROXY=true`) so the browser can use `http://127.0.0.1:8000`
 
 ### `./oml stop [all|backend|frontend]`
 
@@ -124,7 +125,7 @@ Supported keys:
 
 ```bash
 OML_BACKEND_HOST=127.0.0.1
-OML_BACKEND_PORT=8002
+OML_BACKEND_PORT=8000
 OML_FRONTEND_HOST=127.0.0.1
 OML_FRONTEND_PORT=3000
 OML_HEALTH_TIMEOUT_SECONDS=30
