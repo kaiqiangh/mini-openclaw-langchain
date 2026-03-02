@@ -77,11 +77,10 @@ class MemoryIndexer:
     ) -> tuple[list[list[float]], str, str, str]:
         config = load_config(self.config_base_dir)
         provider = config.secrets.embedding_provider.value
-        model = (
-            config.secrets.embedding_model
-            if provider == "openai"
-            else config.secrets.google_embedding_model
-        )
+        if provider in {"openai", "openai_compatible"}:
+            model = config.secrets.embedding_model
+        else:
+            model = config.secrets.google_embedding_model
 
         embeddings: list[list[float]] = []
         embedding_error = ""

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.request import Request, urlopen
 
-from config import EmbeddingProvider, SecretConfig
+from config import EmbeddingProvider, SecretConfig, resolve_header_templates
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -67,6 +68,45 @@ class EmbeddingClient:
                 "Invalid embeddings response format from OpenAI-compatible endpoint"
             )
 
+        rows_sorted = sorted(
+            [row for row in rows if isinstance(row, dict)],
+            key=lambda row: int(row.get("index", 0)),
+        )
+        vectors = [
+            self._to_float_vector(row.get("embedding", [])) for row in rows_sorted
+        ]
+        if len(vectors) != len(texts):
+            raise RuntimeError("Embedding response size mismatch")
+        return vectors
+
+    def _embed_openai_compatible(self, texts: list[str]) -> list[list[float]]:
+        api_key_env = self.secrets.embedding_api_key_env.strip() or "OPENAI_API_KEY"
+        api_key = os.getenv(api_key_env, "")
+        if not api_key:
+            raise RuntimeError(
+                f"{api_key_env} is required for openai_compatible embedding provider"
+            )
+        payload = {
+            "model": self.secrets.embedding_model,
+            "input": texts,
+        }
+        headers = resolve_header_templates(dict(self.secrets.embedding_default_headers))
+        # Keep bearer auth by default, but preserve explicit provider auth headers.
+        normalized_header_keys = {key.lower() for key in headers}
+        if (
+            "authorization" not in normalized_header_keys
+            and "api-key" not in normalized_header_keys
+            and "x-api-key" not in normalized_header_keys
+        ):
+            headers["Authorization"] = f"Bearer {api_key}"
+        headers.setdefault("Content-Type", "application/json")
+        url = f"{self.secrets.embedding_base_url.rstrip('/')}/embeddings"
+        response = self._post_json(url, payload, headers)
+        rows = response.get("data", [])
+        if not isinstance(rows, list):
+            raise RuntimeError(
+                "Invalid embeddings response format from openai-compatible endpoint"
+            )
         rows_sorted = sorted(
             [row for row in rows if isinstance(row, dict)],
             key=lambda row: int(row.get("index", 0)),
@@ -140,6 +180,8 @@ class EmbeddingClient:
         provider = self.secrets.embedding_provider
         if provider == EmbeddingProvider.OPENAI:
             return self._embed_openai(texts)
+        if provider == EmbeddingProvider.OPENAI_COMPATIBLE:
+            return self._embed_openai_compatible(texts)
         if provider == EmbeddingProvider.GOOGLE_AI_STUDIO:
             return self._embed_google(texts)
         raise RuntimeError(f"Unsupported embedding provider: {provider}")

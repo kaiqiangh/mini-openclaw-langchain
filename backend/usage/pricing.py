@@ -249,6 +249,7 @@ _PRICING_TABLE: dict[str, tuple[ModelPricing, ...]] = {
             source="deepseek-pricing-2026-02-28",
         ),
     ),
+    "azure_foundry": (),
 }
 
 _PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -256,6 +257,7 @@ _PROVIDER_PREFIXES: dict[str, tuple[str, ...]] = {
     "anthropic": ("anthropic", "claude-"),
     "google": ("google", "gemini-"),
     "deepseek": ("deepseek", "deepseek-"),
+    "azure_foundry": ("azure_foundry", "azure-", "gpt-4o-azure"),
 }
 
 
@@ -304,6 +306,8 @@ def infer_provider(
         return "anthropic"
     if "google" in normalized_url or "vertex" in normalized_url:
         return "google"
+    if "azure" in normalized_url or "foundry" in normalized_url:
+        return "azure_foundry"
     if "openai" in normalized_url:
         return "openai"
     return "unknown"

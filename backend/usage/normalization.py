@@ -120,16 +120,17 @@ def extract_usage_from_message(
     message: Any,
     fallback_model: str,
     fallback_base_url: str | None = None,
+    explicit_provider: str | None = None,
 ) -> dict[str, Any]:
     usage_metadata = _as_dict(getattr(message, "usage_metadata", None))
     response_metadata = _as_dict(getattr(message, "response_metadata", None))
 
     model, model_source = _extract_model(response_metadata, fallback_model)
-    explicit_provider = _extract_explicit_provider(response_metadata)
+    provider_override = explicit_provider or _extract_explicit_provider(response_metadata)
     provider = infer_provider(
         model,
         base_url=fallback_base_url,
-        explicit_provider=explicit_provider,
+        explicit_provider=provider_override,
     )
 
     input_tokens = 0

@@ -17,9 +17,12 @@ from pydantic import SecretStr
 
 from config import (
     AppConfig,
+    LLMProfile,
     RuntimeConfig,
     load_config,
     load_effective_runtime_config,
+    resolve_active_llm_profile,
+    resolve_header_templates,
     runtime_config_digest,
 )
 from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
@@ -51,7 +54,10 @@ class AgentRuntime:
     global_config_mtime_ns: int
     agent_config_mtime_ns: int
     llm: ChatOpenAI | None = None
-    llm_signature: tuple[float, int] | None = None
+    llm_signature: tuple[float, int, str, str, str, str, str] | None = None
+    llm_profile_name: str = ""
+    llm_provider_id: str = ""
+    llm_base_url: str = ""
 
 
 class AgentManager:
@@ -87,15 +93,62 @@ class AgentManager:
         self._provision_retrieval_storage_for_all_agents()
 
     @staticmethod
-    def _build_llm(config: AppConfig, runtime: RuntimeConfig) -> ChatOpenAI:
+    def _profile_api_key(profile: LLMProfile) -> str:
+        env_key = profile.api_key_env.strip()
+        if not env_key:
+            return ""
+        return (os.getenv(env_key, "") or "").strip()
+
+    @staticmethod
+    def _build_llm_kwargs(
+        *,
+        profile: LLMProfile,
+        runtime: RuntimeConfig,
+        model_override: str | None = None,
+    ) -> dict[str, Any]:
+        model = (model_override or profile.model or "").strip()
+        if not model:
+            raise RuntimeError(
+                f"LLM profile '{profile.profile_name}' has no model configured"
+            )
+        api_key = AgentManager._profile_api_key(profile)
+        if not api_key:
+            missing_env = profile.api_key_env.strip() or "API_KEY"
+            raise RuntimeError(f"{missing_env} is not configured")
+
+        effective_timeout = max(
+            5, int(runtime.llm_runtime.timeout_seconds or profile.timeout_seconds or 60)
+        )
+        headers = resolve_header_templates(dict(profile.default_headers))
+        # Keep bearer auth by default, but preserve explicit provider auth headers.
+        normalized_header_keys = {key.lower() for key in headers}
+        if (
+            "authorization" not in normalized_header_keys
+            and "api-key" not in normalized_header_keys
+            and "x-api-key" not in normalized_header_keys
+        ):
+            headers["Authorization"] = f"Bearer {api_key}"
+        headers.setdefault("Content-Type", "application/json")
+
         llm_kwargs: dict[str, Any] = {
-            "model": config.secrets.deepseek_model,
-            "api_key": SecretStr(config.secrets.deepseek_api_key),
-            "base_url": config.secrets.deepseek_base_url,
+            "model": model,
+            "api_key": SecretStr(api_key),
             "temperature": runtime.llm_runtime.temperature,
-            "timeout": runtime.llm_runtime.timeout_seconds,
+            "timeout": effective_timeout,
         }
-        return ChatOpenAI(**llm_kwargs)
+        if profile.base_url.strip():
+            llm_kwargs["base_url"] = profile.base_url.strip()
+        if headers:
+            llm_kwargs["default_headers"] = headers
+        return llm_kwargs
+
+    @staticmethod
+    def _resolve_profile(config: AppConfig, runtime: RuntimeConfig) -> LLMProfile:
+        return resolve_active_llm_profile(
+            runtime=runtime,
+            llm_profiles=config.llm_profiles,
+            default_llm_profile=config.default_llm_profile,
+        )
 
     @staticmethod
     def _parse_tool_loop_overrides(raw_value: str) -> dict[str, str]:
@@ -433,14 +486,26 @@ class AgentManager:
     def _get_runtime_llm(self, runtime: AgentRuntime) -> ChatOpenAI:
         if self.config is None:
             raise RuntimeError("AgentManager is not initialized")
+        profile = self._resolve_profile(self.config, runtime.runtime_config)
+        api_key = self._profile_api_key(profile)
         signature = (
             runtime.runtime_config.llm_runtime.temperature,
             runtime.runtime_config.llm_runtime.timeout_seconds,
+            profile.profile_name,
+            profile.provider_id,
+            profile.model,
+            profile.base_url,
+            api_key,
         )
         if runtime.llm is not None and runtime.llm_signature == signature:
             return runtime.llm
-        runtime.llm = self._build_llm(self.config, runtime.runtime_config)
+        runtime.llm = ChatOpenAI(
+            **self._build_llm_kwargs(profile=profile, runtime=runtime.runtime_config)
+        )
         runtime.llm_signature = signature
+        runtime.llm_profile_name = profile.profile_name
+        runtime.llm_provider_id = profile.provider_id
+        runtime.llm_base_url = profile.base_url
         return runtime.llm
 
     def get_runtime(self, agent_id: str = "default") -> AgentRuntime:
@@ -546,6 +611,7 @@ class AgentManager:
         self,
         *,
         llm: ChatOpenAI,
+        llm_profile: LLMProfile,
         runtime: RuntimeConfig,
         system_prompt: str,
         trigger_type: str,
@@ -555,9 +621,8 @@ class AgentManager:
         runtime_audit_store: AuditStore,
         response_format: Any | None = None,
     ) -> tuple[Any, str]:
-        if self.base_dir is None or self.config is None:
+        if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
-        config = self.config
 
         mini_tools = get_all_tools(
             runtime_root,
@@ -582,7 +647,7 @@ class AgentManager:
                 session_id=session_id,
             ),
         )
-        configured_model = str(config.secrets.deepseek_model)
+        configured_model = str(llm_profile.model)
         selected_model = self._resolve_tool_loop_model(
             configured_model=configured_model,
             has_tools=bool(langchain_tools),
@@ -590,11 +655,11 @@ class AgentManager:
         active_llm = llm
         if selected_model != configured_model:
             active_llm = ChatOpenAI(
-                model=selected_model,
-                api_key=SecretStr(config.secrets.deepseek_api_key),
-                base_url=config.secrets.deepseek_base_url,
-                temperature=runtime.llm_runtime.temperature,
-                timeout=runtime.llm_runtime.timeout_seconds,
+                **self._build_llm_kwargs(
+                    profile=llm_profile,
+                    runtime=runtime,
+                    model_override=selected_model,
+                )
             )
 
         if response_format is None:
@@ -838,12 +903,17 @@ class AgentManager:
         messages: list[Any],
         source_prefix: str,
         fallback_model: str | None = None,
+        fallback_base_url: str | None = None,
+        fallback_provider: str | None = None,
         source_offset: int = 0,
     ) -> bool:
         changed = False
         for index, message in enumerate(messages):
             candidate = self._extract_usage_from_message(
-                message, fallback_model=fallback_model
+                message,
+                fallback_model=fallback_model,
+                fallback_base_url=fallback_base_url,
+                fallback_provider=fallback_provider,
             )
             source_id = str(getattr(message, "id", "")).strip()
             if source_id:
@@ -874,17 +944,23 @@ class AgentManager:
         return "|".join(parts)
 
     def _extract_usage_from_message(
-        self, message: Any, fallback_model: str | None = None
+        self,
+        message: Any,
+        fallback_model: str | None = None,
+        fallback_base_url: str | None = None,
+        fallback_provider: str | None = None,
     ) -> dict[str, Any]:
         if self.config is None:
             return {}
-        model_fallback = (fallback_model or self.config.secrets.deepseek_model).strip()
+        model_fallback = (fallback_model or "").strip()
         if not model_fallback:
-            model_fallback = self.config.secrets.deepseek_model
+            default_profile = self.config.llm_profiles.get(self.config.default_llm_profile)
+            model_fallback = default_profile.model if default_profile is not None else ""
         return extract_usage_from_message(
             message=message,
             fallback_model=model_fallback,
-            fallback_base_url=self.config.secrets.deepseek_base_url,
+            fallback_base_url=fallback_base_url or "",
+            explicit_provider=fallback_provider,
         )
 
     def _record_usage(
@@ -1058,6 +1134,9 @@ class AgentManager:
         runtime_state = self.get_runtime(agent_id)
         effective_runtime = runtime_state.runtime_config
         llm = self._get_runtime_llm(runtime_state)
+        if self.config is None:
+            raise RuntimeError("AgentManager is not initialized")
+        llm_profile = self._resolve_profile(self.config, effective_runtime)
 
         rag_context = None
         if effective_runtime.rag_mode:
@@ -1091,6 +1170,7 @@ class AgentManager:
         run_id = str(uuid.uuid4())
         agent, active_model = self._build_agent(
             llm=llm,
+            llm_profile=llm_profile,
             runtime=effective_runtime,
             system_prompt=system_prompt,
             trigger_type=trigger_type,
@@ -1118,7 +1198,8 @@ class AgentManager:
         usage_payload: dict[str, Any] | None = None
         default_provider = infer_provider(
             active_model,
-            base_url=self.config.secrets.deepseek_base_url,
+            base_url=llm_profile.base_url,
+            explicit_provider=llm_profile.provider_id,
         )
         usage_state: dict[str, Any] = {
             "provider": default_provider,
@@ -1145,6 +1226,8 @@ class AgentManager:
             messages=captured_messages,
             source_prefix=f"llm_end:{run_id}",
             fallback_model=active_model,
+            fallback_base_url=llm_profile.base_url,
+            fallback_provider=llm_profile.provider_id,
         )
 
         output_messages = result.get("messages", [])
@@ -1158,6 +1241,8 @@ class AgentManager:
                 messages=output_messages,
                 source_prefix=f"result:{run_id}",
                 fallback_model=active_model,
+                fallback_base_url=llm_profile.base_url,
+                fallback_provider=llm_profile.provider_id,
             )
 
         if self._as_int(usage_state.get("total_tokens", 0)) > 0:
@@ -1195,6 +1280,7 @@ class AgentManager:
         runtime_state = self.get_runtime(agent_id)
         effective_runtime = runtime_state.runtime_config
         llm = self._get_runtime_llm(runtime_state)
+        llm_profile = self._resolve_profile(self.config, effective_runtime)
 
         rag_mode = effective_runtime.rag_mode
         rag_context = None
@@ -1224,12 +1310,13 @@ class AgentManager:
         emitted_reasoning: set[str] = set()
         emitted_agent_update = False
         default_provider = infer_provider(
-            self.config.secrets.deepseek_model,
-            base_url=self.config.secrets.deepseek_base_url,
+            llm_profile.model,
+            base_url=llm_profile.base_url,
+            explicit_provider=llm_profile.provider_id,
         )
         usage_state: dict[str, Any] = {
             "provider": default_provider,
-            "model": self.config.secrets.deepseek_model,
+            "model": llm_profile.model,
             "model_source": "fallback_model",
             "usage_source": "unknown",
             "input_tokens": 0,
@@ -1255,6 +1342,7 @@ class AgentManager:
                 }
                 agent, active_model = self._build_agent(
                     llm=llm,
+                    llm_profile=llm_profile,
                     runtime=effective_runtime,
                     system_prompt=system_prompt,
                     trigger_type=trigger_type,
@@ -1274,7 +1362,8 @@ class AgentManager:
                 usage_capture_offset = 0
                 usage_state["provider"] = infer_provider(
                     active_model,
-                    base_url=self.config.secrets.deepseek_base_url,
+                    base_url=llm_profile.base_url,
+                    explicit_provider=llm_profile.provider_id,
                 )
                 usage_state["model"] = active_model
 
@@ -1439,6 +1528,8 @@ class AgentManager:
                             messages=captured_messages[usage_capture_offset:],
                             source_prefix=f"llm_end:{run_id}",
                             fallback_model=active_model,
+                            fallback_base_url=llm_profile.base_url,
+                            fallback_provider=llm_profile.provider_id,
                             source_offset=usage_capture_offset,
                         )
                         usage_capture_offset = len(captured_messages)
@@ -1506,6 +1597,8 @@ class AgentManager:
                         messages=captured_messages[usage_capture_offset:],
                         source_prefix=f"llm_end:{run_id}",
                         fallback_model=active_model,
+                        fallback_base_url=llm_profile.base_url,
+                        fallback_provider=llm_profile.provider_id,
                         source_offset=usage_capture_offset,
                     )
                     usage_capture_offset = len(captured_messages)

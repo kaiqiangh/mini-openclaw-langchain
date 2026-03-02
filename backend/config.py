@@ -21,7 +21,12 @@ class InjectionMode(str, Enum):
 
 class EmbeddingProvider(str, Enum):
     OPENAI = "openai"
+    OPENAI_COMPATIBLE = "openai_compatible"
     GOOGLE_AI_STUDIO = "google_ai_studio"
+
+
+class LLMDriver(str, Enum):
+    OPENAI_COMPATIBLE = "openai_compatible"
 
 
 @dataclass
@@ -47,6 +52,19 @@ class AgentExecutionConfig:
 @dataclass
 class LlmRuntimeConfig:
     temperature: float = 0.2
+    timeout_seconds: int = 60
+    profile: str = ""
+
+
+@dataclass
+class LLMProfile:
+    profile_name: str
+    provider_id: str
+    driver: LLMDriver = LLMDriver.OPENAI_COMPATIBLE
+    base_url: str = ""
+    model: str = ""
+    api_key_env: str = ""
+    default_headers: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
 
 
@@ -172,9 +190,13 @@ class SecretConfig:
     embedding_provider: EmbeddingProvider
     openai_api_key: str
     openai_base_url: str
+    openai_model: str
     embedding_model: str
     google_api_key: str
     google_embedding_model: str
+    embedding_api_key_env: str
+    embedding_base_url: str
+    embedding_default_headers: dict[str, str]
 
 
 @dataclass
@@ -182,6 +204,8 @@ class AppConfig:
     base_dir: Path
     runtime: RuntimeConfig
     secrets: SecretConfig
+    llm_profiles: dict[str, LLMProfile]
+    default_llm_profile: str
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -221,6 +245,7 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         "llm_runtime": {
             "temperature": runtime.llm_runtime.temperature,
             "timeout_seconds": runtime.llm_runtime.timeout_seconds,
+            "profile": runtime.llm_runtime.profile,
         },
         "retrieval": {
             "memory": {
@@ -341,6 +366,7 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         llm_runtime=LlmRuntimeConfig(
             temperature=float(llm_runtime.get("temperature", 0.2)),
             timeout_seconds=max(5, int(llm_runtime.get("timeout_seconds", 60))),
+            profile=str(llm_runtime.get("profile", "")).strip(),
         ),
         retrieval=RetrievalConfig(
             memory=RetrievalDomainConfig(
@@ -482,6 +508,162 @@ def runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     return _runtime_from_payload(payload)
 
 
+def _parse_headers(value: Any) -> dict[str, str]:
+    if isinstance(value, dict):
+        result: dict[str, str] = {}
+        for key, item in value.items():
+            header_name = str(key).strip()
+            header_value = str(item).strip()
+            if header_name and header_value:
+                result[header_name] = header_value
+        return result
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        if isinstance(parsed, dict):
+            return _parse_headers(parsed)
+    return {}
+
+
+def resolve_header_templates(headers: dict[str, str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for key, value in headers.items():
+        candidate = str(value)
+        if candidate.startswith("${ENV:") and candidate.endswith("}"):
+            env_key = candidate[len("${ENV:") : -1].strip()
+            resolved_value = os.getenv(env_key, "")
+            if resolved_value:
+                resolved[key] = resolved_value
+            continue
+        resolved[key] = candidate
+    return resolved
+
+
+def _coerce_llm_profile(name: str, payload: dict[str, Any]) -> LLMProfile:
+    driver_raw = str(payload.get("driver", LLMDriver.OPENAI_COMPATIBLE.value)).strip()
+    try:
+        driver = LLMDriver(driver_raw)
+    except ValueError:
+        driver = LLMDriver.OPENAI_COMPATIBLE
+    return LLMProfile(
+        profile_name=name,
+        provider_id=str(payload.get("provider_id", "unknown")).strip().lower()
+        or "unknown",
+        driver=driver,
+        base_url=str(payload.get("base_url", "")).strip(),
+        model=str(payload.get("model", "")).strip(),
+        api_key_env=str(payload.get("api_key_env", "")).strip(),
+        default_headers=_parse_headers(payload.get("default_headers", {})),
+        timeout_seconds=max(5, int(payload.get("timeout_seconds", 60))),
+    )
+
+
+def _default_llm_profiles() -> dict[str, LLMProfile]:
+    azure_api_env = (
+        os.getenv("AZURE_FOUNDRY_API_KEY_ENV", "AZURE_FOUNDRY_API_KEY").strip()
+        or "AZURE_FOUNDRY_API_KEY"
+    )
+    azure_headers = _parse_headers(os.getenv("AZURE_FOUNDRY_DEFAULT_HEADERS_JSON", ""))
+    if not azure_headers:
+        auth_header = (
+            os.getenv("AZURE_FOUNDRY_AUTH_HEADER", "api-key").strip() or "api-key"
+        )
+        azure_headers = {auth_header: f"${{ENV:{azure_api_env}}}"}
+
+    profiles = {
+        "deepseek": LLMProfile(
+            profile_name="deepseek",
+            provider_id="deepseek",
+            driver=LLMDriver.OPENAI_COMPATIBLE,
+            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            api_key_env="DEEPSEEK_API_KEY",
+            default_headers={},
+            timeout_seconds=max(5, int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "60"))),
+        ),
+        "openai": LLMProfile(
+            profile_name="openai",
+            provider_id="openai",
+            driver=LLMDriver.OPENAI_COMPATIBLE,
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            api_key_env="OPENAI_API_KEY",
+            default_headers={},
+            timeout_seconds=max(5, int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))),
+        ),
+        "azure_foundry": LLMProfile(
+            profile_name="azure_foundry",
+            provider_id="azure_foundry",
+            driver=LLMDriver.OPENAI_COMPATIBLE,
+            base_url=os.getenv("AZURE_FOUNDRY_BASE_URL", ""),
+            model=os.getenv("AZURE_FOUNDRY_MODEL", ""),
+            api_key_env=azure_api_env,
+            default_headers=azure_headers,
+            timeout_seconds=max(
+                5, int(os.getenv("AZURE_FOUNDRY_TIMEOUT_SECONDS", "60"))
+            ),
+        ),
+    }
+    return profiles
+
+
+def _merge_llm_profiles(
+    *,
+    base_profiles: dict[str, LLMProfile],
+    payload: Any,
+) -> dict[str, LLMProfile]:
+    merged = dict(base_profiles)
+    source: dict[str, Any] = {}
+    if isinstance(payload, dict):
+        source = payload
+    elif isinstance(payload, list):
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("profile_name", "")).strip()
+            if name:
+                source[name] = item
+    elif isinstance(payload, str):
+        raw = payload.strip()
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parsed = {}
+            return _merge_llm_profiles(base_profiles=merged, payload=parsed)
+
+    for name, item in source.items():
+        if not isinstance(item, dict):
+            continue
+        profile_name = str(name).strip()
+        if not profile_name:
+            continue
+        merged[profile_name] = _coerce_llm_profile(profile_name, item)
+    return merged
+
+
+def resolve_active_llm_profile(
+    *,
+    runtime: RuntimeConfig,
+    llm_profiles: dict[str, LLMProfile],
+    default_llm_profile: str,
+) -> LLMProfile:
+    preferred = runtime.llm_runtime.profile.strip() or default_llm_profile.strip()
+    if preferred and preferred in llm_profiles:
+        return llm_profiles[preferred]
+    if default_llm_profile.strip() in llm_profiles:
+        return llm_profiles[default_llm_profile.strip()]
+    if llm_profiles:
+        first_key = sorted(llm_profiles.keys())[0]
+        return llm_profiles[first_key]
+    raise RuntimeError("No LLM profiles are configured")
+
+
 def _load_secrets() -> SecretConfig:
     provider_raw = os.getenv("EMBEDDING_PROVIDER", EmbeddingProvider.OPENAI.value)
     try:
@@ -496,33 +678,91 @@ def _load_secrets() -> SecretConfig:
         embedding_provider=embedding_provider,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
         google_embedding_model=os.getenv(
             "GOOGLE_EMBEDDING_MODEL", "gemini-embedding-001"
         ),
+        embedding_api_key_env=os.getenv(
+            "EMBEDDING_API_KEY_ENV", os.getenv("OPENAI_API_KEY_ENV", "OPENAI_API_KEY")
+        ),
+        embedding_base_url=os.getenv(
+            "EMBEDDING_BASE_URL",
+            os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        ),
+        embedding_default_headers=_parse_headers(
+            os.getenv("EMBEDDING_DEFAULT_HEADERS_JSON", "")
+        ),
     )
 
 
-def validate_required_secrets(secrets: SecretConfig) -> list[str]:
+def validate_required_secrets(config: AppConfig) -> list[str]:
     missing: list[str] = []
-    if not secrets.deepseek_api_key:
-        missing.append("DEEPSEEK_API_KEY")
-    if secrets.embedding_provider == EmbeddingProvider.OPENAI:
-        if not secrets.openai_api_key:
-            missing.append("OPENAI_API_KEY")
-    elif secrets.embedding_provider == EmbeddingProvider.GOOGLE_AI_STUDIO:
-        if not secrets.google_api_key:
-            missing.append("GOOGLE_API_KEY")
+    if not (os.getenv("APP_ADMIN_TOKEN", "") or "").strip():
+        missing.append("APP_ADMIN_TOKEN")
+
+    active_profile = resolve_active_llm_profile(
+        runtime=config.runtime,
+        llm_profiles=config.llm_profiles,
+        default_llm_profile=config.default_llm_profile,
+    )
+    required_api_key_env = active_profile.api_key_env.strip()
+    if required_api_key_env and not (os.getenv(required_api_key_env, "") or "").strip():
+        missing.append(required_api_key_env)
+    if not active_profile.model.strip():
+        missing.append(
+            f"LLM_PROFILE_{active_profile.profile_name.upper()}_MODEL"
+        )
+    if (
+        active_profile.driver == LLMDriver.OPENAI_COMPATIBLE
+        and active_profile.provider_id != "openai"
+        and not active_profile.base_url.strip()
+    ):
+        missing.append(
+            f"LLM_PROFILE_{active_profile.profile_name.upper()}_BASE_URL"
+        )
     return missing
 
 
 def load_config(base_dir: Path) -> AppConfig:
     if load_dotenv is not None:
         load_dotenv(dotenv_path=base_dir / ".env", override=False)
-    runtime = load_runtime_config(base_dir / "config.json")
+    config_path = base_dir / "config.json"
+    runtime = load_runtime_config(config_path)
     secrets = _load_secrets()
-    return AppConfig(base_dir=base_dir, runtime=runtime, secrets=secrets)
+    raw_config: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                raw_config = raw
+        except Exception:
+            raw_config = {}
+
+    llm_profiles = _default_llm_profiles()
+    llm_profiles = _merge_llm_profiles(
+        base_profiles=llm_profiles, payload=raw_config.get("llm_profiles")
+    )
+    llm_profiles = _merge_llm_profiles(
+        base_profiles=llm_profiles, payload=os.getenv("LLM_PROFILES_JSON", "")
+    )
+
+    default_llm_profile = (
+        str(raw_config.get("default_llm_profile", "")).strip()
+        or (os.getenv("DEFAULT_LLM_PROFILE", "") or "").strip()
+        or "deepseek"
+    )
+    if default_llm_profile not in llm_profiles and llm_profiles:
+        default_llm_profile = sorted(llm_profiles.keys())[0]
+
+    return AppConfig(
+        base_dir=base_dir,
+        runtime=runtime,
+        secrets=secrets,
+        llm_profiles=llm_profiles,
+        default_llm_profile=default_llm_profile,
+    )
 
 
 def save_runtime_config(base_dir: Path, runtime: RuntimeConfig) -> None:
@@ -531,10 +771,20 @@ def save_runtime_config(base_dir: Path, runtime: RuntimeConfig) -> None:
 
 def save_runtime_config_to_path(config_path: Path, runtime: RuntimeConfig) -> None:
     payload = _runtime_to_payload(runtime)
+    merged_payload: dict[str, Any] = dict(payload)
+    if config_path.exists():
+        try:
+            existing = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                for key, value in existing.items():
+                    if key not in payload:
+                        merged_payload[key] = value
+        except Exception:
+            merged_payload = dict(payload)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
     tmp_path.write_text(
-        json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
+        json.dumps(merged_payload, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
     tmp_path.replace(config_path)
