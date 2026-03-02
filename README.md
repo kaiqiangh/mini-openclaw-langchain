@@ -38,7 +38,7 @@ flowchart LR
 | Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                  |
 | Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.               |
 | Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration. |
-| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/config/runtime`.        |
+| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/agents/{agent_id}/config/runtime`. |
 | Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                  |
 
 ## Security Model

@@ -297,7 +297,7 @@ export function InspectorPanel() {
           <>
             <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-xs text-[var(--muted)]">
               Edit validated runtime settings for this agent. Save will call
-              `/api/v1/config/runtime`.
+              `/api/v1/agents/&lt;agent_id&gt;/config/runtime`.
             </div>
             {runtimeConfigError ? (
               <div className="rounded-md border border-[var(--danger)] bg-[var(--danger-soft)] px-3 py-2 text-xs text-[var(--danger)]">

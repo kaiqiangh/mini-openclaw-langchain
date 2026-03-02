@@ -120,20 +120,20 @@ def _serialize_cron_job(job: CronJob) -> dict[str, Any]:
     return asdict(job)
 
 
-@router.get("/scheduler/cron/jobs")
+@router.get("/agents/{agent_id}/scheduler/cron/jobs")
 async def list_cron_jobs(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
 ) -> dict[str, Any]:
     scheduler = _cron_scheduler(agent_id)
     jobs = [_serialize_cron_job(job) for job in scheduler.list_jobs()]
     return {"data": {"agent_id": agent_id, "jobs": jobs}}
 
 
-@router.post("/scheduler/cron/jobs", status_code=status.HTTP_201_CREATED)
+@router.post("/agents/{agent_id}/scheduler/cron/jobs", status_code=status.HTTP_201_CREATED)
 async def create_cron_job(
+    agent_id: str,
     request: CronJobCreateRequest,
     response: Response,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     scheduler = _cron_scheduler(agent_id)
     try:
@@ -157,11 +157,11 @@ async def create_cron_job(
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(job)}}
 
 
-@router.put("/scheduler/cron/jobs/{job_id}")
+@router.put("/agents/{agent_id}/scheduler/cron/jobs/{job_id}")
 async def update_cron_job(
+    agent_id: str,
     job_id: str,
     request: CronJobUpdateRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     scheduler = _cron_scheduler(agent_id)
     current = scheduler.get_job(job_id)
@@ -217,10 +217,13 @@ async def update_cron_job(
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(current)}}
 
 
-@router.delete("/scheduler/cron/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/agents/{agent_id}/scheduler/cron/jobs/{job_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_cron_job(
+    agent_id: str,
     job_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> Response:
     scheduler = _cron_scheduler(agent_id)
     deleted = scheduler.delete_job(job_id)
@@ -229,10 +232,10 @@ async def delete_cron_job(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/scheduler/cron/jobs/{job_id}/run")
+@router.post("/agents/{agent_id}/scheduler/cron/jobs/{job_id}/run")
 async def run_cron_job(
+    agent_id: str,
     job_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     scheduler = _cron_scheduler(agent_id)
     job = await scheduler.run_job_now(job_id)
@@ -241,9 +244,9 @@ async def run_cron_job(
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(job)}}
 
 
-@router.get("/scheduler/cron/runs")
+@router.get("/agents/{agent_id}/scheduler/cron/runs")
 async def list_cron_runs(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
     limit: int | None = Query(default=None, ge=1, le=5000),
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)
@@ -254,9 +257,9 @@ async def list_cron_runs(
     return {"data": {"agent_id": agent_id, "runs": rows}}
 
 
-@router.get("/scheduler/cron/failures")
+@router.get("/agents/{agent_id}/scheduler/cron/failures")
 async def list_cron_failures(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
     limit: int | None = Query(default=None, ge=1, le=5000),
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)
@@ -267,9 +270,9 @@ async def list_cron_failures(
     return {"data": {"agent_id": agent_id, "failures": rows}}
 
 
-@router.get("/scheduler/heartbeat")
+@router.get("/agents/{agent_id}/scheduler/heartbeat")
 async def get_heartbeat_config(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
 ) -> dict[str, Any]:
     scheduler = _heartbeat_scheduler(agent_id)
     return {
@@ -287,10 +290,10 @@ async def get_heartbeat_config(
     }
 
 
-@router.put("/scheduler/heartbeat")
+@router.put("/agents/{agent_id}/scheduler/heartbeat")
 async def update_heartbeat_config(
+    agent_id: str,
     request: HeartbeatUpdateRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     manager, runtime = _runtime(agent_id)
     config_path = manager.get_agent_config_path(agent_id)
@@ -331,9 +334,9 @@ async def update_heartbeat_config(
     }
 
 
-@router.get("/scheduler/heartbeat/runs")
+@router.get("/agents/{agent_id}/scheduler/heartbeat/runs")
 async def list_heartbeat_runs(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
     limit: int | None = Query(default=None, ge=1, le=5000),
 ) -> dict[str, Any]:
     _, runtime = _runtime(agent_id)

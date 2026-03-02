@@ -8,7 +8,7 @@ from sse_starlette.sse import AppStatus
 
 
 async def _create_session(client: AsyncClient) -> str:
-    response = await client.post("/api/v1/sessions", json={})
+    response = await client.post("/api/v1/agents/default/sessions", json={})
     response.raise_for_status()
     return response.json()["data"]["session_id"]
 
@@ -16,7 +16,7 @@ async def _create_session(client: AsyncClient) -> str:
 async def _stream_chat(client: AsyncClient, session_id: str, message: str) -> str:
     async with client.stream(
         "POST",
-        "/api/v1/chat",
+        "/api/v1/agents/default/chat",
         json={"message": message, "session_id": session_id, "stream": True},
     ) as response:
         response.raise_for_status()

@@ -100,14 +100,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._coordinator = coordinator
         self._limits: list[tuple[str, int, int]] = [
-            ("/api/v1/chat", 60, 60),
-            ("/api/v1/tokens", 120, 60),
-            ("/api/v1/files", 120, 60),
+            ("/chat", 60, 60),
+            ("/tokens/", 120, 60),
+            ("/files", 120, 60),
         ]
 
     def _resolve_limit(self, path: str) -> tuple[int, int] | None:
+        if not path.startswith("/api/v1/agents/"):
+            return None
         for prefix, limit, window_sec in self._limits:
-            if path.startswith(prefix):
+            if prefix == "/chat" and path.endswith(prefix):
+                return limit, window_sec
+            if prefix == "/files" and (
+                path.endswith("/files") or "/files/" in path
+            ):
+                return limit, window_sec
+            if prefix == "/tokens/" and prefix in path:
                 return limit, window_sec
         return None
 

@@ -208,10 +208,8 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
-function withAgent(path: string, agentId = "default"): string {
-  const hasQuery = path.includes("?");
-  const suffix = `agent_id=${encodeURIComponent(agentId)}`;
-  return `${path}${hasQuery ? "&" : "?"}${suffix}`;
+function agentBase(agentId = "default"): string {
+  return `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}`;
 }
 
 export async function getAgents(): Promise<AgentMeta[]> {
@@ -249,10 +247,7 @@ export async function getSessions(
   agentId = "default",
 ): Promise<SessionMeta[]> {
   const payload = await requestJson<{ data: SessionMeta[] }>(
-    withAgent(
-      `${API_BASE}/api/v1/sessions?scope=${encodeURIComponent(scope)}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/sessions?scope=${encodeURIComponent(scope)}`,
   );
   return payload.data;
 }
@@ -263,7 +258,7 @@ export async function createSession(
 ): Promise<{ session_id: string; title: string }> {
   const payload = await requestJson<{
     data: { session_id: string; title: string };
-  }>(withAgent(`${API_BASE}/api/v1/sessions`, agentId), {
+  }>(`${agentBase(agentId)}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(title ? { title } : {}),
@@ -276,7 +271,7 @@ export async function archiveSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { archived: boolean; session_id: string } }>(
-    withAgent(`${API_BASE}/api/v1/sessions/${sessionId}/archive`, agentId),
+    `${agentBase(agentId)}/sessions/${sessionId}/archive`,
     { method: "POST" },
   );
 }
@@ -286,7 +281,7 @@ export async function restoreSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { restored: boolean; session_id: string } }>(
-    withAgent(`${API_BASE}/api/v1/sessions/${sessionId}/restore`, agentId),
+    `${agentBase(agentId)}/sessions/${sessionId}/restore`,
     { method: "POST" },
   );
 }
@@ -297,10 +292,7 @@ export async function deleteSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { deleted: boolean; session_id: string } }>(
-    withAgent(
-      `${API_BASE}/api/v1/sessions/${sessionId}?archived=${archived ? "true" : "false"}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/sessions/${sessionId}?archived=${archived ? "true" : "false"}`,
     { method: "DELETE" },
   );
 }
@@ -311,10 +303,7 @@ export async function getSessionHistory(
   agentId = "default",
 ): Promise<ChatHistoryResponse> {
   const payload = await requestJson<{ data: ChatHistoryResponse }>(
-    withAgent(
-      `${API_BASE}/api/v1/sessions/${sessionId}/history?archived=${archived ? "true" : "false"}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/sessions/${sessionId}/history?archived=${archived ? "true" : "false"}`,
   );
   return payload.data;
 }
@@ -326,14 +315,14 @@ export async function getUsageSummary(params: {
   triggerType?: string;
   agentId?: string;
 }): Promise<UsageSummary> {
+  const agentId = params.agentId ?? "default";
   const qs = new URLSearchParams();
   qs.set("since_hours", String(params.sinceHours));
   if (params.provider) qs.set("provider", params.provider);
   if (params.model) qs.set("model", params.model);
   if (params.triggerType) qs.set("trigger_type", params.triggerType);
-  qs.set("agent_id", params.agentId ?? "default");
   const payload = await requestJson<{ data: UsageSummary }>(
-    `${API_BASE}/api/v1/usage/summary?${qs.toString()}`,
+    `${agentBase(agentId)}/usage/summary?${qs.toString()}`,
   );
   return payload.data;
 }
@@ -346,22 +335,22 @@ export async function getUsageRecords(params: {
   limit?: number;
   agentId?: string;
 }): Promise<UsageRecord[]> {
+  const agentId = params.agentId ?? "default";
   const qs = new URLSearchParams();
   qs.set("since_hours", String(params.sinceHours));
   if (params.provider) qs.set("provider", params.provider);
   if (params.model) qs.set("model", params.model);
   if (params.triggerType) qs.set("trigger_type", params.triggerType);
   if (params.limit) qs.set("limit", String(params.limit));
-  qs.set("agent_id", params.agentId ?? "default");
   const payload = await requestJson<{ data: { records: UsageRecord[] } }>(
-    `${API_BASE}/api/v1/usage/records?${qs.toString()}`,
+    `${agentBase(agentId)}/usage/records?${qs.toString()}`,
   );
   return payload.data.records;
 }
 
 export async function getRagMode(agentId = "default"): Promise<boolean> {
   const payload = await requestJson<{ data: { enabled: boolean } }>(
-    withAgent(`${API_BASE}/api/v1/config/rag-mode`, agentId),
+    `${agentBase(agentId)}/config/rag-mode`,
   );
   return payload.data.enabled;
 }
@@ -371,7 +360,7 @@ export async function setRagMode(
   agentId = "default",
 ): Promise<boolean> {
   const payload = await requestJson<{ data: { enabled: boolean } }>(
-    withAgent(`${API_BASE}/api/v1/config/rag-mode`, agentId),
+    `${agentBase(agentId)}/config/rag-mode`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -388,10 +377,7 @@ export async function readWorkspaceFile(
   const payload = await requestJson<{
     data: { path: string; content: string };
   }>(
-    withAgent(
-      `${API_BASE}/api/v1/files?path=${encodeURIComponent(path)}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/files?path=${encodeURIComponent(path)}`,
   );
   return payload.data.content;
 }
@@ -402,7 +388,7 @@ export async function saveWorkspaceFile(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { saved: boolean } }>(
-    withAgent(`${API_BASE}/api/v1/files`, agentId),
+    `${agentBase(agentId)}/files`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -422,7 +408,7 @@ export async function listWorkspaceFiles(
   agentId = "default",
 ): Promise<WorkspaceFileIndex> {
   const payload = await requestJson<{ data: WorkspaceFileIndex }>(
-    withAgent(`${API_BASE}/api/v1/files/index`, agentId),
+    `${agentBase(agentId)}/files/index`,
   );
   return payload.data;
 }
@@ -431,7 +417,7 @@ export async function getRuntimeConfig(
   agentId = "default",
 ): Promise<RuntimeConfigPayload> {
   const payload = await requestJson<{ data: { config: RuntimeConfigPayload } }>(
-    withAgent(`${API_BASE}/api/v1/config/runtime`, agentId),
+    `${agentBase(agentId)}/config/runtime`,
   );
   return payload.data.config;
 }
@@ -441,7 +427,7 @@ export async function setRuntimeConfig(
   agentId = "default",
 ): Promise<RuntimeConfigPayload> {
   const payload = await requestJson<{ data: { config: RuntimeConfigPayload } }>(
-    withAgent(`${API_BASE}/api/v1/config/runtime`, agentId),
+    `${agentBase(agentId)}/config/runtime`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -474,7 +460,7 @@ export async function setTracingConfig(
 
 export async function listCronJobs(agentId = "default"): Promise<CronJob[]> {
   const payload = await requestJson<{ data: { jobs: CronJob[] } }>(
-    withAgent(`${API_BASE}/api/v1/scheduler/cron/jobs`, agentId),
+    `${agentBase(agentId)}/scheduler/cron/jobs`,
   );
   return payload.data.jobs;
 }
@@ -490,7 +476,7 @@ export async function createCronJob(
   agentId = "default",
 ): Promise<CronJob> {
   const payload = await requestJson<{ data: { job: CronJob } }>(
-    withAgent(`${API_BASE}/api/v1/scheduler/cron/jobs`, agentId),
+    `${agentBase(agentId)}/scheduler/cron/jobs`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -512,10 +498,7 @@ export async function updateCronJob(
   agentId = "default",
 ): Promise<CronJob> {
   const payload = await requestJson<{ data: { job: CronJob } }>(
-    withAgent(
-      `${API_BASE}/api/v1/scheduler/cron/jobs/${encodeURIComponent(jobId)}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/scheduler/cron/jobs/${encodeURIComponent(jobId)}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -530,10 +513,7 @@ export async function deleteCronJob(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { deleted: boolean } }>(
-    withAgent(
-      `${API_BASE}/api/v1/scheduler/cron/jobs/${encodeURIComponent(jobId)}`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/scheduler/cron/jobs/${encodeURIComponent(jobId)}`,
     { method: "DELETE" },
   );
 }
@@ -543,10 +523,7 @@ export async function runCronJob(
   agentId = "default",
 ): Promise<CronJob> {
   const payload = await requestJson<{ data: { job: CronJob } }>(
-    withAgent(
-      `${API_BASE}/api/v1/scheduler/cron/jobs/${encodeURIComponent(jobId)}/run`,
-      agentId,
-    ),
+    `${agentBase(agentId)}/scheduler/cron/jobs/${encodeURIComponent(jobId)}/run`,
     { method: "POST" },
   );
   return payload.data.job;
@@ -558,7 +535,7 @@ export async function listCronRuns(
 ): Promise<Array<Record<string, unknown>>> {
   const payload = await requestJson<{
     data: { runs: Array<Record<string, unknown>> };
-  }>(withAgent(`${API_BASE}/api/v1/scheduler/cron/runs?limit=${limit}`, agentId));
+  }>(`${agentBase(agentId)}/scheduler/cron/runs?limit=${limit}`);
   return payload.data.runs;
 }
 
@@ -568,12 +545,7 @@ export async function listCronFailures(
 ): Promise<Array<Record<string, unknown>>> {
   const payload = await requestJson<{
     data: { failures: Array<Record<string, unknown>> };
-  }>(
-    withAgent(
-      `${API_BASE}/api/v1/scheduler/cron/failures?limit=${limit}`,
-      agentId,
-    ),
-  );
+  }>(`${agentBase(agentId)}/scheduler/cron/failures?limit=${limit}`);
   return payload.data.failures;
 }
 
@@ -581,7 +553,7 @@ export async function getHeartbeatConfig(
   agentId = "default",
 ): Promise<HeartbeatConfig> {
   const payload = await requestJson<{ data: { config: HeartbeatConfig } }>(
-    withAgent(`${API_BASE}/api/v1/scheduler/heartbeat`, agentId),
+    `${agentBase(agentId)}/scheduler/heartbeat`,
   );
   return payload.data.config;
 }
@@ -591,7 +563,7 @@ export async function updateHeartbeatConfig(
   agentId = "default",
 ): Promise<HeartbeatConfig> {
   const payload = await requestJson<{ data: { config: HeartbeatConfig } }>(
-    withAgent(`${API_BASE}/api/v1/scheduler/heartbeat`, agentId),
+    `${agentBase(agentId)}/scheduler/heartbeat`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -607,12 +579,7 @@ export async function listHeartbeatRuns(
 ): Promise<Array<Record<string, unknown>>> {
   const payload = await requestJson<{
     data: { runs: Array<Record<string, unknown>> };
-  }>(
-    withAgent(
-      `${API_BASE}/api/v1/scheduler/heartbeat/runs?limit=${limit}`,
-      agentId,
-    ),
-  );
+  }>(`${agentBase(agentId)}/scheduler/heartbeat/runs?limit=${limit}`);
   return payload.data.runs;
 }
 
@@ -622,13 +589,12 @@ export async function streamChat(
   onEvent: (event: StreamEvent) => void,
   agentId = "default",
 ): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/chat`, {
+  const response = await fetch(`${agentBase(agentId)}/chat`, {
     method: "POST",
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       message,
       session_id: sessionId,
-      agent_id: agentId,
       stream: true,
     }),
   });

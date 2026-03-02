@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from api.errors import ApiError
 from graph.agent import AgentManager
@@ -27,10 +27,10 @@ def _require_agent_manager() -> AgentManager:
     return _AGENT_MANAGER
 
 
-@router.post("/sessions/{session_id}/compress")
+@router.post("/agents/{agent_id}/sessions/{session_id}/compress")
 async def compress_session(
+    agent_id: str,
     session_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     agent_manager = _require_agent_manager()
     try:

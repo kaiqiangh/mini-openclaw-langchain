@@ -16,7 +16,7 @@ Next.js App Router frontend for Mini-OpenClaw.
 - Mobile workspace: tab-switched panels.
 - Inspector modes:
   - workspace file editing
-  - per-agent runtime config editing (`/api/v1/config/runtime`)
+  - per-agent runtime config editing (`/api/v1/agents/{agent_id}/config/runtime`)
 - Chat rendering:
   - markdown + GFM
   - sanitization

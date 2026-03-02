@@ -12,11 +12,11 @@ def _parse_sse_events(payload: str) -> list[str]:
 
 
 def test_chat_sse_order_and_segment_persistence(client, api_app):
-    created = client.post("/api/v1/sessions", json={}).json()
+    created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
 
     response = client.post(
-        "/api/v1/chat",
+        "/api/v1/agents/default/chat",
         json={"message": "hello", "session_id": session_id, "stream": True},
     )
     assert response.status_code == 200
@@ -41,7 +41,7 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
     assert "agent_update" in events
     assert "reasoning" in events
 
-    history = client.get(f"/api/v1/sessions/{session_id}/history").json()["data"][
+    history = client.get(f"/api/v1/agents/default/sessions/{session_id}/history").json()["data"][
         "messages"
     ]
     assert len(history) == 3

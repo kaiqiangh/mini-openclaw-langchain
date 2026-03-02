@@ -49,20 +49,20 @@ def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManage
     return manager, session_manager
 
 
-@router.get("/sessions")
+@router.get("/agents/{agent_id}/sessions")
 async def list_sessions(
+    agent_id: str,
     scope: str = Query(default="active", pattern="^(active|archived|all)$"),
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     return {"data": manager.list_sessions(scope=scope)}
 
 
-@router.post("/sessions", status_code=status.HTTP_201_CREATED)
+@router.post("/agents/{agent_id}/sessions", status_code=status.HTTP_201_CREATED)
 async def create_session(
+    agent_id: str,
     response: Response,
     request: CreateSessionRequest | None = None,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     session_id = str(uuid.uuid4())
@@ -78,11 +78,11 @@ async def create_session(
     }
 
 
-@router.put("/sessions/{session_id}")
+@router.put("/agents/{agent_id}/sessions/{session_id}")
 async def rename_session(
+    agent_id: str,
     session_id: str,
     req: RenameSessionRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     path = manager.sessions_dir / f"{session_id}.json"
@@ -93,11 +93,13 @@ async def rename_session(
     return {"data": {"session_id": session_id, "title": session.get("title", "")}}
 
 
-@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/agents/{agent_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_session(
+    agent_id: str,
     session_id: str,
     archived: bool = False,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> Response:
     _, manager = _resolve_session_manager(agent_id)
     deleted = manager.delete_session(session_id, archived=archived)
@@ -106,10 +108,10 @@ async def delete_session(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/sessions/{session_id}/archive")
+@router.post("/agents/{agent_id}/sessions/{session_id}/archive")
 async def archive_session(
+    agent_id: str,
     session_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     archived = manager.archive_session(session_id)
@@ -118,10 +120,10 @@ async def archive_session(
     return {"data": {"archived": True, "session_id": session_id}}
 
 
-@router.post("/sessions/{session_id}/restore")
+@router.post("/agents/{agent_id}/sessions/{session_id}/restore")
 async def restore_session(
+    agent_id: str,
     session_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     restored = manager.restore_session(session_id)
@@ -132,11 +134,11 @@ async def restore_session(
     return {"data": {"restored": True, "session_id": session_id}}
 
 
-@router.get("/sessions/{session_id}/messages")
+@router.get("/agents/{agent_id}/sessions/{session_id}/messages")
 async def get_messages(
+    agent_id: str,
     session_id: str,
     archived: bool = False,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     agent, manager = _resolve_session_manager(agent_id)
 
@@ -172,11 +174,11 @@ async def get_messages(
     }
 
 
-@router.get("/sessions/{session_id}/history")
+@router.get("/agents/{agent_id}/sessions/{session_id}/history")
 async def get_history(
+    agent_id: str,
     session_id: str,
     archived: bool = False,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     try:
@@ -197,10 +199,10 @@ async def get_history(
     }
 
 
-@router.post("/sessions/{session_id}/generate-title")
+@router.post("/agents/{agent_id}/sessions/{session_id}/generate-title")
 async def generate_title(
+    agent_id: str,
     session_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     agent, manager = _resolve_session_manager(agent_id)
     session = manager.load_session(session_id)

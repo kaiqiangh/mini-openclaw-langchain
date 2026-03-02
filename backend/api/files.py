@@ -92,10 +92,10 @@ def _list_workspace_files(workspace_root: Path) -> list[str]:
     return sorted(set(rows))
 
 
-@router.get("/files")
+@router.get("/agents/{agent_id}/files")
 async def read_file(
+    agent_id: str,
     path: str = Query(..., min_length=1),
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     base_dir, agent_manager = _require_deps()
     try:
@@ -118,10 +118,10 @@ async def read_file(
     return {"data": {"path": path, "content": content}}
 
 
-@router.post("/files")
+@router.post("/agents/{agent_id}/files")
 async def save_file(
+    agent_id: str,
     request: SaveFileRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     base_dir, agent_manager = _require_deps()
     try:
@@ -160,9 +160,9 @@ async def list_skills() -> dict[str, Any]:
     return {"data": items}
 
 
-@router.get("/files/index")
+@router.get("/agents/{agent_id}/files/index")
 async def list_workspace_files(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:

@@ -21,7 +21,6 @@ router = APIRouter(tags=["chat"])
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
-    agent_id: str = Field(default="default", min_length=1, max_length=64)
     stream: bool = True
 
 
@@ -324,11 +323,11 @@ async def _unsubscribe_run(
         state.subscribers.discard(queue)
 
 
-@router.post("/chat")
-async def chat(request: ChatRequest) -> Any:
+@router.post("/agents/{agent_id}/chat")
+async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
-        runtime = agent.get_runtime(request.agent_id)
+        runtime = agent.get_runtime(agent_id)
         session_manager = runtime.session_manager
     except ValueError as exc:
         raise ApiError(
@@ -347,7 +346,7 @@ async def chat(request: ChatRequest) -> Any:
             is_first_turn=is_first_turn,
             output_format="text",
             trigger_type="chat",
-            agent_id=request.agent_id,
+            agent_id=agent_id,
         )
         text = str(result.get("text", ""))
         usage = result.get("usage", {})
@@ -357,12 +356,12 @@ async def chat(request: ChatRequest) -> Any:
             "data": {
                 "content": text,
                 "session_id": request.session_id,
-                "agent_id": request.agent_id,
+                "agent_id": agent_id,
                 "usage": usage,
             }
         }
 
-    key = _run_key(request.agent_id, request.session_id)
+    key = _run_key(agent_id, request.session_id)
     start_task = False
     lock_owner = ""
 
@@ -386,7 +385,7 @@ async def chat(request: ChatRequest) -> Any:
                     )
             state = _StreamRunState(
                 key=key,
-                agent_id=request.agent_id,
+                agent_id=agent_id,
                 session_id=request.session_id,
                 message=request.message,
                 is_first_turn=is_first_turn,

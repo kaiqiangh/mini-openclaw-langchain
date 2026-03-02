@@ -2,46 +2,46 @@ from __future__ import annotations
 
 
 def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
-    created = client.post("/api/v1/sessions", json={})
+    created = client.post("/api/v1/agents/default/sessions", json={})
     assert created.status_code == 201
     assert "Location" in created.headers
     session_id = created.json()["data"]["session_id"]
 
-    listed = client.get("/api/v1/sessions")
+    listed = client.get("/api/v1/agents/default/sessions")
     assert listed.status_code == 200
     assert any(item["session_id"] == session_id for item in listed.json()["data"])
 
-    renamed = client.put(f"/api/v1/sessions/{session_id}", json={"title": "New"})
+    renamed = client.put(f"/api/v1/agents/default/sessions/{session_id}", json={"title": "New"})
     assert renamed.status_code == 200
     assert renamed.json()["data"]["title"] == "New"
 
-    read_file = client.get("/api/v1/files", params={"path": "memory/MEMORY.md"})
+    read_file = client.get("/api/v1/agents/default/files", params={"path": "memory/MEMORY.md"})
     assert read_file.status_code == 200
 
-    files_index = client.get("/api/v1/files/index")
+    files_index = client.get("/api/v1/agents/default/files/index")
     assert files_index.status_code == 200
     assert "memory/MEMORY.md" in files_index.json()["data"]["files"]
 
     write_file = client.post(
-        "/api/v1/files", json={"path": "memory/NEW.md", "content": "abc"}
+        "/api/v1/agents/default/files", json={"path": "memory/NEW.md", "content": "abc"}
     )
     assert write_file.status_code == 200
 
-    token_session = client.get(f"/api/v1/tokens/session/{session_id}")
+    token_session = client.get(f"/api/v1/agents/default/tokens/session/{session_id}")
     assert token_session.status_code == 200
     assert token_session.json()["data"]["total_tokens"] >= 0
 
     token_files = client.post(
-        "/api/v1/tokens/files",
+        "/api/v1/agents/default/tokens/files",
         json={"paths": ["memory/MEMORY.md", "../../etc/passwd"]},
     )
     assert token_files.status_code == 200
     assert token_files.json()["data"][1]["error"] == "invalid_path"
 
-    rag_get = client.get("/api/v1/config/rag-mode")
+    rag_get = client.get("/api/v1/agents/default/config/rag-mode")
     assert rag_get.status_code == 200
     assert rag_get.json()["data"]["agent_id"] == "default"
-    rag_put = client.put("/api/v1/config/rag-mode", json={"enabled": True})
+    rag_put = client.put("/api/v1/agents/default/config/rag-mode", json={"enabled": True})
     assert rag_put.status_code == 200
     assert rag_put.json()["data"]["enabled"] is True
     assert rag_put.json()["data"]["agent_id"] == "default"
@@ -50,21 +50,19 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert create_other_agent.status_code == 201
     assert "Location" in create_other_agent.headers
 
-    rag_other_before = client.get(
-        "/api/v1/config/rag-mode", params={"agent_id": "agent-rag"}
-    )
+    rag_other_before = client.get("/api/v1/agents/agent-rag/config/rag-mode")
     assert rag_other_before.status_code == 200
     assert rag_other_before.json()["data"]["enabled"] is False
     assert rag_other_before.json()["data"]["agent_id"] == "agent-rag"
 
     rag_other_put = client.put(
-        "/api/v1/config/rag-mode?agent_id=agent-rag", json={"enabled": True}
+        "/api/v1/agents/agent-rag/config/rag-mode", json={"enabled": True}
     )
     assert rag_other_put.status_code == 200
     assert rag_other_put.json()["data"]["enabled"] is True
     assert rag_other_put.json()["data"]["agent_id"] == "agent-rag"
 
-    rag_default_after = client.get("/api/v1/config/rag-mode")
+    rag_default_after = client.get("/api/v1/agents/default/config/rag-mode")
     assert rag_default_after.status_code == 200
     assert rag_default_after.json()["data"]["enabled"] is True
 
@@ -89,11 +87,11 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert tracing_after.json()["data"]["enabled"] is False
 
     # compression error envelope for <4 messages
-    compress_small = client.post(f"/api/v1/sessions/{session_id}/compress")
+    compress_small = client.post(f"/api/v1/agents/default/sessions/{session_id}/compress")
     assert compress_small.status_code == 400
     assert compress_small.json()["error"]["code"] == "invalid_state"
 
-    gen_title = client.post(f"/api/v1/sessions/{session_id}/generate-title")
+    gen_title = client.post(f"/api/v1/agents/default/sessions/{session_id}/generate-title")
     assert gen_title.status_code == 400
     assert gen_title.json()["error"]["code"] == "invalid_state"
 
@@ -104,46 +102,46 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     manager.save_message(session_id, "user", "u2")
     manager.save_message(session_id, "assistant", "a2")
 
-    compress_ok = client.post(f"/api/v1/sessions/{session_id}/compress")
+    compress_ok = client.post(f"/api/v1/agents/default/sessions/{session_id}/compress")
     assert compress_ok.status_code == 200
     assert compress_ok.json()["data"]["archived_count"] >= 4
 
-    gen_title = client.post(f"/api/v1/sessions/{session_id}/generate-title")
+    gen_title = client.post(f"/api/v1/agents/default/sessions/{session_id}/generate-title")
     assert gen_title.status_code == 200
     assert isinstance(gen_title.json()["data"]["title"], str)
 
-    deleted = client.delete(f"/api/v1/sessions/{session_id}")
+    deleted = client.delete(f"/api/v1/agents/default/sessions/{session_id}")
     assert deleted.status_code == 204
     assert deleted.content == b""
 
 
 def test_archive_restore_and_delete_archived_session(client):
-    created = client.post("/api/v1/sessions", json={}).json()
+    created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
 
-    archived = client.post(f"/api/v1/sessions/{session_id}/archive")
+    archived = client.post(f"/api/v1/agents/default/sessions/{session_id}/archive")
     assert archived.status_code == 200
     assert archived.json()["data"]["archived"] is True
 
-    active_list = client.get("/api/v1/sessions")
+    active_list = client.get("/api/v1/agents/default/sessions")
     assert active_list.status_code == 200
     assert all(item["session_id"] != session_id for item in active_list.json()["data"])
 
-    archived_list = client.get("/api/v1/sessions", params={"scope": "archived"})
+    archived_list = client.get("/api/v1/agents/default/sessions", params={"scope": "archived"})
     assert archived_list.status_code == 200
     assert any(
         item["session_id"] == session_id and item["archived"] is True
         for item in archived_list.json()["data"]
     )
 
-    restored = client.post(f"/api/v1/sessions/{session_id}/restore")
+    restored = client.post(f"/api/v1/agents/default/sessions/{session_id}/restore")
     assert restored.status_code == 200
     assert restored.json()["data"]["restored"] is True
 
-    archived_again = client.post(f"/api/v1/sessions/{session_id}/archive")
+    archived_again = client.post(f"/api/v1/agents/default/sessions/{session_id}/archive")
     assert archived_again.status_code == 200
 
-    deleted = client.delete(f"/api/v1/sessions/{session_id}", params={"archived": "true"})
+    deleted = client.delete(f"/api/v1/agents/default/sessions/{session_id}", params={"archived": "true"})
     assert deleted.status_code == 204
     assert deleted.content == b""
 
@@ -154,20 +152,20 @@ def test_agents_endpoint_and_session_isolation(client):
     assert "Location" in created_agent.headers
     assert created_agent.json()["data"]["agent_id"] == "agent-b"
 
-    default_session = client.post("/api/v1/sessions", json={}).json()["data"]["session_id"]
-    other_session = client.post("/api/v1/sessions?agent_id=agent-b", json={}).json()[
+    default_session = client.post("/api/v1/agents/default/sessions", json={}).json()["data"]["session_id"]
+    other_session = client.post("/api/v1/agents/agent-b/sessions", json={}).json()[
         "data"
     ]["session_id"]
 
-    default_list = client.get("/api/v1/sessions").json()["data"]
-    other_list = client.get("/api/v1/sessions?agent_id=agent-b").json()["data"]
+    default_list = client.get("/api/v1/agents/default/sessions").json()["data"]
+    other_list = client.get("/api/v1/agents/agent-b/sessions").json()["data"]
 
     assert any(item["session_id"] == default_session for item in default_list)
     assert all(item["session_id"] != other_session for item in default_list)
     assert any(item["session_id"] == other_session for item in other_list)
 
-    default_files = client.get("/api/v1/files/index").json()["data"]["files"]
-    other_files = client.get("/api/v1/files/index?agent_id=agent-b").json()["data"][
+    default_files = client.get("/api/v1/agents/default/files/index").json()["data"]["files"]
+    other_files = client.get("/api/v1/agents/agent-b/files/index").json()["data"][
         "files"
     ]
     assert "memory/MEMORY.md" in default_files

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.errors import ApiError
@@ -46,10 +46,10 @@ def _require_deps() -> tuple[Path, AgentManager]:
     return _BASE_DIR, _AGENT_MANAGER
 
 
-@router.get("/tokens/session/{session_id}")
+@router.get("/agents/{agent_id}/tokens/session/{session_id}")
 async def session_tokens(
+    agent_id: str,
     session_id: str,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
@@ -88,10 +88,10 @@ async def session_tokens(
     }
 
 
-@router.post("/tokens/files")
+@router.post("/agents/{agent_id}/tokens/files")
 async def file_tokens(
+    agent_id: str,
     request: FileTokenRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     base_dir, agent_manager = _require_deps()
     try:

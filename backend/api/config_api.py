@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from api.errors import ApiError
@@ -117,9 +117,9 @@ def apply_persisted_tracing_state(base_dir: Path) -> None:
     os.environ["OBS_TRACING_ENABLED"] = "true" if persisted else "false"
 
 
-@router.get("/config/rag-mode")
+@router.get("/agents/{agent_id}/config/rag-mode")
 async def get_rag_mode(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
 ) -> dict[str, Any]:
     base_dir = _require_base_dir()
     if _AGENT_MANAGER is None:
@@ -139,10 +139,10 @@ async def get_rag_mode(
     }
 
 
-@router.put("/config/rag-mode")
+@router.put("/agents/{agent_id}/config/rag-mode")
 async def set_rag_mode(
+    agent_id: str,
     request: RagModeRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     base_dir = _require_base_dir()
     if _AGENT_MANAGER is None:
@@ -168,9 +168,9 @@ async def set_rag_mode(
     }
 
 
-@router.get("/config/runtime")
+@router.get("/agents/{agent_id}/config/runtime")
 async def get_runtime_config(
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
+    agent_id: str,
 ) -> dict[str, Any]:
     base_dir = _require_base_dir()
     if _AGENT_MANAGER is None:
@@ -195,10 +195,10 @@ async def get_runtime_config(
     }
 
 
-@router.put("/config/runtime")
+@router.put("/agents/{agent_id}/config/runtime")
 async def set_runtime_config(
+    agent_id: str,
     request: RuntimeConfigRequest,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     base_dir = _require_base_dir()
     try:

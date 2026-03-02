@@ -46,7 +46,7 @@ describe("streamChat", () => {
 });
 
 describe("agent-scoped rag mode requests", () => {
-  it("appends agent_id to rag mode endpoints", async () => {
+  it("uses agent path segments for rag mode endpoints", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -64,8 +64,10 @@ describe("agent-scoped rag mode requests", () => {
 
     const firstUrl = String(fetchMock.mock.calls[0][0]);
     const secondUrl = String(fetchMock.mock.calls[1][0]);
-    expect(firstUrl).toContain("agent_id=alpha");
-    expect(secondUrl).toContain("agent_id=alpha");
+    expect(firstUrl).toContain("/api/v1/agents/alpha/config/rag-mode");
+    expect(secondUrl).toContain("/api/v1/agents/alpha/config/rag-mode");
+    expect(firstUrl).not.toContain("agent_id=");
+    expect(secondUrl).not.toContain("agent_id=");
   });
 });
 

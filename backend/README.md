@@ -63,38 +63,38 @@ flowchart TB
 
 ### Chat / Sessions / Agents
 
-- `POST /api/v1/chat`
-- `GET|POST /api/v1/sessions`
-- `PUT|DELETE /api/v1/sessions/{session_id}`
-- `POST /api/v1/sessions/{session_id}/archive`
-- `POST /api/v1/sessions/{session_id}/restore`
+- `POST /api/v1/agents/{agent_id}/chat`
+- `GET|POST /api/v1/agents/{agent_id}/sessions`
+- `PUT|DELETE /api/v1/agents/{agent_id}/sessions/{session_id}`
+- `POST /api/v1/agents/{agent_id}/sessions/{session_id}/archive`
+- `POST /api/v1/agents/{agent_id}/sessions/{session_id}/restore`
 - `GET|POST|DELETE /api/v1/agents`
 
 ### Files / Tokens / Usage
 
-- `GET|POST /api/v1/files`
-- `GET /api/v1/files/index`
+- `GET|POST /api/v1/agents/{agent_id}/files`
+- `GET /api/v1/agents/{agent_id}/files/index`
 - `GET /api/v1/skills`
-- `GET /api/v1/tokens/session/{session_id}`
-- `POST /api/v1/tokens/files`
-- `GET /api/v1/usage/summary`
-- `GET /api/v1/usage/records`
+- `GET /api/v1/agents/{agent_id}/tokens/session/{session_id}`
+- `POST /api/v1/agents/{agent_id}/tokens/files`
+- `GET /api/v1/agents/{agent_id}/usage/summary`
+- `GET /api/v1/agents/{agent_id}/usage/records`
 
 ### Config
 
-- `GET|PUT /api/v1/config/rag-mode`
-- `GET|PUT /api/v1/config/runtime` (validated, atomic write)
+- `GET|PUT /api/v1/agents/{agent_id}/config/rag-mode`
+- `GET|PUT /api/v1/agents/{agent_id}/config/runtime` (validated, atomic write)
 - `GET|PUT /api/v1/config/tracing` (persisted in `storage/runtime_state.json`)
 
 ### Scheduler
 
-- `GET|POST /api/v1/scheduler/cron/jobs`
-- `PUT|DELETE /api/v1/scheduler/cron/jobs/{job_id}`
-- `POST /api/v1/scheduler/cron/jobs/{job_id}/run`
-- `GET /api/v1/scheduler/cron/runs`
-- `GET /api/v1/scheduler/cron/failures`
-- `GET|PUT /api/v1/scheduler/heartbeat`
-- `GET /api/v1/scheduler/heartbeat/runs`
+- `GET|POST /api/v1/agents/{agent_id}/scheduler/cron/jobs`
+- `PUT|DELETE /api/v1/agents/{agent_id}/scheduler/cron/jobs/{job_id}`
+- `POST /api/v1/agents/{agent_id}/scheduler/cron/jobs/{job_id}/run`
+- `GET /api/v1/agents/{agent_id}/scheduler/cron/runs`
+- `GET /api/v1/agents/{agent_id}/scheduler/cron/failures`
+- `GET|PUT /api/v1/agents/{agent_id}/scheduler/heartbeat`
+- `GET /api/v1/agents/{agent_id}/scheduler/heartbeat/runs`
 
 ## Threat Model (Current)
 

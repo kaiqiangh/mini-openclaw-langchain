@@ -30,7 +30,7 @@ def test_stream_lock_exclusive(kind: str, tmp_path: Path):
 @pytest.mark.parametrize("kind", ["in_memory", "sqlite"])
 def test_rate_limit_window(kind: str, tmp_path: Path):
     coordinator = _build_coordinator(kind, tmp_path)
-    key = "127.0.0.1:/api/v1/chat"
+    key = "127.0.0.1:/api/v1/agents/default/chat"
 
     first = coordinator.check_rate_limit(key, limit=1, window_seconds=60)
     second = coordinator.check_rate_limit(key, limit=1, window_seconds=60)

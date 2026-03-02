@@ -33,15 +33,15 @@ def _require_store(agent_id: str) -> UsageStore:
         ) from exc
 
 
-@router.get("/usage/records")
+@router.get("/agents/{agent_id}/usage/records")
 async def get_usage_records(
+    agent_id: str,
     since_hours: int = Query(default=24, ge=1, le=24 * 365),
     provider: str | None = None,
     model: str | None = None,
     trigger_type: str | None = None,
     session_id: str | None = None,
     limit: int = Query(default=200, ge=1, le=2000),
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     store = _require_store(agent_id)
     query = UsageQuery(
@@ -70,14 +70,14 @@ async def get_usage_records(
     }
 
 
-@router.get("/usage/summary")
+@router.get("/agents/{agent_id}/usage/summary")
 async def get_usage_summary(
+    agent_id: str,
     since_hours: int = Query(default=24, ge=1, le=24 * 365),
     provider: str | None = None,
     model: str | None = None,
     trigger_type: str | None = None,
     session_id: str | None = None,
-    agent_id: str = Query(default="default", min_length=1, max_length=64),
 ) -> dict[str, Any]:
     store = _require_store(agent_id)
     records = store.query_records(

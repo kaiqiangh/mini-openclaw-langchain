@@ -6,7 +6,7 @@ from pathlib import Path
 
 def test_scheduler_cron_lifecycle(client):
     created = client.post(
-        "/api/v1/scheduler/cron/jobs",
+        "/api/v1/agents/default/scheduler/cron/jobs",
         json={
             "name": "health-check",
             "schedule_type": "every",
@@ -19,30 +19,30 @@ def test_scheduler_cron_lifecycle(client):
     assert "Location" in created.headers
     job_id = created.json()["data"]["job"]["id"]
 
-    listed = client.get("/api/v1/scheduler/cron/jobs")
+    listed = client.get("/api/v1/agents/default/scheduler/cron/jobs")
     assert listed.status_code == 200
     assert any(row["id"] == job_id for row in listed.json()["data"]["jobs"])
 
     updated = client.put(
-        f"/api/v1/scheduler/cron/jobs/{job_id}",
+        f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}",
         json={"enabled": False, "name": "health-check-2"},
     )
     assert updated.status_code == 200
     assert updated.json()["data"]["job"]["enabled"] is False
     assert updated.json()["data"]["job"]["name"] == "health-check-2"
 
-    run_now = client.post(f"/api/v1/scheduler/cron/jobs/{job_id}/run")
+    run_now = client.post(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}/run")
     assert run_now.status_code == 200
 
-    runs = client.get("/api/v1/scheduler/cron/runs")
+    runs = client.get("/api/v1/agents/default/scheduler/cron/runs")
     assert runs.status_code == 200
     assert any(row.get("job_id") == job_id for row in runs.json()["data"]["runs"])
 
-    failures = client.get("/api/v1/scheduler/cron/failures")
+    failures = client.get("/api/v1/agents/default/scheduler/cron/failures")
     assert failures.status_code == 200
     assert isinstance(failures.json()["data"]["failures"], list)
 
-    deleted = client.delete(f"/api/v1/scheduler/cron/jobs/{job_id}")
+    deleted = client.delete(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}")
     assert deleted.status_code == 204
     assert deleted.content == b""
 
@@ -57,7 +57,7 @@ def test_heartbeat_comment_only_prompt_is_skipped(client, api_app):
     heartbeat_scheduler.config.active_end_hour = 0
     asyncio.run(heartbeat_scheduler._tick_once())
 
-    rows = client.get("/api/v1/scheduler/heartbeat/runs")
+    rows = client.get("/api/v1/agents/default/scheduler/heartbeat/runs")
     assert rows.status_code == 200
     runs = rows.json()["data"]["runs"]
     assert runs
@@ -65,11 +65,11 @@ def test_heartbeat_comment_only_prompt_is_skipped(client, api_app):
 
 
 def test_heartbeat_config_update_roundtrip(client):
-    get_before = client.get("/api/v1/scheduler/heartbeat")
+    get_before = client.get("/api/v1/agents/default/scheduler/heartbeat")
     assert get_before.status_code == 200
 
     updated = client.put(
-        "/api/v1/scheduler/heartbeat",
+        "/api/v1/agents/default/scheduler/heartbeat",
         json={
             "enabled": True,
             "interval_seconds": 120,
@@ -97,7 +97,7 @@ def test_cron_run_uses_tool_aware_prompt(client, api_app):
     cron_scheduler.agent_manager.run_once = fake_run_once  # type: ignore[method-assign]
 
     created = client.post(
-        "/api/v1/scheduler/cron/jobs",
+        "/api/v1/agents/default/scheduler/cron/jobs",
         json={
             "name": "prices",
             "schedule_type": "every",
@@ -109,7 +109,7 @@ def test_cron_run_uses_tool_aware_prompt(client, api_app):
     assert created.status_code == 201
     job_id = created.json()["data"]["job"]["id"]
 
-    run_now = client.post(f"/api/v1/scheduler/cron/jobs/{job_id}/run")
+    run_now = client.post(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}/run")
     assert run_now.status_code == 200
     assert "web_search" in captured["message"]
     assert "web_fetch" in captured["message"]
