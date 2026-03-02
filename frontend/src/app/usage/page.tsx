@@ -7,7 +7,9 @@ import {
   Badge,
   Button,
   DataTable,
+  EmptyState,
   Select,
+  Skeleton,
   TableWrap,
 } from "@/components/ui/primitives";
 import {
@@ -276,6 +278,7 @@ export default function UsagePage() {
     total_tokens: 0,
     cost_usd: 0,
   };
+  const providerModelRows = summary?.by_provider_model ?? [];
 
   const trendBuckets = useMemo(
     () => buildTrendBuckets(records, sinceHours),
@@ -310,10 +313,10 @@ export default function UsagePage() {
   return (
     <main
       id="main-content"
-      className="app-main flex h-screen flex-col overflow-hidden"
+      className="flex min-h-dvh flex-col"
     >
       <Navbar />
-      <section className="flex h-full min-h-0 flex-col gap-3 p-3">
+      <section className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-y-auto p-3 pb-5">
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h1 className="ui-panel-title">Usage Analytics</h1>
@@ -327,7 +330,8 @@ export default function UsagePage() {
               <Badge tone="neutral">Records {records.length}</Badge>
               <Button
                 type="button"
-                className="min-h-[28px] px-2 text-[11px]"
+                size="sm"
+                className="px-2"
                 disabled={records.length === 0}
                 onClick={exportCsv}
               >
@@ -341,7 +345,7 @@ export default function UsagePage() {
               <span className="ui-label">Agent</span>
               <Select
                 name="agent-filter"
-                className="mt-1 ui-mono text-xs"
+                className="mt-1 ui-mono text-sm"
                 value={agentId}
                 onChange={(event) => setAgentId(event.target.value)}
               >
@@ -357,7 +361,7 @@ export default function UsagePage() {
               <span className="ui-label">Timeframe</span>
               <Select
                 name="timeframe-filter"
-                className="mt-1 text-xs"
+                className="mt-1 text-sm"
                 value={String(sinceHours)}
                 onChange={(event) => setSinceHours(Number(event.target.value))}
               >
@@ -373,7 +377,7 @@ export default function UsagePage() {
               <span className="ui-label">Provider</span>
               <Select
                 name="provider-filter"
-                className="mt-1 ui-mono text-xs"
+                className="mt-1 ui-mono text-sm"
                 value={provider}
                 onChange={(event) => {
                   setProvider(event.target.value);
@@ -393,7 +397,7 @@ export default function UsagePage() {
               <span className="ui-label">Model</span>
               <Select
                 name="model-filter"
-                className="mt-1 ui-mono text-xs"
+                className="mt-1 ui-mono text-sm"
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
               >
@@ -410,7 +414,7 @@ export default function UsagePage() {
               <span className="ui-label">Trigger</span>
               <Select
                 name="trigger-filter"
-                className="mt-1 ui-mono text-xs"
+                className="mt-1 ui-mono text-sm"
                 value={triggerType}
                 onChange={(event) => setTriggerType(event.target.value)}
               >
@@ -423,75 +427,94 @@ export default function UsagePage() {
 
             <div className="min-w-0">
               <div className="ui-label">Status</div>
-              <div className="mt-1 flex min-h-[38px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
+              <div className="mt-1 flex min-h-[42px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
                 {loading ? (
                   <Badge tone="accent">Loading…</Badge>
                 ) : (
                   <Badge tone="neutral">Loaded</Badge>
                 )}
                 {error ? (
-                  <span className="truncate text-xs text-[var(--danger)]">
+                  <span className="truncate text-sm text-[var(--danger)]">
                     {error}
                   </span>
                 ) : null}
               </div>
             </div>
           </div>
+          {error ? (
+            <div className="px-4 pb-4">
+              <div className="ui-alert" role="alert">
+                {error}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="grid gap-3 md:grid-cols-5">
-          <div className="panel-shell p-4">
-            <div className="ui-label">Priced Cost (USD)</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatUsd(totals.cost_usd)}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--muted)]">
-              Priced runs {formatNumber(totals.priced_runs)} /{" "}
-              {formatNumber(totals.runs)}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Input Tokens</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.input_tokens)}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--muted)]">
-              Uncached {formatNumber(totals.input_uncached_tokens)}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Cache Read</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.input_cache_read_tokens)}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--muted)]">
-              Cache Write {" "}
-              {formatNumber(
-                totals.input_cache_write_tokens_5m +
-                  totals.input_cache_write_tokens_1h +
-                  totals.input_cache_write_tokens_unknown,
-              )}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Output Tokens</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.output_tokens)}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--muted)]">
-              Reasoning {formatNumber(totals.reasoning_tokens)}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Total / Tool Input</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {formatNumber(totals.total_tokens)} /{" "}
-              {formatNumber(totals.tool_input_tokens)}
-            </div>
-            <div className="mt-1 text-[11px] text-[var(--muted)]">
-              Unpriced runs {formatNumber(totals.unpriced_runs)}
-            </div>
-          </div>
+          {loading ? (
+            Array.from({ length: 5 }).map((_, index) => (
+              <div key={index} className="panel-shell p-4">
+                <Skeleton className="h-3 w-1/2" />
+                <Skeleton className="mt-3 h-8 w-4/5" />
+                <Skeleton className="mt-3 h-3 w-3/5" />
+              </div>
+            ))
+          ) : (
+            <>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Priced Cost (USD)</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {formatUsd(totals.cost_usd)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Priced runs {formatNumber(totals.priced_runs)} /{" "}
+                  {formatNumber(totals.runs)}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Input Tokens</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {formatNumber(totals.input_tokens)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Uncached {formatNumber(totals.input_uncached_tokens)}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Cache Read</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {formatNumber(totals.input_cache_read_tokens)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Cache Write{" "}
+                  {formatNumber(
+                    totals.input_cache_write_tokens_5m +
+                      totals.input_cache_write_tokens_1h +
+                      totals.input_cache_write_tokens_unknown,
+                  )}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Output Tokens</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {formatNumber(totals.output_tokens)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Reasoning {formatNumber(totals.reasoning_tokens)}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Total / Tool Input</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {formatNumber(totals.total_tokens)} /{" "}
+                  {formatNumber(totals.tool_input_tokens)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Unpriced runs {formatNumber(totals.unpriced_runs)}
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="panel-shell">
@@ -500,126 +523,174 @@ export default function UsagePage() {
             <Badge tone="neutral">{trendBuckets.length} buckets</Badge>
           </div>
           <div className="p-4">
-            <div className="h-32 w-full">
-              <svg
-                viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`}
-                preserveAspectRatio="none"
-                className="h-full w-full"
-              >
-                {trendBuckets.map((bucket, index) => {
-                  const height = (bucket.total_tokens / maxTrend) * 92;
-                  const y = 96 - height;
-                  return (
-                    <g key={`${bucket.label}-${index}`}>
-                      <rect
-                        x={index + 0.12}
-                        y={y}
-                        width={0.76}
-                        height={Math.max(2, height)}
-                        rx={0.1}
-                        fill="var(--accent)"
-                        opacity={0.85}
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--muted)]">
-              {trendBuckets
-                .slice(Math.max(0, trendBuckets.length - 6))
-                .map((bucket) => (
-                  <span
-                    key={bucket.label}
-                    className="rounded border border-[var(--border)] px-2 py-0.5"
+            {loading ? (
+              <div className="space-y-3">
+                <Skeleton className="h-32 w-full" />
+                <div className="flex flex-wrap gap-2">
+                  <Skeleton className="h-6 w-32" />
+                  <Skeleton className="h-6 w-32" />
+                  <Skeleton className="h-6 w-32" />
+                </div>
+              </div>
+            ) : trendBuckets.length === 0 ? (
+              <EmptyState
+                title="No Trend Data"
+                description="No token usage data is available for the selected filter."
+              />
+            ) : (
+              <>
+                <div className="h-32 w-full">
+                  <svg
+                    viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`}
+                    preserveAspectRatio="none"
+                    className="h-full w-full"
                   >
-                    {bucket.label}: {formatNumber(bucket.total_tokens)} ({" "}
-                    {formatUsd(bucket.cost_usd)})
-                  </span>
-                ))}
-            </div>
+                    {trendBuckets.map((bucket, index) => {
+                      const height = (bucket.total_tokens / maxTrend) * 92;
+                      const y = 96 - height;
+                      return (
+                        <g key={`${bucket.label}-${index}`}>
+                          <rect
+                            x={index + 0.12}
+                            y={y}
+                            width={0.76}
+                            height={Math.max(2, height)}
+                            rx={0.1}
+                            fill="var(--accent)"
+                            opacity={0.85}
+                          />
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                  {trendBuckets
+                    .slice(Math.max(0, trendBuckets.length - 6))
+                    .map((bucket) => (
+                      <span
+                        key={bucket.label}
+                        className="rounded border border-[var(--border)] px-2 py-0.5"
+                      >
+                        {bucket.label}: {formatNumber(bucket.total_tokens)} ({" "}
+                        {formatUsd(bucket.cost_usd)})
+                      </span>
+                    ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-3 md:grid-cols-2">
-          <div className="panel-shell min-h-0">
+        <div className="grid min-w-0 gap-3 md:grid-cols-2">
+          <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">By Provider / Model</h2>
-              <Badge tone="neutral">
-                {summary?.by_provider_model.length ?? 0} rows
-              </Badge>
+              <Badge tone="neutral">{providerModelRows.length} rows</Badge>
             </div>
-            <TableWrap className="m-3 mt-0 max-h-full">
-              <DataTable>
-                <thead>
-                  <tr>
-                    <th>Provider</th>
-                    <th>Model</th>
-                    <th>Runs</th>
-                    <th>Input</th>
-                    <th>Cache Read</th>
-                    <th>Output</th>
-                    <th>Total</th>
-                    <th>Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(summary?.by_provider_model ?? []).map((row) => (
-                    <tr key={`${row.provider}:${row.model}`}>
-                      <td className="ui-mono">{row.provider}</td>
-                      <td className="ui-mono">{row.model}</td>
-                      <td>
-                        {formatNumber(row.runs)} ({formatNumber(row.priced_runs)}p)
-                      </td>
-                      <td>{formatNumber(row.input_tokens)}</td>
-                      <td>{formatNumber(row.input_cache_read_tokens)}</td>
-                      <td>{formatNumber(row.output_tokens)}</td>
-                      <td>{formatNumber(row.total_tokens)}</td>
-                      <td>{formatUsd(row.cost_usd)}</td>
-                    </tr>
-                  ))}
-                  {(summary?.by_provider_model ?? []).length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={8}
-                        className="text-center text-[var(--muted)]"
+            <div className="p-3">
+              {loading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-9 w-full" />
+                  <Skeleton className="h-9 w-full" />
+                </div>
+              ) : providerModelRows.length === 0 ? (
+                <EmptyState
+                  title="No Model Data"
+                  description="No model usage data for the selected filters."
+                />
+              ) : (
+                <>
+                  <div className="space-y-2 md:hidden">
+                    {providerModelRows.map((row) => (
+                      <article
+                        key={`${row.provider}:${row.model}:mobile`}
+                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
                       >
-                        No model data for this filter.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </DataTable>
-            </TableWrap>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="ui-mono text-sm">{row.provider}</div>
+                          <Badge tone="neutral">{formatNumber(row.runs)} runs</Badge>
+                        </div>
+                        <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
+                          {row.model}
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[var(--muted)]">
+                          <div>Input {formatNumber(row.input_tokens)}</div>
+                          <div>Output {formatNumber(row.output_tokens)}</div>
+                          <div>Total {formatNumber(row.total_tokens)}</div>
+                          <div>Cost {formatUsd(row.cost_usd)}</div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  <TableWrap className="hidden max-h-[420px] md:block">
+                    <DataTable>
+                      <thead>
+                        <tr>
+                          <th>Provider</th>
+                          <th>Model</th>
+                          <th>Runs</th>
+                          <th>Input</th>
+                          <th>Cache Read</th>
+                          <th>Output</th>
+                          <th>Total</th>
+                          <th>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {providerModelRows.map((row) => (
+                          <tr key={`${row.provider}:${row.model}`}>
+                            <td className="ui-mono">{row.provider}</td>
+                            <td className="ui-mono">{row.model}</td>
+                            <td>
+                              {formatNumber(row.runs)} ({formatNumber(row.priced_runs)}p)
+                            </td>
+                            <td>{formatNumber(row.input_tokens)}</td>
+                            <td>{formatNumber(row.input_cache_read_tokens)}</td>
+                            <td>{formatNumber(row.output_tokens)}</td>
+                            <td>{formatNumber(row.total_tokens)}</td>
+                            <td>{formatUsd(row.cost_usd)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </DataTable>
+                  </TableWrap>
+                </>
+              )}
+            </div>
           </div>
 
-          <div className="panel-shell min-h-0">
+          <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Recent Runs</h2>
               <Badge tone="neutral">last {records.length}</Badge>
             </div>
-            <TableWrap className="m-3 mt-0 max-h-full">
-              <DataTable>
-                <thead>
-                  <tr>
-                    <th>Run</th>
-                    <th>Time (UTC)</th>
-                    <th>Provider / Model</th>
-                    <th>Input</th>
-                    <th>Output</th>
-                    <th>Total</th>
-                    <th>Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((row, index) => (
-                    <tr key={`${row.run_id}-${index}`}>
-                      <td className="ui-mono">
-                        <div className="flex items-center gap-2">
-                          <span>{row.run_id.slice(0, 8)}</span>
+            <div className="p-3">
+              {loading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : records.length === 0 ? (
+                <EmptyState
+                  title="No Recent Runs"
+                  description="No usage runs for the selected filters."
+                />
+              ) : (
+                <>
+                  <div className="space-y-2 md:hidden">
+                    {records.map((row, index) => (
+                      <article
+                        key={`${row.run_id}-${index}-mobile`}
+                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="ui-mono text-sm">{row.run_id.slice(0, 8)}</div>
                           <Button
                             type="button"
-                            className="min-h-[24px] px-2 text-[10px]"
+                            size="sm"
                             aria-label={`Copy run id ${row.run_id}`}
                             onClick={() => {
                               void copyRunId(row.run_id);
@@ -628,62 +699,100 @@ export default function UsagePage() {
                             Copy
                           </Button>
                         </div>
-                        {copyState === row.run_id ? (
-                          <div
-                            className="mt-1 text-[10px] text-[var(--success)]"
-                            aria-live="polite"
-                          >
-                            Copied
-                          </div>
-                        ) : null}
-                      </td>
-                      <td>{formatUtcTimestamp(row.timestamp_ms)}</td>
-                      <td className="ui-mono">
-                        {row.provider}
-                        <div>{row.model}</div>
-                      </td>
-                      <td>
-                        {formatNumber(row.input_tokens)}
-                        <div className="text-[10px] text-[var(--muted)]">
-                          u:{formatNumber(row.input_uncached_tokens)} r:
-                          {formatNumber(row.input_cache_read_tokens)} w:
-                          {formatNumber(
-                            row.input_cache_write_tokens_5m +
-                              row.input_cache_write_tokens_1h +
-                              row.input_cache_write_tokens_unknown,
-                          )}
+                        <div className="mt-1 text-xs text-[var(--muted)]">
+                          {formatUtcTimestamp(row.timestamp_ms)}
                         </div>
-                      </td>
-                      <td>
-                        {formatNumber(row.output_tokens)}
-                        <div className="text-[10px] text-[var(--muted)]">
-                          reasoning {formatNumber(row.reasoning_tokens)}
+                        <div className="ui-mono mt-2 text-xs text-[var(--muted)]">
+                          {row.provider} / {row.model}
                         </div>
-                      </td>
-                      <td>{formatNumber(row.total_tokens)}</td>
-                      <td>
-                        {formatUsdMaybe(row.cost_usd)}
-                        {!row.priced ? (
-                          <div className="text-[10px] text-[var(--danger)]">
-                            {row.pricing.unpriced_reason ?? "unpriced"}
-                          </div>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                  {records.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="text-center text-[var(--muted)]"
-                      >
-                        No recent runs for this filter.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </DataTable>
-            </TableWrap>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-[var(--muted)]">
+                          <div>Input {formatNumber(row.input_tokens)}</div>
+                          <div>Output {formatNumber(row.output_tokens)}</div>
+                          <div>Total {formatNumber(row.total_tokens)}</div>
+                          <div>{formatUsdMaybe(row.cost_usd)}</div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  <TableWrap className="hidden max-h-[420px] md:block">
+                    <DataTable>
+                      <thead>
+                        <tr>
+                          <th>Run</th>
+                          <th>Time (UTC)</th>
+                          <th>Provider / Model</th>
+                          <th>Input</th>
+                          <th>Output</th>
+                          <th>Total</th>
+                          <th>Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {records.map((row, index) => (
+                          <tr key={`${row.run_id}-${index}`}>
+                            <td className="ui-mono">
+                              <div className="flex items-center gap-2">
+                                <span>{row.run_id.slice(0, 8)}</span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  aria-label={`Copy run id ${row.run_id}`}
+                                  onClick={() => {
+                                    void copyRunId(row.run_id);
+                                  }}
+                                >
+                                  Copy
+                                </Button>
+                              </div>
+                              {copyState === row.run_id ? (
+                                <div
+                                  className="mt-1 text-xs text-[var(--success)]"
+                                  aria-live="polite"
+                                >
+                                  Copied
+                                </div>
+                              ) : null}
+                            </td>
+                            <td>{formatUtcTimestamp(row.timestamp_ms)}</td>
+                            <td className="ui-mono">
+                              {row.provider}
+                              <div>{row.model}</div>
+                            </td>
+                            <td>
+                              {formatNumber(row.input_tokens)}
+                              <div className="text-xs text-[var(--muted)]">
+                                u:{formatNumber(row.input_uncached_tokens)} r:
+                                {formatNumber(row.input_cache_read_tokens)} w:
+                                {formatNumber(
+                                  row.input_cache_write_tokens_5m +
+                                    row.input_cache_write_tokens_1h +
+                                    row.input_cache_write_tokens_unknown,
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              {formatNumber(row.output_tokens)}
+                              <div className="text-xs text-[var(--muted)]">
+                                reasoning {formatNumber(row.reasoning_tokens)}
+                              </div>
+                            </td>
+                            <td>{formatNumber(row.total_tokens)}</td>
+                            <td>
+                              {formatUsdMaybe(row.cost_usd)}
+                              {!row.priced ? (
+                                <div className="text-xs text-[var(--danger)]">
+                                  {row.pricing.unpriced_reason ?? "unpriced"}
+                                </div>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </DataTable>
+                  </TableWrap>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </section>
