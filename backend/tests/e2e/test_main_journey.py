@@ -22,6 +22,8 @@ def test_main_user_journey_flow(client, api_app):
     assert compressed.status_code == 200
 
     # toggle rag mode
-    toggled = client.put("/api/v1/agents/default/config/rag-mode", json={"enabled": True})
+    toggled = client.put(
+        "/api/v1/agents/default/config/rag-mode", json={"enabled": True}
+    )
     assert toggled.status_code == 200
     assert toggled.json()["data"]["enabled"] is True

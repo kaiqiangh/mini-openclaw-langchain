@@ -11,7 +11,9 @@ def _write_config(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
-def test_validate_required_secrets_only_checks_active_profile(monkeypatch, tmp_path: Path):
+def test_validate_required_secrets_only_checks_active_profile(
+    monkeypatch, tmp_path: Path
+):
     _write_config(
         tmp_path / "config.json",
         {
@@ -68,4 +70,3 @@ def test_infer_provider_prefers_explicit_provider():
         explicit_provider="azure_foundry",
     )
     assert provider == "azure_foundry"
-

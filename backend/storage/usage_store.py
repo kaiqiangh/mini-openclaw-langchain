@@ -109,7 +109,9 @@ class UsageStore:
     def _normalize_record(self, row: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(row)
 
-        provider = str(normalized.get("provider", "unknown")).strip().lower() or "unknown"
+        provider = (
+            str(normalized.get("provider", "unknown")).strip().lower() or "unknown"
+        )
         model = str(normalized.get("model", "unknown")).strip() or "unknown"
         trigger_type = str(normalized.get("trigger_type", "")).strip().lower()
         session_id = str(normalized.get("session_id", "")).strip()
@@ -169,7 +171,9 @@ class UsageStore:
         if total_tokens <= 0:
             total_tokens = input_tokens + output_tokens + tool_input_tokens
         else:
-            total_tokens = max(total_tokens, input_tokens + output_tokens + tool_input_tokens)
+            total_tokens = max(
+                total_tokens, input_tokens + output_tokens + tool_input_tokens
+            )
 
         pricing = normalized.get("pricing")
         pricing_payload = pricing if isinstance(pricing, dict) else {}
@@ -333,9 +337,15 @@ class UsageStore:
                 model_bucket[field] += value
                 totals[field] += value
 
-            provider_bucket["input_tokens"] += self._coerce_int(row.get("input_tokens", 0))
-            provider_bucket["output_tokens"] += self._coerce_int(row.get("output_tokens", 0))
-            provider_bucket["total_tokens"] += self._coerce_int(row.get("total_tokens", 0))
+            provider_bucket["input_tokens"] += self._coerce_int(
+                row.get("input_tokens", 0)
+            )
+            provider_bucket["output_tokens"] += self._coerce_int(
+                row.get("output_tokens", 0)
+            )
+            provider_bucket["total_tokens"] += self._coerce_int(
+                row.get("total_tokens", 0)
+            )
 
             cost_value = self._coerce_float(row.get("cost_usd"))
             is_priced = bool(row.get("priced", False)) and cost_value is not None

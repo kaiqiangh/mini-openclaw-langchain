@@ -38,4 +38,3 @@ def test_rate_limit_window(kind: str, tmp_path: Path):
     assert first.allowed is True
     assert second.allowed is False
     assert second.retry_after_seconds >= 1
-

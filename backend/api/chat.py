@@ -291,7 +291,9 @@ async def _run_stream_task(
                 await _persist_final_segments(state, runtime)
 
     except Exception as exc:  # noqa: BLE001
-        session_manager.clear_live_response(state.session_id, run_id=state.run_id or None)
+        session_manager.clear_live_response(
+            state.session_id, run_id=state.run_id or None
+        )
         await _publish_event(
             state,
             "error",
@@ -305,7 +307,9 @@ async def _run_stream_task(
         await _close_run(state)
 
 
-async def _subscribe_run(state: _StreamRunState) -> asyncio.Queue[dict[str, str] | None]:
+async def _subscribe_run(
+    state: _StreamRunState,
+) -> asyncio.Queue[dict[str, str] | None]:
     queue: asyncio.Queue[dict[str, str] | None] = asyncio.Queue(maxsize=512)
     async with state.lock:
         if state.done:

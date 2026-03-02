@@ -11,11 +11,15 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert listed.status_code == 200
     assert any(item["session_id"] == session_id for item in listed.json()["data"])
 
-    renamed = client.put(f"/api/v1/agents/default/sessions/{session_id}", json={"title": "New"})
+    renamed = client.put(
+        f"/api/v1/agents/default/sessions/{session_id}", json={"title": "New"}
+    )
     assert renamed.status_code == 200
     assert renamed.json()["data"]["title"] == "New"
 
-    read_file = client.get("/api/v1/agents/default/files", params={"path": "memory/MEMORY.md"})
+    read_file = client.get(
+        "/api/v1/agents/default/files", params={"path": "memory/MEMORY.md"}
+    )
     assert read_file.status_code == 200
 
     files_index = client.get("/api/v1/agents/default/files/index")
@@ -41,7 +45,9 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     rag_get = client.get("/api/v1/agents/default/config/rag-mode")
     assert rag_get.status_code == 200
     assert rag_get.json()["data"]["agent_id"] == "default"
-    rag_put = client.put("/api/v1/agents/default/config/rag-mode", json={"enabled": True})
+    rag_put = client.put(
+        "/api/v1/agents/default/config/rag-mode", json={"enabled": True}
+    )
     assert rag_put.status_code == 200
     assert rag_put.json()["data"]["enabled"] is True
     assert rag_put.json()["data"]["agent_id"] == "default"
@@ -87,11 +93,15 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert tracing_after.json()["data"]["enabled"] is False
 
     # compression error envelope for <4 messages
-    compress_small = client.post(f"/api/v1/agents/default/sessions/{session_id}/compress")
+    compress_small = client.post(
+        f"/api/v1/agents/default/sessions/{session_id}/compress"
+    )
     assert compress_small.status_code == 400
     assert compress_small.json()["error"]["code"] == "invalid_state"
 
-    gen_title = client.post(f"/api/v1/agents/default/sessions/{session_id}/generate-title")
+    gen_title = client.post(
+        f"/api/v1/agents/default/sessions/{session_id}/generate-title"
+    )
     assert gen_title.status_code == 400
     assert gen_title.json()["error"]["code"] == "invalid_state"
 
@@ -106,7 +116,9 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert compress_ok.status_code == 200
     assert compress_ok.json()["data"]["archived_count"] >= 4
 
-    gen_title = client.post(f"/api/v1/agents/default/sessions/{session_id}/generate-title")
+    gen_title = client.post(
+        f"/api/v1/agents/default/sessions/{session_id}/generate-title"
+    )
     assert gen_title.status_code == 200
     assert isinstance(gen_title.json()["data"]["title"], str)
 
@@ -127,7 +139,9 @@ def test_archive_restore_and_delete_archived_session(client):
     assert active_list.status_code == 200
     assert all(item["session_id"] != session_id for item in active_list.json()["data"])
 
-    archived_list = client.get("/api/v1/agents/default/sessions", params={"scope": "archived"})
+    archived_list = client.get(
+        "/api/v1/agents/default/sessions", params={"scope": "archived"}
+    )
     assert archived_list.status_code == 200
     assert any(
         item["session_id"] == session_id and item["archived"] is True
@@ -138,10 +152,14 @@ def test_archive_restore_and_delete_archived_session(client):
     assert restored.status_code == 200
     assert restored.json()["data"]["restored"] is True
 
-    archived_again = client.post(f"/api/v1/agents/default/sessions/{session_id}/archive")
+    archived_again = client.post(
+        f"/api/v1/agents/default/sessions/{session_id}/archive"
+    )
     assert archived_again.status_code == 200
 
-    deleted = client.delete(f"/api/v1/agents/default/sessions/{session_id}", params={"archived": "true"})
+    deleted = client.delete(
+        f"/api/v1/agents/default/sessions/{session_id}", params={"archived": "true"}
+    )
     assert deleted.status_code == 204
     assert deleted.content == b""
 
@@ -152,7 +170,9 @@ def test_agents_endpoint_and_session_isolation(client):
     assert "Location" in created_agent.headers
     assert created_agent.json()["data"]["agent_id"] == "agent-b"
 
-    default_session = client.post("/api/v1/agents/default/sessions", json={}).json()["data"]["session_id"]
+    default_session = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
     other_session = client.post("/api/v1/agents/agent-b/sessions", json={}).json()[
         "data"
     ]["session_id"]
@@ -164,7 +184,9 @@ def test_agents_endpoint_and_session_isolation(client):
     assert all(item["session_id"] != other_session for item in default_list)
     assert any(item["session_id"] == other_session for item in other_list)
 
-    default_files = client.get("/api/v1/agents/default/files/index").json()["data"]["files"]
+    default_files = client.get("/api/v1/agents/default/files/index").json()["data"][
+        "files"
+    ]
     other_files = client.get("/api/v1/agents/agent-b/files/index").json()["data"][
         "files"
     ]

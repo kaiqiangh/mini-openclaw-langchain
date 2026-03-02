@@ -23,7 +23,9 @@ class LocalCoordinator:
     def release_stream_lock(self, key: str, owner: str) -> None:
         raise NotImplementedError
 
-    def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int
+    ) -> RateLimitDecision:
         raise NotImplementedError
 
 
@@ -65,7 +67,9 @@ class InMemoryCoordinator(LocalCoordinator):
             if current_owner == owner:
                 self._stream_locks.pop(key, None)
 
-    def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int
+    ) -> RateLimitDecision:
         now = time.time()
         window = max(1, int(window_seconds))
         with self._lock:
@@ -161,7 +165,9 @@ class SQLiteCoordinator(LocalCoordinator):
                 )
                 conn.commit()
 
-    def check_rate_limit(self, key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int
+    ) -> RateLimitDecision:
         now = time.time()
         window = max(1, int(window_seconds))
         min_ts = now - window
@@ -181,7 +187,9 @@ class SQLiteCoordinator(LocalCoordinator):
                     oldest = float(rows[0][0])
                     retry_after = max(1, int((oldest + window) - now))
                     conn.commit()
-                    return RateLimitDecision(allowed=False, retry_after_seconds=retry_after)
+                    return RateLimitDecision(
+                        allowed=False, retry_after_seconds=retry_after
+                    )
 
                 conn.execute(
                     "INSERT INTO rate_events(bucket_key, ts) VALUES (?, ?)",
@@ -194,7 +202,9 @@ class SQLiteCoordinator(LocalCoordinator):
 def build_local_coordinator(base_dir: Path) -> LocalCoordinator:
     backend = (os.getenv("CONTROL_BACKEND", "in_memory") or "in_memory").strip().lower()
     if backend == "sqlite":
-        db_path_raw = (os.getenv("CONTROL_DB_PATH", "storage/control.db") or "storage/control.db").strip()
+        db_path_raw = (
+            os.getenv("CONTROL_DB_PATH", "storage/control.db") or "storage/control.db"
+        ).strip()
         db_path = Path(db_path_raw)
         if not db_path.is_absolute():
             db_path = (base_dir / db_path).resolve()

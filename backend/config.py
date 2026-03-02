@@ -711,17 +711,13 @@ def validate_required_secrets(config: AppConfig) -> list[str]:
     if required_api_key_env and not (os.getenv(required_api_key_env, "") or "").strip():
         missing.append(required_api_key_env)
     if not active_profile.model.strip():
-        missing.append(
-            f"LLM_PROFILE_{active_profile.profile_name.upper()}_MODEL"
-        )
+        missing.append(f"LLM_PROFILE_{active_profile.profile_name.upper()}_MODEL")
     if (
         active_profile.driver == LLMDriver.OPENAI_COMPATIBLE
         and active_profile.provider_id != "openai"
         and not active_profile.base_url.strip()
     ):
-        missing.append(
-            f"LLM_PROFILE_{active_profile.profile_name.upper()}_BASE_URL"
-        )
+        missing.append(f"LLM_PROFILE_{active_profile.profile_name.upper()}_BASE_URL")
     return missing
 
 

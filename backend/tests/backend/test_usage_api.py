@@ -110,7 +110,8 @@ def test_usage_summary_and_records_filters(client, api_app):
     assert all(item["total_tokens"] > 0 for item in payload["records"])
 
     summary = client.get(
-        "/api/v1/agents/default/usage/summary", params={"since_hours": 2, "trigger_type": "chat"}
+        "/api/v1/agents/default/usage/summary",
+        params={"since_hours": 2, "trigger_type": "chat"},
     )
     assert summary.status_code == 200
     data = summary.json()["data"]

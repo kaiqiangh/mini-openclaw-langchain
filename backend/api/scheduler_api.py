@@ -129,7 +129,9 @@ async def list_cron_jobs(
     return {"data": {"agent_id": agent_id, "jobs": jobs}}
 
 
-@router.post("/agents/{agent_id}/scheduler/cron/jobs", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/agents/{agent_id}/scheduler/cron/jobs", status_code=status.HTTP_201_CREATED
+)
 async def create_cron_job(
     agent_id: str,
     request: CronJobCreateRequest,

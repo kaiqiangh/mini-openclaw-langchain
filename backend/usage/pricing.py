@@ -469,8 +469,12 @@ def calculate_cost_breakdown(
     lines = [
         _line_item("input_uncached", input_uncached_tokens, input_rate),
         _line_item("input_cache_read", input_cache_read_tokens, cache_read_rate),
-        _line_item("input_cache_write_5m", input_cache_write_tokens_5m, cache_write_5m_rate),
-        _line_item("input_cache_write_1h", input_cache_write_tokens_1h, cache_write_1h_rate),
+        _line_item(
+            "input_cache_write_5m", input_cache_write_tokens_5m, cache_write_5m_rate
+        ),
+        _line_item(
+            "input_cache_write_1h", input_cache_write_tokens_1h, cache_write_1h_rate
+        ),
         _line_item("input_cache_write_unknown", input_cache_write_tokens_unknown, None),
         _line_item("output", output_tokens, output_rate),
     ]

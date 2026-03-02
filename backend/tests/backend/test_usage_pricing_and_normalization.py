@@ -266,4 +266,3 @@ def test_tool_loop_model_respects_per_model_override_key_value(monkeypatch):
         has_tools=True,
     )
     assert selected == "deepseek-v3.1"
-

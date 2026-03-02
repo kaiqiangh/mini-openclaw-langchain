@@ -52,7 +52,9 @@ def _read_max(payload: dict[str, Any], paths: tuple[tuple[str, ...], ...]) -> in
     return best
 
 
-def _extract_model(response_metadata: dict[str, Any], fallback_model: str) -> tuple[str, str]:
+def _extract_model(
+    response_metadata: dict[str, Any], fallback_model: str
+) -> tuple[str, str]:
     model_paths: tuple[tuple[str, ...], ...] = (
         ("model_name",),
         ("model",),
@@ -126,7 +128,9 @@ def extract_usage_from_message(
     response_metadata = _as_dict(getattr(message, "response_metadata", None))
 
     model, model_source = _extract_model(response_metadata, fallback_model)
-    provider_override = explicit_provider or _extract_explicit_provider(response_metadata)
+    provider_override = explicit_provider or _extract_explicit_provider(
+        response_metadata
+    )
     provider = infer_provider(
         model,
         base_url=fallback_base_url,
@@ -293,7 +297,9 @@ def extract_usage_from_message(
     elif provider == "deepseek" and deepseek_cache_miss > 0:
         input_uncached_tokens = deepseek_cache_miss
     else:
-        input_uncached_tokens = max(0, input_tokens - cache_read_tokens - cache_write_total)
+        input_uncached_tokens = max(
+            0, input_tokens - cache_read_tokens - cache_write_total
+        )
 
     if input_tokens <= 0 and (
         input_uncached_tokens > 0 or cache_read_tokens > 0 or cache_write_total > 0
@@ -305,7 +311,9 @@ def extract_usage_from_message(
     tool_input_tokens = max(0, tool_input_tokens)
 
     if provider == "google":
-        computed_total = input_tokens + output_tokens + tool_input_tokens + reasoning_tokens
+        computed_total = (
+            input_tokens + output_tokens + tool_input_tokens + reasoning_tokens
+        )
     else:
         computed_total = input_tokens + output_tokens + tool_input_tokens
 

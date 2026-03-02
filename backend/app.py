@@ -69,7 +69,9 @@ def _frontend_proxy_url() -> str:
     return (os.getenv("APP_FRONTEND_PROXY_URL", "") or "").strip().rstrip("/")
 
 
-def _forward_frontend_request(outbound: UrlRequest) -> tuple[int, bytes, dict[str, str]]:
+def _forward_frontend_request(
+    outbound: UrlRequest,
+) -> tuple[int, bytes, dict[str, str]]:
     try:
         with urlopen(outbound, timeout=30) as upstream:
             payload = upstream.read()
@@ -111,9 +113,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         for prefix, limit, window_sec in self._limits:
             if prefix == "/chat" and path.endswith(prefix):
                 return limit, window_sec
-            if prefix == "/files" and (
-                path.endswith("/files") or "/files/" in path
-            ):
+            if prefix == "/files" and (path.endswith("/files") or "/files/" in path):
                 return limit, window_sec
             if prefix == "/tokens/" and prefix in path:
                 return limit, window_sec
@@ -448,7 +448,9 @@ if _env_bool("APP_ENABLE_FRONTEND_PROXY", default=False):
         response = await _proxy_to_frontend(request)
         configured = (os.getenv("APP_ADMIN_TOKEN", "") or "").strip()
         existing = (request.cookies.get("app_admin_token", "") or "").strip()
-        if configured and (not existing or not hmac.compare_digest(existing, configured)):
+        if configured and (
+            not existing or not hmac.compare_digest(existing, configured)
+        ):
             response.set_cookie(
                 key="app_admin_token",
                 value=configured,

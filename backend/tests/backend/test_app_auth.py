@@ -46,7 +46,9 @@ def test_auth_rejects_missing_or_invalid_token(monkeypatch):
         wrong_raw = client.get(
             "/api/v1/secure", headers={"Authorization": "wrong-value"}
         )
-        wrong_alt = client.get("/api/v1/secure", headers={"X-Admin-Token": "wrong-value"})
+        wrong_alt = client.get(
+            "/api/v1/secure", headers={"X-Admin-Token": "wrong-value"}
+        )
     assert missing.status_code == 401
     assert wrong.status_code == 401
     assert wrong_raw.status_code == 401
@@ -61,9 +63,15 @@ def test_auth_accepts_valid_token(monkeypatch):
         bearer_response = client.get(
             "/api/v1/secure", headers={"Authorization": "Bearer secret-1"}
         )
-        raw_response = client.get("/api/v1/secure", headers={"Authorization": "secret-1"})
-        alt_response = client.get("/api/v1/secure", headers={"X-Admin-Token": "secret-1"})
-        cookie_response = client.get("/api/v1/secure", cookies={"app_admin_token": "secret-1"})
+        raw_response = client.get(
+            "/api/v1/secure", headers={"Authorization": "secret-1"}
+        )
+        alt_response = client.get(
+            "/api/v1/secure", headers={"X-Admin-Token": "secret-1"}
+        )
+        cookie_response = client.get(
+            "/api/v1/secure", cookies={"app_admin_token": "secret-1"}
+        )
     assert bearer_response.status_code == 200
     assert raw_response.status_code == 200
     assert alt_response.status_code == 200

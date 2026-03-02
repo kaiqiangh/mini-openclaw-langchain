@@ -663,18 +663,24 @@ class AgentManager:
             )
 
         if response_format is None:
-            return create_agent(
+            return (
+                create_agent(
+                    model=active_llm,
+                    tools=langchain_tools,
+                    system_prompt=system_prompt,
+                ),
+                selected_model,
+            )
+
+        return (
+            create_agent(
                 model=active_llm,
                 tools=langchain_tools,
                 system_prompt=system_prompt,
-            ), selected_model
-
-        return create_agent(
-            model=active_llm,
-            tools=langchain_tools,
-            system_prompt=system_prompt,
-            response_format=response_format,
-        ), selected_model
+                response_format=response_format,
+            ),
+            selected_model,
+        )
 
     @staticmethod
     def _as_text(content: Any) -> str:
@@ -800,9 +806,7 @@ class AgentManager:
         input_uncached_tokens = self._as_int(
             usage_state.get("input_uncached_tokens", 0)
         )
-        cache_read_tokens = self._as_int(
-            usage_state.get("input_cache_read_tokens", 0)
-        )
+        cache_read_tokens = self._as_int(usage_state.get("input_cache_read_tokens", 0))
         cache_write_5m_tokens = self._as_int(
             usage_state.get("input_cache_write_tokens_5m", 0)
         )
@@ -932,7 +936,9 @@ class AgentManager:
         return changed
 
     def _usage_signature(self, usage_state: dict[str, Any]) -> str:
-        parts = [str(usage_state.get(field, "")) for field in self._usage_numeric_fields()]
+        parts = [
+            str(usage_state.get(field, "")) for field in self._usage_numeric_fields()
+        ]
         parts.extend(
             [
                 str(usage_state.get("provider", "")),
@@ -954,8 +960,12 @@ class AgentManager:
             return {}
         model_fallback = (fallback_model or "").strip()
         if not model_fallback:
-            default_profile = self.config.llm_profiles.get(self.config.default_llm_profile)
-            model_fallback = default_profile.model if default_profile is not None else ""
+            default_profile = self.config.llm_profiles.get(
+                self.config.default_llm_profile
+            )
+            model_fallback = (
+                default_profile.model if default_profile is not None else ""
+            )
         return extract_usage_from_message(
             message=message,
             fallback_model=model_fallback,
@@ -979,9 +989,7 @@ class AgentManager:
             provider=provider,
             model=model,
             input_tokens=self._as_int(usage.get("input_tokens", 0)),
-            input_uncached_tokens=self._as_int(
-                usage.get("input_uncached_tokens", 0)
-            ),
+            input_uncached_tokens=self._as_int(usage.get("input_uncached_tokens", 0)),
             input_cache_read_tokens=self._as_int(
                 usage.get("input_cache_read_tokens", 0)
             ),
@@ -1231,9 +1239,10 @@ class AgentManager:
         )
 
         output_messages = result.get("messages", [])
-        if isinstance(output_messages, list) and self._as_int(
-            usage_state.get("total_tokens", 0)
-        ) <= 0:
+        if (
+            isinstance(output_messages, list)
+            and self._as_int(usage_state.get("total_tokens", 0)) <= 0
+        ):
             # Fallback for providers/environments where callback payloads are sparse.
             self._accumulate_usage_from_messages(
                 usage_state=usage_state,
@@ -1549,9 +1558,7 @@ class AgentManager:
                                         usage_state.get("input_uncached_tokens", 0)
                                     ),
                                     input_cache_read_tokens=self._as_int(
-                                        usage_state.get(
-                                            "input_cache_read_tokens", 0
-                                        )
+                                        usage_state.get("input_cache_read_tokens", 0)
                                     ),
                                     input_cache_write_tokens_5m=self._as_int(
                                         usage_state.get(

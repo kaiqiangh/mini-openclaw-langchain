@@ -41,9 +41,9 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
     assert "agent_update" in events
     assert "reasoning" in events
 
-    history = client.get(f"/api/v1/agents/default/sessions/{session_id}/history").json()["data"][
-        "messages"
-    ]
+    history = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/history"
+    ).json()["data"]["messages"]
     assert len(history) == 3
     assert history[0]["role"] == "user"
     assert history[1]["role"] == "assistant"

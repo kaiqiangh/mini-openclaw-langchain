@@ -206,16 +206,16 @@ class SessionManager:
             self.save_session(session_id, session)
 
     @staticmethod
-    def with_live_response(messages: list[dict[str, Any]], session: dict[str, Any]) -> list[dict[str, Any]]:
+    def with_live_response(
+        messages: list[dict[str, Any]], session: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         merged = [dict(message) for message in messages]
         live = session.get("live_response")
         if not isinstance(live, dict):
             return merged
         content = str(live.get("content", "")).strip()
         tool_calls = live.get("tool_calls")
-        if not content and not (
-            isinstance(tool_calls, list) and len(tool_calls) > 0
-        ):
+        if not content and not (isinstance(tool_calls, list) and len(tool_calls) > 0):
             return merged
 
         entry: dict[str, Any] = {
