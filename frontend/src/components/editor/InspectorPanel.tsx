@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getAgentRuntimeDiff,
@@ -95,6 +95,9 @@ export function InspectorPanel() {
     useState<Record<RuntimeSectionKey, boolean>>(DEFAULT_RUNTIME_SECTIONS);
   const runtimeEditorRef = useRef<any>(null);
   const fileEditorRef = useRef<any>(null);
+  const runtimeDirtyRef = useRef(false);
+  const currentAgentIdRef = useRef("default");
+  const runtimeConfigContentRef = useRef("{}");
 
   const {
     agents,
@@ -107,6 +110,64 @@ export function InspectorPanel() {
     updateSelectedFileContent,
     saveSelectedFile,
   } = useAppStore();
+
+  useEffect(() => {
+    runtimeDirtyRef.current = runtimeConfigDirty;
+  }, [runtimeConfigDirty]);
+
+  currentAgentIdRef.current = currentAgentId;
+  runtimeConfigContentRef.current = runtimeConfigContent;
+
+  const updateRuntimeConfigContent = useCallback((content: string) => {
+    runtimeConfigContentRef.current = content;
+    setRuntimeConfigContent(content);
+  }, []);
+
+  const reloadRuntimeConfig = useCallback(
+    async ({
+      confirmDiscard = false,
+      announce = true,
+    }: {
+      confirmDiscard?: boolean;
+      announce?: boolean;
+    } = {}) => {
+      if (
+        confirmDiscard &&
+        runtimeDirtyRef.current &&
+        typeof window !== "undefined" &&
+        !window.confirm("Discard unsaved runtime config changes and reload?")
+      ) {
+        return false;
+      }
+
+      setRuntimeConfigLoading(true);
+      setRuntimeConfigError("");
+      if (announce) {
+        setRuntimeActionStatus("");
+      }
+      try {
+        const targetAgentId = currentAgentIdRef.current;
+        const payload = await getRuntimeConfig(targetAgentId);
+        if (targetAgentId !== currentAgentIdRef.current) {
+          return false;
+        }
+        updateRuntimeConfigContent(JSON.stringify(payload, null, 2));
+        setRuntimeConfigDirty(false);
+        if (announce) {
+          setRuntimeActionStatus("Runtime config reloaded.");
+        }
+        return true;
+      } catch (err) {
+        setRuntimeConfigError(
+          err instanceof Error ? err.message : "Failed to load runtime config",
+        );
+        return false;
+      } finally {
+        setRuntimeConfigLoading(false);
+      }
+    },
+    [updateRuntimeConfigContent],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -166,31 +227,8 @@ export function InspectorPanel() {
   }, [currentAgentId]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function loadRuntime() {
-      setRuntimeConfigLoading(true);
-      setRuntimeConfigError("");
-      try {
-        const payload = await getRuntimeConfig(currentAgentId);
-        if (cancelled) return;
-        setRuntimeConfigContent(JSON.stringify(payload, null, 2));
-        setRuntimeConfigDirty(false);
-      } catch (err) {
-        if (cancelled) return;
-        setRuntimeConfigError(
-          err instanceof Error ? err.message : "Failed to load runtime config",
-        );
-      } finally {
-        if (!cancelled) setRuntimeConfigLoading(false);
-      }
-    }
-
-    void loadRuntime();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentAgentId]);
+    void reloadRuntimeConfig({ confirmDiscard: false, announce: false });
+  }, [currentAgentId, reloadRuntimeConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,14 +346,16 @@ export function InspectorPanel() {
     setRuntimeConfigError("");
     let payload: Record<string, unknown>;
     try {
-      payload = JSON.parse(runtimeConfigContent) as Record<string, unknown>;
+      payload = JSON.parse(
+        runtimeConfigContentRef.current,
+      ) as Record<string, unknown>;
     } catch {
       setRuntimeConfigError("Runtime config JSON is invalid.");
       return;
     }
     try {
-      const saved = await setRuntimeConfig(payload, currentAgentId);
-      setRuntimeConfigContent(JSON.stringify(saved, null, 2));
+      const saved = await setRuntimeConfig(payload, currentAgentIdRef.current);
+      updateRuntimeConfigContent(JSON.stringify(saved, null, 2));
       setRuntimeConfigDirty(false);
     } catch (err) {
       setRuntimeConfigError(
@@ -329,7 +369,7 @@ export function InspectorPanel() {
     setRuntimeConfigError("");
     try {
       const template = await getAgentTemplate(selectedTemplate);
-      setRuntimeConfigContent(JSON.stringify(template.runtime_config, null, 2));
+      updateRuntimeConfigContent(JSON.stringify(template.runtime_config, null, 2));
       setRuntimeConfigDirty(true);
     } catch (err) {
       setRuntimeConfigError(
@@ -399,8 +439,10 @@ export function InspectorPanel() {
 
   function formatRuntimeJson() {
     try {
-      const parsed = JSON.parse(runtimeConfigContent) as Record<string, unknown>;
-      setRuntimeConfigContent(JSON.stringify(parsed, null, 2));
+      const parsed = JSON.parse(
+        runtimeConfigContentRef.current,
+      ) as Record<string, unknown>;
+      updateRuntimeConfigContent(JSON.stringify(parsed, null, 2));
       setRuntimeConfigDirty(true);
       setRuntimeActionStatus("JSON formatted.");
       setRuntimeConfigError("");
@@ -412,7 +454,7 @@ export function InspectorPanel() {
 
   function validateRuntimeJson() {
     try {
-      JSON.parse(runtimeConfigContent);
+      JSON.parse(runtimeConfigContentRef.current);
       setRuntimeConfigError("");
       setRuntimeActionStatus("JSON is valid.");
     } catch {
@@ -423,7 +465,7 @@ export function InspectorPanel() {
 
   async function copyRuntimeJson() {
     try {
-      await navigator.clipboard.writeText(runtimeConfigContent);
+      await navigator.clipboard.writeText(runtimeConfigContentRef.current);
       setRuntimeActionStatus("Runtime config copied.");
     } catch {
       setRuntimeActionStatus("Copy failed.");
@@ -603,6 +645,19 @@ export function InspectorPanel() {
                   </Button>
                   <Button type="button" size="sm" onClick={openRuntimeSearch}>
                     Search
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    loading={runtimeConfigLoading}
+                    onClick={() => {
+                      void reloadRuntimeConfig({
+                        confirmDiscard: true,
+                        announce: true,
+                      });
+                    }}
+                  >
+                    Reload
                   </Button>
                   <Button
                     type="button"
@@ -807,7 +862,7 @@ export function InspectorPanel() {
                     </Button>
                   </div>
                   {runtimeSections.editor ? (
-                    <div className="h-[34vh] min-h-[260px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
+                    <div className="h-[48vh] min-h-[320px] max-h-[680px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
                       <MonacoEditor
                         height="100%"
                         language="json"
@@ -817,7 +872,7 @@ export function InspectorPanel() {
                           runtimeEditorRef.current = editor;
                         }}
                         onChange={(value) => {
-                          setRuntimeConfigContent(value ?? "");
+                          updateRuntimeConfigContent(value ?? "");
                           setRuntimeConfigDirty(true);
                         }}
                         options={{
@@ -826,7 +881,7 @@ export function InspectorPanel() {
                           lineNumbers: "on",
                           wordWrap: "on",
                           smoothScrolling: true,
-                          scrollBeyondLastLine: false,
+                          scrollBeyondLastLine: true,
                           automaticLayout: true,
                           readOnly: runtimeConfigLoading,
                           fontFamily: "var(--font-mono)",
