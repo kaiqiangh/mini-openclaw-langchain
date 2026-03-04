@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
@@ -26,16 +25,17 @@ from config import (
     runtime_config_digest,
 )
 from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
+from graph.agent_loop_types import StreamLoopState
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
+from graph.retrieval_orchestrator import RetrievalOrchestrator
 from graph.session_manager import SessionManager
+from graph.stream_orchestrator import StreamOrchestrator
+from graph.tool_orchestrator import ToolOrchestrator
+from graph.usage_orchestrator import UsageOrchestrator
 from observability.tracing import build_optional_callbacks
 from storage.run_store import AuditStore
 from storage.usage_store import UsageStore
-from tools import get_all_tools, get_explicit_enabled_tools, get_tool_runner
-from tools.base import ToolContext
-from tools.langchain_tools import build_langchain_tools
-from usage.normalization import extract_usage_from_message
 from usage.pricing import calculate_cost_breakdown, infer_provider
 
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -72,6 +72,7 @@ class AgentManager:
         self.audit_store: AuditStore | None = None
         self.usage_store: UsageStore | None = None
         self.prompt_builder = PromptBuilder()
+        self.usage_orchestrator = UsageOrchestrator()
         self.default_agent_id = "default"
         self._runtimes: dict[str, AgentRuntime] = {}
 
@@ -623,239 +624,58 @@ class AgentManager:
     ) -> tuple[Any, str]:
         if self.base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
-
-        mini_tools = get_all_tools(
-            runtime_root,
-            runtime,
-            trigger_type,
+        built = ToolOrchestrator.build_agent(
             config_base_dir=self.base_dir,
+            runtime_root=runtime_root,
+            runtime=runtime,
+            llm=llm,
+            llm_profile=llm_profile,
+            trigger_type=trigger_type,
+            run_id=run_id,
+            session_id=session_id,
+            runtime_audit_store=runtime_audit_store,
+            system_prompt=system_prompt,
+            response_format=response_format,
+            resolve_tool_loop_model=self._resolve_tool_loop_model,
+            build_llm_kwargs=self._build_llm_kwargs,
         )
-        explicit_enabled_tools = get_explicit_enabled_tools(runtime, trigger_type)
-        runner = get_tool_runner(
-            runtime_root,
-            runtime_audit_store,
-            repeat_identical_failure_limit=runtime.tool_retry_guard.repeat_identical_failure_limit,
-        )
-        langchain_tools = build_langchain_tools(
-            tools=mini_tools,
-            runner=runner,
-            context=ToolContext(
-                workspace_root=runtime_root,
-                trigger_type=trigger_type,
-                explicit_enabled_tools=tuple(explicit_enabled_tools),
-                run_id=run_id,
-                session_id=session_id,
-            ),
-        )
-        configured_model = str(llm_profile.model)
-        selected_model = self._resolve_tool_loop_model(
-            configured_model=configured_model,
-            has_tools=bool(langchain_tools),
-        )
-        active_llm = llm
-        if selected_model != configured_model:
-            active_llm = ChatOpenAI(
-                **self._build_llm_kwargs(
-                    profile=llm_profile,
-                    runtime=runtime,
-                    model_override=selected_model,
-                )
-            )
-
-        if response_format is None:
-            return (
-                create_agent(
-                    model=active_llm,
-                    tools=langchain_tools,
-                    system_prompt=system_prompt,
-                ),
-                selected_model,
-            )
-
-        return (
-            create_agent(
-                model=active_llm,
-                tools=langchain_tools,
-                system_prompt=system_prompt,
-                response_format=response_format,
-            ),
-            selected_model,
-        )
+        return built.agent, built.selected_model
 
     @staticmethod
     def _as_text(content: Any) -> str:
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return " ".join(str(item) for item in content)
-        return str(content)
+        return StreamOrchestrator.as_text(content)
 
     @staticmethod
     def _extract_token_text(token: Any) -> list[str]:
-        texts: list[str] = []
-
-        blocks = getattr(token, "content_blocks", None)
-        if isinstance(blocks, list):
-            for block in blocks:
-                if not isinstance(block, dict):
-                    continue
-                btype = str(block.get("type", ""))
-                if btype in {"text", "text_chunk"}:
-                    text = block.get("text") or block.get("content") or ""
-                    if text:
-                        texts.append(str(text))
-
-        if not texts:
-            content = getattr(token, "content", None)
-            if isinstance(content, str) and content:
-                texts.append(content)
-
-        return texts
+        return StreamOrchestrator.extract_token_text(token)
 
     @staticmethod
     def _extract_reasoning_text(message: Any) -> list[str]:
-        texts: list[str] = []
-        blocks = getattr(message, "content_blocks", None)
-        if not isinstance(blocks, list):
-            return texts
-
-        for block in blocks:
-            if not isinstance(block, dict):
-                continue
-            btype = str(block.get("type", "")).lower()
-            if btype not in {
-                "reasoning",
-                "reasoning_chunk",
-                "thinking",
-                "thinking_chunk",
-            }:
-                continue
-            text = (
-                block.get("text")
-                or block.get("content")
-                or block.get("reasoning")
-                or ""
-            )
-            if text:
-                texts.append(str(text))
-        return texts
+        return StreamOrchestrator.extract_reasoning_text(message)
 
     @staticmethod
     def _diff_incremental(previous: str, current: str) -> str:
-        if not current:
-            return ""
-        if not previous:
-            return current
-        if current.startswith(previous):
-            return current[len(previous) :]
-        if current == previous:
-            return ""
-        return current
+        return StreamOrchestrator.diff_incremental(previous, current)
 
     @staticmethod
     def _as_int(value: Any) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return 0
+        return UsageOrchestrator.as_int(value)
 
     @staticmethod
     def _as_dict(value: Any) -> dict[str, Any]:
-        return value if isinstance(value, dict) else {}
+        return UsageOrchestrator.as_dict(value)
 
     @staticmethod
     def _usage_numeric_fields() -> tuple[str, ...]:
-        return (
-            "input_tokens",
-            "input_uncached_tokens",
-            "input_cache_read_tokens",
-            "input_cache_write_tokens_5m",
-            "input_cache_write_tokens_1h",
-            "input_cache_write_tokens_unknown",
-            "output_tokens",
-            "reasoning_tokens",
-            "tool_input_tokens",
-            "total_tokens",
-        )
+        return UsageOrchestrator.usage_numeric_fields()
 
     def _merge_usage_identity(
         self, usage_state: dict[str, Any], usage_candidate: dict[str, Any]
     ) -> None:
-        for field in ("provider", "model", "model_source", "usage_source"):
-            value = str(usage_candidate.get(field, "")).strip()
-            if not value:
-                continue
-            current = str(usage_state.get(field, "")).strip()
-            if value.lower() == "unknown" and current and current.lower() != "unknown":
-                continue
-            if (
-                current
-                and current.lower() != "unknown"
-                and value.lower() != "unknown"
-                and current != value
-            ):
-                if field in {"provider", "model"}:
-                    usage_state[field] = "mixed"
-                    continue
-                # Keep existing source label when both are non-empty and disagree.
-                continue
-            usage_state[field] = value
+        self.usage_orchestrator.merge_usage_identity(usage_state, usage_candidate)
 
     def _normalize_aggregated_usage(self, usage_state: dict[str, Any]) -> None:
-        input_tokens = self._as_int(usage_state.get("input_tokens", 0))
-        input_uncached_tokens = self._as_int(
-            usage_state.get("input_uncached_tokens", 0)
-        )
-        cache_read_tokens = self._as_int(usage_state.get("input_cache_read_tokens", 0))
-        cache_write_5m_tokens = self._as_int(
-            usage_state.get("input_cache_write_tokens_5m", 0)
-        )
-        cache_write_1h_tokens = self._as_int(
-            usage_state.get("input_cache_write_tokens_1h", 0)
-        )
-        cache_write_unknown_tokens = self._as_int(
-            usage_state.get("input_cache_write_tokens_unknown", 0)
-        )
-        output_tokens = self._as_int(usage_state.get("output_tokens", 0))
-        reasoning_tokens = self._as_int(usage_state.get("reasoning_tokens", 0))
-        tool_input_tokens = self._as_int(usage_state.get("tool_input_tokens", 0))
-        total_tokens = self._as_int(usage_state.get("total_tokens", 0))
-
-        cache_write_total = (
-            cache_write_5m_tokens + cache_write_1h_tokens + cache_write_unknown_tokens
-        )
-
-        if input_tokens <= 0 and (
-            input_uncached_tokens > 0 or cache_read_tokens > 0 or cache_write_total > 0
-        ):
-            input_tokens = input_uncached_tokens + cache_read_tokens + cache_write_total
-
-        if input_uncached_tokens <= 0 and input_tokens > 0:
-            input_uncached_tokens = max(
-                0, input_tokens - cache_read_tokens - cache_write_total
-            )
-
-        if input_uncached_tokens > input_tokens:
-            input_uncached_tokens = input_tokens
-
-        computed_total = (
-            input_tokens + output_tokens + tool_input_tokens + reasoning_tokens
-        )
-        if total_tokens <= 0:
-            total_tokens = computed_total
-        else:
-            total_tokens = max(total_tokens, computed_total)
-
-        usage_state["input_tokens"] = input_tokens
-        usage_state["input_uncached_tokens"] = input_uncached_tokens
-        usage_state["input_cache_read_tokens"] = cache_read_tokens
-        usage_state["input_cache_write_tokens_5m"] = cache_write_5m_tokens
-        usage_state["input_cache_write_tokens_1h"] = cache_write_1h_tokens
-        usage_state["input_cache_write_tokens_unknown"] = cache_write_unknown_tokens
-        usage_state["output_tokens"] = output_tokens
-        usage_state["reasoning_tokens"] = reasoning_tokens
-        usage_state["tool_input_tokens"] = tool_input_tokens
-        usage_state["total_tokens"] = total_tokens
+        self.usage_orchestrator.normalize_aggregated_usage(usage_state)
 
     def _accumulate_usage_candidate(
         self,
@@ -865,39 +685,12 @@ class AgentManager:
         source_id: str,
         usage_candidate: dict[str, Any],
     ) -> bool:
-        source_key = source_id.strip()
-        if not source_key:
-            return False
-
-        has_signal = False
-        for field in self._usage_numeric_fields():
-            if self._as_int(usage_candidate.get(field, 0)) > 0:
-                has_signal = True
-                break
-        if not has_signal:
-            return False
-
-        previous = usage_sources.get(
-            source_key, {field: 0 for field in self._usage_numeric_fields()}
+        return self.usage_orchestrator.accumulate_usage_candidate(
+            usage_state=usage_state,
+            usage_sources=usage_sources,
+            source_id=source_id,
+            usage_candidate=usage_candidate,
         )
-
-        changed = False
-        for field in self._usage_numeric_fields():
-            prior_value = self._as_int(previous.get(field, 0))
-            incoming_value = self._as_int(usage_candidate.get(field, 0))
-            next_value = max(prior_value, incoming_value)
-            if next_value <= prior_value:
-                continue
-            delta = next_value - prior_value
-            usage_state[field] = self._as_int(usage_state.get(field, 0)) + delta
-            previous[field] = next_value
-            changed = True
-
-        if changed:
-            usage_sources[source_key] = previous
-            self._normalize_aggregated_usage(usage_state)
-        self._merge_usage_identity(usage_state, usage_candidate)
-        return changed
 
     def _accumulate_usage_from_messages(
         self,
@@ -911,43 +704,20 @@ class AgentManager:
         fallback_provider: str | None = None,
         source_offset: int = 0,
     ) -> bool:
-        changed = False
-        for index, message in enumerate(messages):
-            candidate = self._extract_usage_from_message(
-                message,
-                fallback_model=fallback_model,
-                fallback_base_url=fallback_base_url,
-                fallback_provider=fallback_provider,
-            )
-            source_id = str(getattr(message, "id", "")).strip()
-            if source_id:
-                source_key = f"{source_prefix}:{source_id}"
-            else:
-                source_key = f"{source_prefix}:{source_offset + index}"
-            changed = (
-                self._accumulate_usage_candidate(
-                    usage_state=usage_state,
-                    usage_sources=usage_sources,
-                    source_id=source_key,
-                    usage_candidate=candidate,
-                )
-                or changed
-            )
-        return changed
+        return self.usage_orchestrator.accumulate_usage_from_messages(
+            usage_state=usage_state,
+            usage_sources=usage_sources,
+            messages=messages,
+            source_prefix=source_prefix,
+            config=self.config,
+            fallback_model=fallback_model,
+            fallback_base_url=fallback_base_url,
+            fallback_provider=fallback_provider,
+            source_offset=source_offset,
+        )
 
     def _usage_signature(self, usage_state: dict[str, Any]) -> str:
-        parts = [
-            str(usage_state.get(field, "")) for field in self._usage_numeric_fields()
-        ]
-        parts.extend(
-            [
-                str(usage_state.get("provider", "")),
-                str(usage_state.get("model", "")),
-                str(usage_state.get("model_source", "")),
-                str(usage_state.get("usage_source", "")),
-            ]
-        )
-        return "|".join(parts)
+        return self.usage_orchestrator.usage_signature(usage_state)
 
     def _extract_usage_from_message(
         self,
@@ -956,21 +726,12 @@ class AgentManager:
         fallback_base_url: str | None = None,
         fallback_provider: str | None = None,
     ) -> dict[str, Any]:
-        if self.config is None:
-            return {}
-        model_fallback = (fallback_model or "").strip()
-        if not model_fallback:
-            default_profile = self.config.llm_profiles.get(
-                self.config.default_llm_profile
-            )
-            model_fallback = (
-                default_profile.model if default_profile is not None else ""
-            )
-        return extract_usage_from_message(
+        return self.usage_orchestrator.extract_usage_from_message(
+            config=self.config,
             message=message,
-            fallback_model=model_fallback,
-            fallback_base_url=fallback_base_url or "",
-            explicit_provider=fallback_provider,
+            fallback_model=fallback_model,
+            fallback_base_url=fallback_base_url,
+            fallback_provider=fallback_provider,
         )
 
     def _record_usage(
@@ -983,63 +744,14 @@ class AgentManager:
         agent_id: str,
         usage_store: UsageStore,
     ) -> dict[str, Any]:
-        provider = str(usage.get("provider", "unknown")).strip() or "unknown"
-        model = str(usage.get("model", "unknown")).strip() or "unknown"
-        usage_cost = calculate_cost_breakdown(
-            provider=provider,
-            model=model,
-            input_tokens=self._as_int(usage.get("input_tokens", 0)),
-            input_uncached_tokens=self._as_int(usage.get("input_uncached_tokens", 0)),
-            input_cache_read_tokens=self._as_int(
-                usage.get("input_cache_read_tokens", 0)
-            ),
-            input_cache_write_tokens_5m=self._as_int(
-                usage.get("input_cache_write_tokens_5m", 0)
-            ),
-            input_cache_write_tokens_1h=self._as_int(
-                usage.get("input_cache_write_tokens_1h", 0)
-            ),
-            input_cache_write_tokens_unknown=self._as_int(
-                usage.get("input_cache_write_tokens_unknown", 0)
-            ),
-            output_tokens=self._as_int(usage.get("output_tokens", 0)),
+        return self.usage_orchestrator.record_usage(
+            usage=usage,
+            run_id=run_id,
+            session_id=session_id,
+            trigger_type=trigger_type,
+            agent_id=agent_id,
+            usage_store=usage_store,
         )
-        enriched = {
-            "schema_version": 2,
-            "agent_id": agent_id,
-            "provider": provider,
-            "model": model,
-            "trigger_type": trigger_type,
-            "run_id": run_id,
-            "session_id": session_id,
-            "model_source": str(usage.get("model_source", "unknown")),
-            "usage_source": str(usage.get("usage_source", "unknown")),
-            "input_tokens": self._as_int(usage.get("input_tokens", 0)),
-            "input_uncached_tokens": self._as_int(
-                usage.get("input_uncached_tokens", 0)
-            ),
-            "input_cache_read_tokens": self._as_int(
-                usage.get("input_cache_read_tokens", 0)
-            ),
-            "input_cache_write_tokens_5m": self._as_int(
-                usage.get("input_cache_write_tokens_5m", 0)
-            ),
-            "input_cache_write_tokens_1h": self._as_int(
-                usage.get("input_cache_write_tokens_1h", 0)
-            ),
-            "input_cache_write_tokens_unknown": self._as_int(
-                usage.get("input_cache_write_tokens_unknown", 0)
-            ),
-            "output_tokens": self._as_int(usage.get("output_tokens", 0)),
-            "reasoning_tokens": self._as_int(usage.get("reasoning_tokens", 0)),
-            "tool_input_tokens": self._as_int(usage.get("tool_input_tokens", 0)),
-            "total_tokens": self._as_int(usage.get("total_tokens", 0)),
-            "priced": bool(usage_cost.get("priced", False)),
-            "cost_usd": usage_cost.get("total_cost_usd"),
-            "pricing": usage_cost,
-        }
-        usage_store.append_record(enriched)
-        return enriched
 
     def _build_messages(
         self,
@@ -1146,19 +858,14 @@ class AgentManager:
             raise RuntimeError("AgentManager is not initialized")
         llm_profile = self._resolve_profile(self.config, effective_runtime)
 
-        rag_context = None
-        if effective_runtime.rag_mode:
-            results = runtime_state.memory_indexer.retrieve(
-                message,
-                settings=effective_runtime.retrieval.memory,
-            )
-            if results:
-                rag_context = "[Memory Retrieval Results]\n" + "\n".join(
-                    f"- ({item['score']}) {item['text']}" for item in results
-                )
+        retrieval_envelope = RetrievalOrchestrator.build_envelope(
+            runtime=effective_runtime,
+            memory_indexer=runtime_state.memory_indexer,
+            message=message,
+        )
 
         messages = self._build_messages(
-            history=history, message=message, rag_context=rag_context
+            history=history, message=message, rag_context=retrieval_envelope.rag_context
         )
         system_prompt = self.build_system_prompt(
             rag_mode=effective_runtime.rag_mode,
@@ -1209,22 +916,10 @@ class AgentManager:
             base_url=llm_profile.base_url,
             explicit_provider=llm_profile.provider_id,
         )
-        usage_state: dict[str, Any] = {
-            "provider": default_provider,
-            "model": active_model,
-            "model_source": "fallback_model",
-            "usage_source": "unknown",
-            "input_tokens": 0,
-            "input_uncached_tokens": 0,
-            "input_cache_read_tokens": 0,
-            "input_cache_write_tokens_5m": 0,
-            "input_cache_write_tokens_1h": 0,
-            "input_cache_write_tokens_unknown": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "tool_input_tokens": 0,
-            "total_tokens": 0,
-        }
+        usage_state: dict[str, Any] = self.usage_orchestrator.initial_usage_state(
+            provider=default_provider,
+            model=active_model,
+        )
         usage_sources: dict[str, dict[str, int]] = {}
 
         captured_messages = usage_capture.snapshot()
@@ -1291,54 +986,35 @@ class AgentManager:
         llm = self._get_runtime_llm(runtime_state)
         llm_profile = self._resolve_profile(self.config, effective_runtime)
 
-        rag_mode = effective_runtime.rag_mode
-        rag_context = None
+        retrieval_envelope = RetrievalOrchestrator.build_envelope(
+            runtime=effective_runtime,
+            memory_indexer=runtime_state.memory_indexer,
+            message=message,
+        )
+        rag_mode = retrieval_envelope.rag_mode
+        results = retrieval_envelope.results
         if rag_mode:
-            results = runtime_state.memory_indexer.retrieve(
-                message,
-                settings=effective_runtime.retrieval.memory,
-            )
             yield {"type": "retrieval", "data": {"query": message, "results": results}}
-            if results:
-                rag_context = "[Memory Retrieval Results]\n" + "\n".join(
-                    f"- ({item['score']}) {item['text']}" for item in results
-                )
 
         system_prompt = self.build_system_prompt(
             rag_mode=rag_mode, is_first_turn=is_first_turn, agent_id=agent_id
         )
         messages = self._build_messages(
-            history=history, message=message, rag_context=rag_context
+            history=history,
+            message=message,
+            rag_context=retrieval_envelope.rag_context,
         )
 
-        pending_new_response = False
-        final_tokens: list[str] = []
-        fallback_final_text = ""
-        token_source: str | None = None
-        latest_model_snapshot = ""
-        emitted_reasoning: set[str] = set()
-        emitted_agent_update = False
+        stream_state = StreamLoopState()
         default_provider = infer_provider(
             llm_profile.model,
             base_url=llm_profile.base_url,
             explicit_provider=llm_profile.provider_id,
         )
-        usage_state: dict[str, Any] = {
-            "provider": default_provider,
-            "model": llm_profile.model,
-            "model_source": "fallback_model",
-            "usage_source": "unknown",
-            "input_tokens": 0,
-            "input_uncached_tokens": 0,
-            "input_cache_read_tokens": 0,
-            "input_cache_write_tokens_5m": 0,
-            "input_cache_write_tokens_1h": 0,
-            "input_cache_write_tokens_unknown": 0,
-            "output_tokens": 0,
-            "reasoning_tokens": 0,
-            "tool_input_tokens": 0,
-            "total_tokens": 0,
-        }
+        usage_state: dict[str, Any] = self.usage_orchestrator.initial_usage_state(
+            provider=default_provider,
+            model=llm_profile.model,
+        )
         usage_sources: dict[str, dict[str, int]] = {}
         usage_signature = ""
 
@@ -1406,7 +1082,7 @@ class AgentManager:
                                     )[:500],
                                 },
                             }
-                            emitted_agent_update = True
+                            stream_state.emitted_agent_update = True
 
                             if node == "model":
                                 tool_calls = getattr(latest, "tool_calls", None)
@@ -1427,21 +1103,24 @@ class AgentManager:
                                         getattr(latest, "content", "")
                                     )
                                     if content:
-                                        fallback_final_text = content
-                                        if token_source is None:
+                                        stream_state.fallback_final_text = content
+                                        if stream_state.token_source is None:
                                             delta = self._diff_incremental(
-                                                latest_model_snapshot, content
+                                                stream_state.latest_model_snapshot,
+                                                content,
                                             )
-                                            latest_model_snapshot = content
+                                            stream_state.latest_model_snapshot = content
                                             if delta:
-                                                if pending_new_response:
+                                                if stream_state.pending_new_response:
                                                     yield {
                                                         "type": "new_response",
                                                         "data": {},
                                                     }
-                                                    pending_new_response = False
-                                                token_source = "updates"
-                                                final_tokens.append(delta)
+                                                    stream_state.pending_new_response = (
+                                                        False
+                                                    )
+                                                stream_state.token_source = "updates"
+                                                stream_state.final_tokens.append(delta)
                                                 yield {
                                                     "type": "token",
                                                     "data": {
@@ -1456,10 +1135,11 @@ class AgentManager:
                                         normalized = reasoning.strip()
                                         if (
                                             not normalized
-                                            or normalized in emitted_reasoning
+                                            or normalized
+                                            in stream_state.emitted_reasoning
                                         ):
                                             continue
-                                        emitted_reasoning.add(normalized)
+                                        stream_state.emitted_reasoning.add(normalized)
                                         yield {
                                             "type": "reasoning",
                                             "data": {
@@ -1485,7 +1165,7 @@ class AgentManager:
                                             ),
                                         },
                                     }
-                                    pending_new_response = True
+                                    stream_state.pending_new_response = True
 
                     if (
                         mode == "messages"
@@ -1501,10 +1181,10 @@ class AgentManager:
                         if node != "model":
                             continue
 
-                        if token_source not in {None, "messages"}:
+                        if stream_state.token_source not in {None, "messages"}:
                             continue
 
-                        if not emitted_agent_update:
+                        if not stream_state.emitted_agent_update:
                             yield {
                                 "type": "agent_update",
                                 "data": {
@@ -1514,16 +1194,16 @@ class AgentManager:
                                     "preview": "Streaming token output",
                                 },
                             }
-                            emitted_agent_update = True
+                            stream_state.emitted_agent_update = True
 
                         for text in self._extract_token_text(token):
                             if not text:
                                 continue
-                            token_source = "messages"
-                            if pending_new_response:
+                            stream_state.token_source = "messages"
+                            if stream_state.pending_new_response:
                                 yield {"type": "new_response", "data": {}}
-                                pending_new_response = False
-                            final_tokens.append(text)
+                                stream_state.pending_new_response = False
+                            stream_state.final_tokens.append(text)
                             yield {
                                 "type": "token",
                                 "data": {"content": text, "source": "messages"},
@@ -1610,7 +1290,10 @@ class AgentManager:
                     )
                     usage_capture_offset = len(captured_messages)
 
-                final_content = "".join(final_tokens).strip() or fallback_final_text
+                final_content = (
+                    "".join(stream_state.final_tokens).strip()
+                    or stream_state.fallback_final_text
+                )
                 enriched_usage = {}
                 if self._as_int(usage_state.get("total_tokens", 0)) > 0:
                     enriched_usage = self._record_usage(
@@ -1628,7 +1311,7 @@ class AgentManager:
                         "session_id": session_id,
                         "agent_id": agent_id,
                         "run_id": run_id,
-                        "token_source": token_source or "fallback",
+                        "token_source": stream_state.token_source or "fallback",
                         "usage": enriched_usage,
                     },
                 }
