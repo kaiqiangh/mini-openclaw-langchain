@@ -8,8 +8,11 @@ from config import (
     LlmRuntimeConfig,
     RetrievalConfig,
     RuntimeConfig,
+    TerminalSandboxMode,
     load_effective_runtime_config,
     merge_runtime_configs,
+    runtime_from_payload,
+    runtime_to_payload,
 )
 from graph.agent import AgentManager
 
@@ -136,3 +139,30 @@ def test_agent_runtime_isolation_between_agents(tmp_path: Path):
     beta_after = manager.get_runtime("beta")
     assert alpha_after.runtime_config.rag_mode is False
     assert beta_after.runtime_config.rag_mode is True
+
+
+def test_runtime_config_round_trip_preserves_terminal_execution_settings():
+    runtime = RuntimeConfig()
+    runtime.chat_enabled_tools = ["terminal", "exec"]
+    runtime.tool_execution.terminal.sandbox_mode = TerminalSandboxMode.UNSAFE_NONE
+    runtime.tool_execution.terminal.require_sandbox = False
+    runtime.tool_execution.terminal.allowed_command_prefixes = ["echo", "python3 -c"]
+    runtime.tool_execution.terminal.allow_network = True
+    runtime.tool_execution.terminal.allow_shell_syntax = True
+    runtime.tool_execution.terminal.max_args = 12
+    runtime.tool_execution.terminal.max_arg_length = 64
+
+    payload = runtime_to_payload(runtime)
+    loaded = runtime_from_payload(payload)
+
+    assert loaded.chat_enabled_tools == ["terminal", "exec"]
+    assert loaded.tool_execution.terminal.sandbox_mode == TerminalSandboxMode.UNSAFE_NONE
+    assert loaded.tool_execution.terminal.require_sandbox is False
+    assert loaded.tool_execution.terminal.allowed_command_prefixes == [
+        "echo",
+        "python3 -c",
+    ]
+    assert loaded.tool_execution.terminal.allow_network is True
+    assert loaded.tool_execution.terminal.allow_shell_syntax is True
+    assert loaded.tool_execution.terminal.max_args == 12
+    assert loaded.tool_execution.terminal.max_arg_length == 64

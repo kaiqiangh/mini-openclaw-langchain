@@ -42,11 +42,20 @@ def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniToo
             terminal_chars=5000, fetch_url_chars=5000, read_file_chars=10000
         ),
     )
+    runtime.chat_enabled_tools = ["terminal", "exec"]
+    runtime.tool_execution.terminal.sandbox_mode = "unsafe_none"
+    runtime.tool_execution.terminal.require_sandbox = False
+    runtime.tool_execution.terminal.allowed_command_prefixes = [
+        "echo",
+        "printf",
+        "python3",
+    ]
     mini_tools = get_all_tools(root, runtime, trigger_type="chat", config_base_dir=root)
     runner = get_tool_runner(root)
     context = ToolContext(
         workspace_root=root,
         trigger_type="chat",
+        explicit_enabled_tools=tuple(runtime.chat_enabled_tools),
         run_id="run-test",
         session_id="sess-test",
     )
@@ -143,7 +152,7 @@ def test_alias_parity_exec_read_and_web_fetch(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())  # type: ignore[no-untyped-call]
 
-    command = "printf 'a|b' | tr '|' ':'"
+    command = "python3 -c \"print('a:b')\""
     terminal_result = _parse_result(tool_map["terminal"].invoke({"command": command}))  # type: ignore[call-arg]
     exec_result = _parse_result(tool_map["exec"].invoke({"command": command}))  # type: ignore[call-arg]
     assert terminal_result["ok"] is True

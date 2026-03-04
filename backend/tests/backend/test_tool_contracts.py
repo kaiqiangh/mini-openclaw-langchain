@@ -21,7 +21,14 @@ def test_toolresult_success_and_failure_shapes():
 
 
 def test_terminal_timeout_contract(tmp_path):
-    tool = TerminalTool(root_dir=tmp_path, timeout_seconds=1, output_char_limit=200)
+    tool = TerminalTool(
+        root_dir=tmp_path,
+        timeout_seconds=1,
+        output_char_limit=200,
+        sandbox_mode="unsafe_none",
+        require_sandbox=False,
+        allowed_command_prefixes=("python3",),
+    )
     result = tool.run({"command": 'python3 -c "import time; time.sleep(2)"'}, context=None)  # type: ignore[arg-type]
 
     assert result.ok is False

@@ -35,6 +35,26 @@ def test_autonomous_policy_defaults_to_low_authority():
     assert allowed.allowed is True
 
 
+def test_chat_terminal_requires_explicit_enable():
+    policy = ToolPolicyEngine()
+
+    denied = policy.is_allowed(
+        tool_name="terminal",
+        permission_level=PermissionLevel.L3_SYSTEM,
+        trigger_type="chat",
+    )
+    assert denied.allowed is False
+    assert "requires explicit enable" in denied.reason
+
+    allowed = policy.is_allowed(
+        tool_name="terminal",
+        permission_level=PermissionLevel.L3_SYSTEM,
+        trigger_type="chat",
+        explicit_enabled_tools=["terminal"],
+    )
+    assert allowed.allowed is True
+
+
 def test_cron_tools_fallback_when_agent_config_is_empty():
     runtime = RuntimeConfig()
     runtime.autonomous_tools.cron_enabled_tools = []
@@ -47,3 +67,20 @@ def test_cron_tools_fallback_when_agent_config_is_empty():
         "read_files",
         "search_knowledge_base",
     ]
+
+
+def test_chat_explicit_tools_are_agent_scoped():
+    runtime = RuntimeConfig()
+    runtime.chat_enabled_tools = ["terminal", "exec"]
+    assert get_explicit_enabled_tools(runtime, "chat") == ["terminal", "exec"]
+
+
+def test_chat_explicit_high_risk_tools_do_not_block_low_risk_tools():
+    policy = ToolPolicyEngine()
+    allowed = policy.is_allowed(
+        tool_name="read_file",
+        permission_level=PermissionLevel.L0_READ,
+        trigger_type="chat",
+        explicit_enabled_tools=["terminal"],
+    )
+    assert allowed.allowed is True
