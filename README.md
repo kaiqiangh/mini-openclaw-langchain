@@ -36,7 +36,9 @@ flowchart LR
 | Chat + streaming       | Ready  | SSE streaming, debug events, tool/retrieval traces.                                   |
 | Tool hardening         | Ready  | URL scheme/host controls, private network blocking, env scrubbing.                    |
 | Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                             |
+| Scheduler observability| Ready  | Windowed duration/latency aggregates + timeseries (`1h`→`30d`).                       |
 | Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.                          |
+| Agent management UX    | Ready  | Bulk delete/export/runtime patch, template-driven runtime editing, config diff view.  |
 | Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration.            |
 | Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/agents/{agent_id}/config/runtime`. |
 | Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                             |
@@ -69,6 +71,10 @@ Set at least:
 
 - `APP_ADMIN_TOKEN`
 - one key for your active `DEFAULT_LLM_PROFILE` (for example `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, or `AZURE_FOUNDRY_API_KEY`)
+
+Optional but useful for this release:
+
+- `LANGSMITH_API_KEY` (when tracing is enabled)
 
 ### 2) Frontend
 
@@ -165,8 +171,15 @@ npm run build
 - `backend/`: FastAPI APIs, AgentManager, tools, scheduler, retrieval.
 - `frontend/`: Next.js app router UI, API client, app store, scheduler/usage/workspace pages.
 
-## Roadmap (Near-term)
+## New API Highlights
 
-- Add stronger process-level sandboxing for terminal execution (beyond env scrubbing).
-- Expand scheduler observability (job duration/latency aggregates).
-- Add richer agent management UX (bulk actions, templates, diffable runtime config).
+- Scheduler metrics:
+  - `GET /api/v1/agents/{agent_id}/scheduler/metrics?window=1h|4h|12h|24h|7d|30d`
+  - `GET /api/v1/agents/{agent_id}/scheduler/metrics/timeseries?...&bucket=1m|5m|15m|1h`
+- Agent bulk + templates:
+  - `POST /api/v1/agents/bulk-delete`
+  - `POST /api/v1/agents/bulk-export`
+  - `POST /api/v1/agents/bulk-runtime-patch`
+  - `GET /api/v1/agents/templates`
+  - `GET /api/v1/agents/templates/{template_name}`
+  - `GET /api/v1/agents/{agent_id}/runtime-diff?baseline=default|agent:<id>|template:<name>`
