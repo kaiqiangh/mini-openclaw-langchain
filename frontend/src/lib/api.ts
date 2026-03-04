@@ -321,6 +321,7 @@ export type ToolSelectionTrigger = "chat" | "heartbeat" | "cron";
 export type AgentToolTriggerStatus = {
   enabled: boolean;
   explicitly_enabled: boolean;
+  explicitly_blocked?: boolean;
   allowed_by_policy: boolean;
   reason: string;
 };
@@ -337,6 +338,7 @@ export type AgentToolCatalog = {
   triggers: ToolSelectionTrigger[];
   enabled_tools: Record<ToolSelectionTrigger, string[]>;
   explicit_enabled_tools?: Record<ToolSelectionTrigger, string[]>;
+  explicit_blocked_tools?: Record<ToolSelectionTrigger, string[]>;
   tools: AgentToolItem[];
 };
 
@@ -557,6 +559,21 @@ export async function getSessionHistory(
 ): Promise<ChatHistoryResponse> {
   const payload = await requestJson<{ data: ChatHistoryResponse }>(
     `${agentBase(agentId)}/sessions/${sessionId}/history?archived=${archived ? "true" : "false"}`,
+  );
+  return payload.data;
+}
+
+export async function generateSessionTitle(
+  sessionId: string,
+  agentId = "default",
+): Promise<{ session_id: string; title: string }> {
+  const payload = await requestJson<{
+    data: { session_id: string; title: string };
+  }>(
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/generate-title`,
+    {
+      method: "POST",
+    },
   );
   return payload.data;
 }
@@ -862,6 +879,7 @@ export async function streamChat(
   sessionId: string,
   onEvent: (event: StreamEvent) => void,
   agentId = "default",
+  resumeSameTurn = false,
 ): Promise<void> {
   const response = await fetch(`${agentBase(agentId)}/chat`, {
     method: "POST",
@@ -871,6 +889,7 @@ export async function streamChat(
       message,
       session_id: sessionId,
       stream: true,
+      resume_same_turn: resumeSameTurn,
     }),
   });
 

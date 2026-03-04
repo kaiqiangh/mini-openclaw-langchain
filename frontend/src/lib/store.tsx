@@ -23,6 +23,7 @@ import {
   createSession,
   deleteAgentWorkspace,
   deleteSession,
+  generateSessionTitle,
   getAgents,
   getRagMode,
   getSessionHistory,
@@ -63,6 +64,12 @@ export type ChatMessage = {
   debugEvents: ChatDebugEvent[];
 };
 
+export type MaxStepsPromptState = {
+  sessionId: string;
+  message: string;
+  runId?: string;
+};
+
 type AppState = {
   initialized: boolean;
   ragEnabled: boolean;
@@ -77,6 +84,7 @@ type AppState = {
   selectedFileContent: string;
   fileDirty: boolean;
   error: string | null;
+  maxStepsPrompt: MaxStepsPromptState | null;
   reloadAgents: () => Promise<void>;
   setCurrentAgent: (agentId: string) => Promise<void>;
   createAgentById: (agentId: string) => Promise<void>;
@@ -99,6 +107,8 @@ type AppState = {
   createNewSession: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
+  continueAfterMaxSteps: () => Promise<void>;
+  cancelAfterMaxSteps: () => Promise<void>;
 };
 
 const AppContext = createContext<AppState | null>(null);
@@ -143,6 +153,18 @@ function appendDebugEvent(
   return { ...message, debugEvents: [...message.debugEvents, nextEvent] };
 }
 
+function isMaxStepsError(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const code = String((payload as { code?: unknown }).code ?? "").toLowerCase();
+  if (code === "max_steps_reached") return true;
+  const error = String((payload as { error?: unknown }).error ?? "").toLowerCase();
+  return (
+    error.includes("recursion limit")
+    || error.includes("max steps")
+    || error.includes("max_steps")
+  );
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [ragEnabled, setRagEnabledState] = useState(false);
@@ -160,6 +182,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [selectedFileContent, setSelectedFileContent] = useState("");
   const [fileDirty, setFileDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [maxStepsPrompt, setMaxStepsPrompt] =
+    useState<MaxStepsPromptState | null>(null);
   const agentSwitchEpochRef = useRef(0);
   const streamConnectionRef = useRef(false);
 
@@ -441,11 +465,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [currentAgentId, currentSessionId, refreshSessions],
   );
 
-  const sendMessage = useCallback(
-    async (content: string) => {
-      const trimmed = content.trim();
+  const runStreamTurn = useCallback(
+    async ({
+      message,
+      resumeSameTurn = false,
+      seedUserMessage = true,
+      sessionIdOverride,
+    }: {
+      message: string;
+      resumeSameTurn?: boolean;
+      seedUserMessage?: boolean;
+      sessionIdOverride?: string;
+    }) => {
+      const trimmed = message.trim();
       if (!trimmed || isStreaming) return;
-      if (sessionsScope === "archived") {
+      if (!resumeSameTurn && sessionsScope === "archived") {
         setError(
           "Archived sessions are read-only. Restore the session to continue chatting.",
         );
@@ -453,13 +487,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       setError(null);
+      setMaxStepsPrompt(null);
       setIsStreaming(true);
       streamConnectionRef.current = true;
-      let activeSessionId = currentSessionId;
+      let activeSessionId = sessionIdOverride ?? currentSessionId;
 
       try {
-        let sessionId = currentSessionId;
+        let sessionId = sessionIdOverride ?? currentSessionId;
         if (!sessionId) {
+          if (resumeSameTurn) {
+            throw new Error("Cannot continue: no active session is available.");
+          }
           const created = await createSession(undefined, currentAgentId);
           sessionId = created.session_id;
           activeSessionId = created.session_id;
@@ -467,17 +505,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await refreshSessions(undefined, currentAgentId);
         }
 
-        const userMessage: ChatMessage = {
-          id: genId("user"),
-          role: "user",
-          content: trimmed,
-          toolCalls: [],
-          retrievals: [],
-          debugEvents: [],
-        };
-
-        const assistantMessage = createAssistantMessage();
-        setMessages((prev) => [...prev, userMessage, assistantMessage]);
+        if (seedUserMessage) {
+          const userMessage: ChatMessage = {
+            id: genId("user"),
+            role: "user",
+            content: trimmed,
+            toolCalls: [],
+            retrievals: [],
+            debugEvents: [],
+          };
+          const assistantMessage = createAssistantMessage();
+          setMessages((prev) => [...prev, userMessage, assistantMessage]);
+        } else {
+          setMessages((prev) => {
+            if (prev.length === 0) return [createAssistantMessage()];
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (!last || last.role !== "assistant") {
+              next.push(createAssistantMessage());
+              return next;
+            }
+            const hasContent =
+              Boolean(last.content.trim()) ||
+              last.toolCalls.length > 0 ||
+              last.retrievals.length > 0 ||
+              last.debugEvents.length > 0;
+            if (hasContent) {
+              next.push(createAssistantMessage());
+            }
+            return next;
+          });
+        }
 
         await streamChat(
           trimmed,
@@ -612,10 +670,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   ? ((parsed as { error?: string }).error ??
                     "Unknown stream error")
                   : "Unknown stream error";
-              setError(messageText);
+              if (isMaxStepsError(parsed) && activeSessionId) {
+                const runId =
+                  typeof parsed === "object" && parsed !== null
+                    ? String((parsed as { run_id?: unknown }).run_id ?? "")
+                    : "";
+                setMaxStepsPrompt({
+                  sessionId: activeSessionId,
+                  message: trimmed,
+                  ...(runId ? { runId } : {}),
+                });
+                setError("Agent reached max_steps. Continue or cancel.");
+              } else {
+                setError(messageText);
+              }
             }
           },
           currentAgentId,
+          resumeSameTurn,
         );
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to send message");
@@ -657,6 +729,51 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sessionsScope,
     ],
   );
+
+  const sendMessage = useCallback(
+    async (content: string) => {
+      await runStreamTurn({
+        message: content,
+        resumeSameTurn: false,
+        seedUserMessage: true,
+      });
+    },
+    [runStreamTurn],
+  );
+
+  const continueAfterMaxSteps = useCallback(async () => {
+    if (!maxStepsPrompt) return;
+    await runStreamTurn({
+      message: maxStepsPrompt.message,
+      sessionIdOverride: maxStepsPrompt.sessionId,
+      resumeSameTurn: true,
+      seedUserMessage: false,
+    });
+  }, [maxStepsPrompt, runStreamTurn]);
+
+  const cancelAfterMaxSteps = useCallback(async () => {
+    if (!maxStepsPrompt) return;
+    const targetSessionId = maxStepsPrompt.sessionId;
+    setMaxStepsPrompt(null);
+    setIsStreaming(false);
+    streamConnectionRef.current = false;
+    setError(null);
+    try {
+      await generateSessionTitle(targetSessionId, currentAgentId);
+    } catch {
+      // Best-effort title generation only.
+    }
+    await refreshSessions("active", currentAgentId);
+    if (currentSessionId === targetSessionId) {
+      await loadSession(targetSessionId, false, currentAgentId);
+    }
+  }, [
+    currentAgentId,
+    currentSessionId,
+    loadSession,
+    maxStepsPrompt,
+    refreshSessions,
+  ]);
 
   useEffect(() => {
     if (!initialized) return;
@@ -805,6 +922,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectedFileContent,
       fileDirty,
       error,
+      maxStepsPrompt,
       reloadAgents,
       setCurrentAgent,
       createAgentById,
@@ -823,6 +941,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       createNewSession,
       selectSession,
       sendMessage,
+      continueAfterMaxSteps,
+      cancelAfterMaxSteps,
     }),
     [
       initialized,
@@ -838,6 +958,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectedFileContent,
       fileDirty,
       error,
+      maxStepsPrompt,
       reloadAgents,
       setCurrentAgent,
       createAgentById,
@@ -856,6 +977,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       createNewSession,
       selectSession,
       sendMessage,
+      continueAfterMaxSteps,
+      cancelAfterMaxSteps,
     ],
   );
 
