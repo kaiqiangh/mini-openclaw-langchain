@@ -4,10 +4,10 @@ Next.js App Router frontend for Mini-OpenClaw.
 
 ## Route Map
 
-| Route        | Purpose                                                 |
-| ------------ | ------------------------------------------------------- |
-| `/`          | Main workspace UI (agents/sessions + chat + inspector). |
-| `/usage`     | Usage analytics, trend chart, CSV export.               |
+| Route        | Purpose                                                                    |
+| ------------ | -------------------------------------------------------------------------- |
+| `/`          | Main workspace UI (agents/sessions + chat + inspector).                    |
+| `/usage`     | Usage analytics, trend chart, CSV export.                                  |
 | `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history. |
 
 ## UI Model
@@ -59,7 +59,7 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 
 `src/lib/api.ts` includes typed wrappers for:
 
-- agent/sessions/chat/files/tokens/usage
+- agent/sessions/chat/files/tokens/usage/compress
 - config: rag mode + runtime config + runtime diff
 - scheduler: cron jobs, runs/failures, heartbeat config/runs + metrics/timeseries
 - agent management: bulk delete/export/runtime patch and template discovery

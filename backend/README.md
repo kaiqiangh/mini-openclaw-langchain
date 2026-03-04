@@ -33,7 +33,7 @@ flowchart TB
   AM --> TOOLS["ToolRunner + policy"]
   AM --> RETR["MemoryIndexer + knowledge tool"]
   RETR --> DB["storage/retrieval.db (SQLite/FTS5)"]
-  AM --> SESS["SessionManager"]
+  AM --> SESS["SessionManager + Compression"]
   AM --> USAGE["UsageStore"]
   API --> SCH["CronScheduler + HeartbeatScheduler"]
 ```
@@ -64,42 +64,36 @@ This separation is structural only; request/response and stream behavior are unc
 ### Run-Once Loop (`AgentManager.run_once`)
 
 1. **Resolve runtime and model profile**
-
-- Load agent-effective runtime config (global + workspace config).
-- Resolve active LLM profile and instantiate/reuse `ChatOpenAI`.
+   - Load agent-effective runtime config (global + workspace config).
+   - Resolve active LLM profile and instantiate/reuse `ChatOpenAI`.
 
 2. **Build retrieval envelope**
-
-- `RetrievalOrchestrator.build_envelope(...)` checks `runtime.rag_mode`.
-- If enabled, run memory retrieval through `MemoryIndexer.retrieve(...)`.
-- Build transient request context in this exact format:
-  - `"[Memory Retrieval Results]\n- (score) text ..."`
+   - `RetrievalOrchestrator.build_envelope(...)` checks `runtime.rag_mode`.
+   - If enabled, run memory retrieval through `MemoryIndexer.retrieve(...)`.
+   - Build transient request context in this exact format:
+     - `"[Memory Retrieval Results]\n- (score) text ..."`
 
 3. **Build prompt + message list**
-
-- `PromptBuilder` assembles system prompt from workspace files.
-- Conversation history is converted into LangChain messages.
-- Retrieval context (if any) is appended as a system message.
+   - `PromptBuilder` assembles system prompt from workspace files.
+   - Conversation history is converted into LangChain messages.
+   - Retrieval context (if any) is appended as a system message.
 
 4. **Build tool-enabled agent**
-
-- `ToolOrchestrator.build_agent(...)` wires:
-  - available mini tools
-  - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
-  - tool runner with retry-guard
-  - LangChain structured tools
-- Tool-loop model override logic is preserved (`TOOL_LOOP_MODEL*`).
+   - `ToolOrchestrator.build_agent(...)` wires:
+     - available mini tools
+     - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
+     - tool runner with retry-guard
+     - LangChain structured tools
+   - Tool-loop model override logic is preserved (`TOOL_LOOP_MODEL*`).
 
 5. **Execute agent**
-
-- Invoke with recursion limit and callbacks.
-- Callback stack includes internal audit + usage capture + optional tracing callbacks.
+   - Invoke with recursion limit and callbacks.
+   - Callback stack includes internal audit + usage capture + optional tracing callbacks.
 
 6. **Aggregate and persist usage**
-
-- `UsageOrchestrator` normalizes callback usage payloads, dedupes repeated message IDs,
-  computes prices, and writes `UsageStore` records.
-- Response payload is unchanged (`text` or `structured_response` + `messages` + `usage`).
+   - `UsageOrchestrator` normalizes callback usage payloads, dedupes repeated message IDs,
+     computes prices, and writes `UsageStore` records.
+   - Response payload is unchanged (`text` or `structured_response` + `messages` + `usage`).
 
 ### Streaming Loop (`AgentManager.astream`)
 
@@ -144,9 +138,8 @@ reasoning extraction logic so event ordering/content remains stable.
 
 1. Resolve retrieval runtime settings (`top_k`, chunking, blend weights).
 2. Resolve storage engine:
-
-- SQLite (default) with FTS prefilter and vector similarity.
-- JSON fallback maintained for compatibility/migration safety.
+   - SQLite (default) with FTS prefilter and vector similarity.
+   - JSON fallback maintained for compatibility/migration safety.
 
 3. Generate query embedding (if embedding credentials/provider are available).
 4. Retrieve chunks and blend lexical + semantic scores.
@@ -220,6 +213,7 @@ This architecture cleanup does not change:
 - `PUT|DELETE /api/v1/agents/{agent_id}/sessions/{session_id}`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/archive`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/restore`
+- `POST /api/v1/agents/{agent_id}/sessions/{session_id}/compress`
 - `GET|POST|DELETE /api/v1/agents`
 - `POST /api/v1/agents/bulk-delete`
 - `POST /api/v1/agents/bulk-export`

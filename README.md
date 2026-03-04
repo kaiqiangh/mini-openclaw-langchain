@@ -30,6 +30,7 @@ flowchart LR
   WS --> CFG["config.json (effective runtime)"]
   WS --> MEM["memory/MEMORY.md"]
   WS --> KNOW["knowledge/*"]
+  WS --> SESS["sessions/*"]
   WS --> STORE["storage/retrieval.db, usage, audits"]
   API --> SCH["Scheduler (cron + heartbeat)"]
   AM --> TOOLS["ToolRunner + policy gates"]
@@ -39,18 +40,19 @@ flowchart LR
 
 ## Feature Matrix
 
-| Area                   | Status | Notes                                                                                 |
-| ---------------------- | ------ | ------------------------------------------------------------------------------------- |
-| Multi-agent workspaces | Ready  | Per-agent sessions, memory, knowledge, usage, scheduler state.                        |
-| Chat + streaming       | Ready  | SSE streaming, debug events, tool/retrieval traces.                                   |
-| Tool hardening         | Ready  | URL scheme/host controls, private network blocking, env scrubbing.                    |
-| Scheduler API          | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                             |
-| Scheduler observability| Ready  | Windowed duration/latency aggregates + timeseries (`1h`→`30d`).                       |
-| Scheduler UI           | Ready  | `/scheduler` page for cron + heartbeat controls and history.                          |
-| Agent management UX    | Ready  | Bulk delete/export/runtime patch, template-driven runtime editing, config diff view.  |
-| Retrieval engine       | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration.            |
-| Runtime config editor  | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/agents/{agent_id}/config/runtime`. |
-| Usage analytics        | Ready  | Model breakdown, trend chart, CSV export.                                             |
+| Area                    | Status | Notes                                                                                 |
+| ----------------------- | ------ | ------------------------------------------------------------------------------------- |
+| Multi-agent workspaces  | Ready  | Per-agent sessions, memory, knowledge, usage, scheduler state.                        |
+| Chat + streaming        | Ready  | SSE streaming, debug events, tool/retrieval traces.                                   |
+| Session compression     | Ready  | Context summarization and history truncation via `/compress` API.                     |
+| Tool hardening          | Ready  | URL scheme/host controls, private network blocking, env scrubbing.                    |
+| Scheduler API           | Ready  | Cron CRUD, run-now, runs/failures, heartbeat config/runs.                             |
+| Scheduler observability | Ready  | Windowed duration/latency aggregates + timeseries (`1h`→`30d`).                       |
+| Scheduler UI            | Ready  | `/scheduler` page for cron + heartbeat controls and history.                          |
+| Agent management UX     | Ready  | Bulk delete/export/runtime patch, template-driven runtime editing, config diff view.  |
+| Retrieval engine        | Ready  | SQLite + FTS5 prefilter, semantic+lexical blending, legacy JSON migration.            |
+| Runtime config editor   | Ready  | Agent-scoped JSON editor in Inspector via `/api/v1/agents/{agent_id}/config/runtime`. |
+| Usage analytics         | Ready  | Model breakdown, trend chart, CSV export.                                             |
 
 ## Security Model
 
