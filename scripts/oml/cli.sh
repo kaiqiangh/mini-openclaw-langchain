@@ -636,6 +636,9 @@ cmd_update() {
     if [ -f "requirements-dev.txt" ]; then
       uv pip install --python .venv/bin/python -r requirements-dev.txt
     fi
+    if [ -f "requirements-pdf.txt" ]; then
+      uv pip install --python .venv/bin/python -r requirements-pdf.txt
+    fi
   ) || return 5
 
   info "Syncing frontend dependencies..."
