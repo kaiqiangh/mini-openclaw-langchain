@@ -71,6 +71,12 @@ flowchart TB
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/archive`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/restore`
 - `GET|POST|DELETE /api/v1/agents`
+- `POST /api/v1/agents/bulk-delete`
+- `POST /api/v1/agents/bulk-export`
+- `POST /api/v1/agents/bulk-runtime-patch`
+- `GET /api/v1/agents/templates`
+- `GET /api/v1/agents/templates/{template_name}`
+- `GET /api/v1/agents/{agent_id}/runtime-diff`
 
 ### Files / Tokens / Usage
 
@@ -97,6 +103,8 @@ flowchart TB
 - `GET /api/v1/agents/{agent_id}/scheduler/cron/failures`
 - `GET|PUT /api/v1/agents/{agent_id}/scheduler/heartbeat`
 - `GET /api/v1/agents/{agent_id}/scheduler/heartbeat/runs`
+- `GET /api/v1/agents/{agent_id}/scheduler/metrics`
+- `GET /api/v1/agents/{agent_id}/scheduler/metrics/timeseries`
 
 ## Threat Model (Current)
 
@@ -127,6 +135,8 @@ Known limitations:
 ## Operations
 
 - Scheduler run/failure logs are JSONL in each workspace `storage/`.
+- Cron and heartbeat records now include `started_at_ms`, `finished_at_ms`, `duration_ms`, and schedule lag where applicable.
+- Metrics endpoints aggregate these records into windowed percentiles (`p50/p90/p99`) and bucketed trends.
 - Heartbeat skip states include `skipped_no_prompt` for empty/comment-only prompts.
 - Cron and heartbeat write paths are lock-protected.
 

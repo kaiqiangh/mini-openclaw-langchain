@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 import time
 from typing import Any, Literal
@@ -20,6 +21,20 @@ _BASE_DIR: Path | None = None
 _AGENT_MANAGER: AgentManager | None = None
 _DEFAULT_HEARTBEAT_SCHEDULER: HeartbeatScheduler | None = None
 _DEFAULT_CRON_SCHEDULER: CronScheduler | None = None
+_WINDOW_TO_MS = {
+    "1h": 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+    "12h": 12 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+}
+_BUCKET_TO_MS = {
+    "1m": 60 * 1000,
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+}
 
 
 class CronJobCreateRequest(BaseModel):
@@ -120,6 +135,109 @@ def _serialize_cron_job(job: CronJob) -> dict[str, Any]:
     return asdict(job)
 
 
+def _to_int(value: Any) -> int | None:
+    try:
+        parsed = int(float(value))
+    except Exception:
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
+def _percentile(values: list[int], percentile: int) -> int | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    index = max(
+        0,
+        min(
+            len(sorted_values) - 1,
+            int(round((percentile / 100) * (len(sorted_values) - 1))),
+        ),
+    )
+    return sorted_values[index]
+
+
+def _numeric_stats(samples: list[int]) -> dict[str, Any]:
+    if not samples:
+        return {
+            "count": 0,
+            "avg_ms": None,
+            "min_ms": None,
+            "max_ms": None,
+            "p50_ms": None,
+            "p90_ms": None,
+            "p99_ms": None,
+        }
+    return {
+        "count": len(samples),
+        "avg_ms": int(sum(samples) / max(1, len(samples))),
+        "min_ms": min(samples),
+        "max_ms": max(samples),
+        "p50_ms": _percentile(samples, 50),
+        "p90_ms": _percentile(samples, 90),
+        "p99_ms": _percentile(samples, 99),
+    }
+
+
+def _row_timestamp_ms(row: dict[str, Any]) -> int | None:
+    for key in ("finished_at_ms", "timestamp_ms", "started_at_ms"):
+        value = _to_int(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _build_observability_rows(
+    *,
+    cron_runs: list[dict[str, Any]],
+    cron_failures: list[dict[str, Any]],
+    heartbeat_runs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in cron_runs:
+        ts = _row_timestamp_ms(row)
+        if ts is None:
+            continue
+        rows.append(
+            {
+                "source": "cron",
+                "status": str(row.get("status", "ok")),
+                "timestamp_ms": ts,
+                "duration_ms": _to_int(row.get("duration_ms")),
+                "schedule_lag_ms": _to_int(row.get("schedule_lag_ms")),
+            }
+        )
+    for row in cron_failures:
+        ts = _row_timestamp_ms(row)
+        if ts is None:
+            continue
+        rows.append(
+            {
+                "source": "cron",
+                "status": str(row.get("status", "error")),
+                "timestamp_ms": ts,
+                "duration_ms": _to_int(row.get("duration_ms")),
+                "schedule_lag_ms": _to_int(row.get("schedule_lag_ms")),
+            }
+        )
+    for row in heartbeat_runs:
+        ts = _row_timestamp_ms(row)
+        if ts is None:
+            continue
+        rows.append(
+            {
+                "source": "heartbeat",
+                "status": str(row.get("status", "ok")),
+                "timestamp_ms": ts,
+                "duration_ms": _to_int(row.get("duration_ms")),
+                "schedule_lag_ms": _to_int(row.get("schedule_lag_ms")),
+            }
+        )
+    return rows
+
+
 @router.get("/agents/{agent_id}/scheduler/cron/jobs")
 async def list_cron_jobs(
     agent_id: str,
@@ -154,7 +272,7 @@ async def create_cron_job(
         job.next_run_ts = 0
         scheduler.upsert_job(job)
     response.headers["Location"] = (
-        f"/api/v1/agents/{agent_id}/scheduler/cron-jobs/{job.id}"
+        f"/api/v1/agents/{agent_id}/scheduler/cron/jobs/{job.id}"
     )
     return {"data": {"agent_id": agent_id, "job": _serialize_cron_job(job)}}
 
@@ -347,3 +465,189 @@ async def list_heartbeat_runs(
         limit=limit or runtime.runtime_config.scheduler.runs_query_default_limit
     )
     return {"data": {"agent_id": agent_id, "runs": rows}}
+
+
+@router.get("/agents/{agent_id}/scheduler/metrics")
+async def get_scheduler_metrics(
+    agent_id: str,
+    window: Literal["1h", "4h", "12h", "24h", "7d", "30d"] = Query(default="24h"),
+) -> dict[str, Any]:
+    _runtime(agent_id)
+    now_ms = int(time.time() * 1000)
+    since_ms = now_ms - _WINDOW_TO_MS[window]
+
+    cron_scheduler = _cron_scheduler(agent_id)
+    heartbeat_scheduler = _heartbeat_scheduler(agent_id)
+    scan_limit = 100_000
+    cron_runs = cron_scheduler.query_runs(limit=scan_limit, since_ms=since_ms)
+    cron_failures = cron_scheduler.query_failures(limit=scan_limit, since_ms=since_ms)
+    heartbeat_runs = heartbeat_scheduler.query_runs(limit=scan_limit, since_ms=since_ms)
+    rows = _build_observability_rows(
+        cron_runs=cron_runs,
+        cron_failures=cron_failures,
+        heartbeat_runs=heartbeat_runs,
+    )
+
+    duration_samples = [
+        value
+        for value in (_to_int(item.get("duration_ms")) for item in rows)
+        if value is not None
+    ]
+    lag_samples = [
+        value
+        for value in (_to_int(item.get("schedule_lag_ms")) for item in rows)
+        if value is not None
+    ]
+
+    status_breakdown: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("status", "unknown"))
+        status_breakdown[key] = status_breakdown.get(key, 0) + 1
+
+    cron_error_count = len(cron_failures)
+    cron_success_count = len(cron_runs)
+    cron_total = cron_success_count + cron_error_count
+    heartbeat_total = len(heartbeat_runs)
+    heartbeat_ok = len(
+        [row for row in heartbeat_runs if str(row.get("status", "ok")) == "ok"]
+    )
+    heartbeat_error = len(
+        [row for row in heartbeat_runs if str(row.get("status", "")) == "error"]
+    )
+    heartbeat_skipped = max(0, heartbeat_total - heartbeat_ok - heartbeat_error)
+
+    return {
+        "data": {
+            "agent_id": agent_id,
+            "window": window,
+            "since_ms": since_ms,
+            "generated_at_ms": now_ms,
+            "totals": {
+                "events": len(rows),
+                "cron_events": cron_total,
+                "heartbeat_events": heartbeat_total,
+            },
+            "cron": {
+                "runs": cron_total,
+                "ok": cron_success_count,
+                "error": cron_error_count,
+                "success_rate": (
+                    round((cron_success_count / max(1, cron_total)) * 100, 2)
+                    if cron_total
+                    else None
+                ),
+            },
+            "heartbeat": {
+                "runs": heartbeat_total,
+                "ok": heartbeat_ok,
+                "error": heartbeat_error,
+                "skipped": heartbeat_skipped,
+            },
+            "duration": _numeric_stats(duration_samples),
+            "latency": _numeric_stats(lag_samples),
+            "status_breakdown": status_breakdown,
+        }
+    }
+
+
+@router.get("/agents/{agent_id}/scheduler/metrics/timeseries")
+async def get_scheduler_metrics_timeseries(
+    agent_id: str,
+    window: Literal["1h", "4h", "12h", "24h", "7d", "30d"] = Query(default="24h"),
+    bucket: Literal["1m", "5m", "15m", "1h"] = Query(default="5m"),
+) -> dict[str, Any]:
+    _runtime(agent_id)
+    now_ms = int(time.time() * 1000)
+    since_ms = now_ms - _WINDOW_TO_MS[window]
+    bucket_ms = _BUCKET_TO_MS[bucket]
+
+    cron_scheduler = _cron_scheduler(agent_id)
+    heartbeat_scheduler = _heartbeat_scheduler(agent_id)
+    scan_limit = 100_000
+    rows = _build_observability_rows(
+        cron_runs=cron_scheduler.query_runs(limit=scan_limit, since_ms=since_ms),
+        cron_failures=cron_scheduler.query_failures(limit=scan_limit, since_ms=since_ms),
+        heartbeat_runs=heartbeat_scheduler.query_runs(limit=scan_limit, since_ms=since_ms),
+    )
+    bucket_start_ms = since_ms - (since_ms % bucket_ms)
+    bucket_end_ms = now_ms - (now_ms % bucket_ms)
+
+    points: dict[int, dict[str, Any]] = {}
+    cursor = bucket_start_ms
+    while cursor <= bucket_end_ms:
+        points[cursor] = {
+            "ts_ms": cursor,
+            "label": datetime.fromtimestamp(cursor / 1000, tz=timezone.utc).isoformat(),
+            "total": 0,
+            "cron_runs": 0,
+            "cron_failures": 0,
+            "heartbeat_runs": 0,
+            "heartbeat_ok": 0,
+            "heartbeat_error": 0,
+            "heartbeat_skipped": 0,
+            "duration_sum_ms": 0,
+            "duration_count": 0,
+            "latency_sum_ms": 0,
+            "latency_count": 0,
+        }
+        cursor += bucket_ms
+
+    for row in rows:
+        ts = _to_int(row.get("timestamp_ms"))
+        if ts is None or ts < since_ms or ts > now_ms:
+            continue
+        key = ts - (ts % bucket_ms)
+        point = points.get(key)
+        if point is None:
+            continue
+        point["total"] += 1
+        source = str(row.get("source", "unknown"))
+        status_value = str(row.get("status", "unknown"))
+        if source == "cron":
+            if status_value == "error":
+                point["cron_failures"] += 1
+            else:
+                point["cron_runs"] += 1
+        elif source == "heartbeat":
+            point["heartbeat_runs"] += 1
+            if status_value == "ok":
+                point["heartbeat_ok"] += 1
+            elif status_value == "error":
+                point["heartbeat_error"] += 1
+            else:
+                point["heartbeat_skipped"] += 1
+
+        duration_ms = _to_int(row.get("duration_ms"))
+        if duration_ms is not None:
+            point["duration_sum_ms"] += duration_ms
+            point["duration_count"] += 1
+        lag_ms = _to_int(row.get("schedule_lag_ms"))
+        if lag_ms is not None:
+            point["latency_sum_ms"] += lag_ms
+            point["latency_count"] += 1
+
+    series: list[dict[str, Any]] = []
+    for key in sorted(points.keys()):
+        point = points[key]
+        duration_count = int(point.pop("duration_count"))
+        duration_sum = int(point.pop("duration_sum_ms"))
+        latency_count = int(point.pop("latency_count"))
+        latency_sum = int(point.pop("latency_sum_ms"))
+        point["avg_duration_ms"] = (
+            int(duration_sum / max(1, duration_count)) if duration_count else None
+        )
+        point["avg_latency_ms"] = (
+            int(latency_sum / max(1, latency_count)) if latency_count else None
+        )
+        series.append(point)
+
+    return {
+        "data": {
+            "agent_id": agent_id,
+            "window": window,
+            "bucket": bucket,
+            "since_ms": since_ms,
+            "generated_at_ms": now_ms,
+            "points": series,
+        }
+    }

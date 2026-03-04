@@ -1,0 +1,17 @@
+{
+  "description": "Balanced local profile with moderate retries and scheduler visibility defaults.",
+  "runtime_config": {
+    "agent_runtime": {
+      "max_steps": 16,
+      "max_retries": 1
+    },
+    "llm_runtime": {
+      "temperature": 0.2,
+      "timeout_seconds": 60
+    },
+    "scheduler": {
+      "api_enabled": true,
+      "runs_query_default_limit": 200
+    }
+  }
+}

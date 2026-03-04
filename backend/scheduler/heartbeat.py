@@ -21,6 +21,10 @@ class HeartbeatRun:
     status: str
     timezone: str
     details: dict[str, Any]
+    started_at_ms: int | None = None
+    finished_at_ms: int | None = None
+    duration_ms: int | None = None
+    schedule_lag_ms: int | None = None
 
 
 class HeartbeatScheduler:
@@ -86,11 +90,17 @@ class HeartbeatScheduler:
                 "status": row.status,
                 "timezone": row.timezone,
                 "details": row.details,
+                "started_at_ms": row.started_at_ms,
+                "finished_at_ms": row.finished_at_ms,
+                "duration_ms": row.duration_ms,
+                "schedule_lag_ms": row.schedule_lag_ms,
             }
             with self.audit_file.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
-    def query_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def query_runs(
+        self, *, limit: int = 100, since_ms: int | None = None
+    ) -> list[dict[str, Any]]:
         max_rows = max(1, int(limit))
         with self._file_lock:
             if not self.audit_file.exists():
@@ -101,23 +111,39 @@ class HeartbeatScheduler:
                 if line.strip()
             ]
         rows: list[dict[str, Any]] = []
-        for line in reversed(lines[-max_rows:]):
+        for line in reversed(lines):
             try:
                 value = json.loads(line)
             except Exception:
                 continue
             if isinstance(value, dict):
+                if since_ms is not None:
+                    observed_ts = int(
+                        value.get("finished_at_ms")
+                        or value.get("timestamp_ms")
+                        or value.get("started_at_ms")
+                        or 0
+                    )
+                    if observed_ts and observed_ts < since_ms:
+                        continue
                 rows.append(value)
+                if len(rows) >= max_rows:
+                    break
         return rows
 
     async def _tick_once(self) -> None:
+        started_ts = time.time()
         now = self._now_local()
         if not self._is_in_active_window(now):
+            finished_ts = time.time()
             self._write_run(
                 HeartbeatRun(
-                    timestamp_ms=int(time.time() * 1000),
+                    timestamp_ms=int(finished_ts * 1000),
                     status="skipped_outside_window",
                     timezone=self.config.timezone,
+                    started_at_ms=int(started_ts * 1000),
+                    finished_at_ms=int(finished_ts * 1000),
+                    duration_ms=max(0, int((finished_ts - started_ts) * 1000)),
                     details={
                         "active_start_hour": self.config.active_start_hour,
                         "active_end_hour": self.config.active_end_hour,
@@ -129,11 +155,15 @@ class HeartbeatScheduler:
 
         prompt = self._normalize_prompt(self._read_prompt())
         if not prompt:
+            finished_ts = time.time()
             self._write_run(
                 HeartbeatRun(
-                    timestamp_ms=int(time.time() * 1000),
+                    timestamp_ms=int(finished_ts * 1000),
                     status="skipped_no_prompt",
                     timezone=self.config.timezone,
+                    started_at_ms=int(started_ts * 1000),
+                    finished_at_ms=int(finished_ts * 1000),
+                    duration_ms=max(0, int((finished_ts - started_ts) * 1000)),
                     details={"session_id": self.config.session_id},
                 )
             )
@@ -162,11 +192,15 @@ class HeartbeatScheduler:
                     self.config.session_id, "assistant", text or "HEARTBEAT_EMPTY"
                 )
 
+            finished_ts = time.time()
             self._write_run(
                 HeartbeatRun(
-                    timestamp_ms=int(time.time() * 1000),
+                    timestamp_ms=int(finished_ts * 1000),
                     status="ok",
                     timezone=self.config.timezone,
+                    started_at_ms=int(started_ts * 1000),
+                    finished_at_ms=int(finished_ts * 1000),
+                    duration_ms=max(0, int((finished_ts - started_ts) * 1000)),
                     details={
                         "session_id": self.config.session_id,
                         "suppressed": suppressed,
@@ -175,11 +209,15 @@ class HeartbeatScheduler:
                 )
             )
         except Exception as exc:  # noqa: BLE001
+            finished_ts = time.time()
             self._write_run(
                 HeartbeatRun(
-                    timestamp_ms=int(time.time() * 1000),
+                    timestamp_ms=int(finished_ts * 1000),
                     status="error",
                     timezone=self.config.timezone,
+                    started_at_ms=int(started_ts * 1000),
+                    finished_at_ms=int(finished_ts * 1000),
+                    duration_ms=max(0, int((finished_ts - started_ts) * 1000)),
                     details={"error": str(exc)},
                 )
             )

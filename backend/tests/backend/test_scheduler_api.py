@@ -113,3 +113,48 @@ def test_cron_run_uses_tool_aware_prompt(client, api_app):
     assert run_now.status_code == 200
     assert "web_search" in captured["message"]
     assert "web_fetch" in captured["message"]
+
+
+def test_scheduler_metrics_endpoints(client):
+    created = client.post(
+        "/api/v1/agents/default/scheduler/cron/jobs",
+        json={
+            "name": "metrics-job",
+            "schedule_type": "every",
+            "schedule": "30",
+            "prompt": "ping",
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201
+    job_id = created.json()["data"]["job"]["id"]
+
+    run_now = client.post(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}/run")
+    assert run_now.status_code == 200
+
+    runs = client.get("/api/v1/agents/default/scheduler/cron/runs")
+    assert runs.status_code == 200
+    assert any(
+        row.get("job_id") == job_id and "duration_ms" in row
+        for row in runs.json()["data"]["runs"]
+    )
+
+    metrics = client.get(
+        "/api/v1/agents/default/scheduler/metrics", params={"window": "24h"}
+    )
+    assert metrics.status_code == 200
+    metrics_data = metrics.json()["data"]
+    assert metrics_data["window"] == "24h"
+    assert "duration" in metrics_data
+    assert "latency" in metrics_data
+    assert metrics_data["totals"]["events"] >= 1
+
+    trend = client.get(
+        "/api/v1/agents/default/scheduler/metrics/timeseries",
+        params={"window": "24h", "bucket": "15m"},
+    )
+    assert trend.status_code == 200
+    trend_data = trend.json()["data"]
+    assert trend_data["window"] == "24h"
+    assert trend_data["bucket"] == "15m"
+    assert isinstance(trend_data["points"], list)

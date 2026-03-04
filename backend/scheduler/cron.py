@@ -302,45 +302,49 @@ class CronScheduler:
         self._save_jobs(remaining)
         return True
 
-    def query_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def _query_jsonl(
+        self, file_path: Path, *, limit: int, since_ms: int | None
+    ) -> list[dict[str, Any]]:
         max_rows = max(1, int(limit))
         with self._file_lock:
-            if not self.runs_file.exists():
+            if not file_path.exists():
                 return []
             lines = [
                 line
-                for line in self.runs_file.read_text(encoding="utf-8").splitlines()
+                for line in file_path.read_text(encoding="utf-8").splitlines()
                 if line.strip()
             ]
         rows: list[dict[str, Any]] = []
-        for line in reversed(lines[-max_rows:]):
+        for line in reversed(lines):
             try:
                 value = json.loads(line)
             except Exception:
                 continue
-            if isinstance(value, dict):
-                rows.append(value)
+            if not isinstance(value, dict):
+                continue
+            if since_ms is not None:
+                observed_ts = int(
+                    value.get("finished_at_ms")
+                    or value.get("timestamp_ms")
+                    or value.get("started_at_ms")
+                    or 0
+                )
+                if observed_ts and observed_ts < since_ms:
+                    continue
+            rows.append(value)
+            if len(rows) >= max_rows:
+                break
         return rows
 
-    def query_failures(self, *, limit: int = 100) -> list[dict[str, Any]]:
-        max_rows = max(1, int(limit))
-        with self._file_lock:
-            if not self.failures_file.exists():
-                return []
-            lines = [
-                line
-                for line in self.failures_file.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        rows: list[dict[str, Any]] = []
-        for line in reversed(lines[-max_rows:]):
-            try:
-                value = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(value, dict):
-                rows.append(value)
-        return rows
+    def query_runs(
+        self, *, limit: int = 100, since_ms: int | None = None
+    ) -> list[dict[str, Any]]:
+        return self._query_jsonl(self.runs_file, limit=limit, since_ms=since_ms)
+
+    def query_failures(
+        self, *, limit: int = 100, since_ms: int | None = None
+    ) -> list[dict[str, Any]]:
+        return self._query_jsonl(self.failures_file, limit=limit, since_ms=since_ms)
 
     async def run_job_now(self, job_id: str) -> CronJob | None:
         async with self._async_lock:
@@ -348,7 +352,7 @@ class CronScheduler:
             target = next((job for job in jobs if job.id == job_id), None)
             if target is None:
                 return None
-            await self._run_job(target, time.time())
+            await self._run_job(target, time.time(), manual_run=True)
             self.upsert_job(target)
             return target
 
@@ -359,9 +363,20 @@ class CronScheduler:
             return ""
         return f"{base_prompt}\n\n{CRON_EXECUTION_SUFFIX}"
 
-    async def _run_job(self, job: CronJob, now_ts: float) -> None:
+    async def _run_job(self, job: CronJob, now_ts: float, *, manual_run: bool) -> None:
         session_id = f"__cron__:{job.id}"
         history = self.session_manager.load_session_for_agent(session_id)
+        scheduled_ts = (
+            float(job.next_run_ts)
+            if (not manual_run and float(job.next_run_ts) > 0)
+            else None
+        )
+        started_ts = time.time()
+        schedule_lag_ms = (
+            max(0, int((started_ts - scheduled_ts) * 1000))
+            if scheduled_ts is not None
+            else None
+        )
 
         try:
             result = await self.agent_manager.run_once(
@@ -373,6 +388,8 @@ class CronScheduler:
                 trigger_type="cron",
                 agent_id=self.agent_id,
             )
+            finished_ts = time.time()
+            duration_ms = max(0, int((finished_ts - started_ts) * 1000))
             text = str(result.get("text", "")).strip()
             if text:
                 self.session_manager.save_message(session_id, "user", job.prompt)
@@ -380,11 +397,11 @@ class CronScheduler:
 
             job.failure_count = 0
             job.last_error = ""
-            job.last_success_ts = now_ts
-            job.last_run_ts = now_ts
-            job.updated_at = now_ts
+            job.last_success_ts = finished_ts
+            job.last_run_ts = finished_ts
+            job.updated_at = finished_ts
 
-            next_run = self._compute_next_run(job, now_ts)
+            next_run = self._compute_next_run(job, finished_ts)
             if next_run is None:
                 job.enabled = False
                 job.next_run_ts = 0
@@ -394,35 +411,53 @@ class CronScheduler:
             self._write_jsonl(
                 self.runs_file,
                 {
-                    "timestamp_ms": int(now_ts * 1000),
+                    "timestamp_ms": int(finished_ts * 1000),
                     "job_id": job.id,
                     "name": job.name,
                     "status": "ok",
+                    "trigger": "manual" if manual_run else "scheduled",
+                    "scheduled_at_ms": int(scheduled_ts * 1000)
+                    if scheduled_ts is not None
+                    else None,
+                    "started_at_ms": int(started_ts * 1000),
+                    "finished_at_ms": int(finished_ts * 1000),
+                    "duration_ms": duration_ms,
+                    "schedule_lag_ms": schedule_lag_ms,
                     "response_preview": text[:200],
                 },
             )
         except Exception as exc:  # noqa: BLE001
+            finished_ts = time.time()
+            duration_ms = max(0, int((finished_ts - started_ts) * 1000))
             job.failure_count += 1
             job.last_error = str(exc)
-            job.last_run_ts = now_ts
-            job.updated_at = now_ts
+            job.last_run_ts = finished_ts
+            job.updated_at = finished_ts
 
             backoff = min(
                 int(self.config.retry_max_seconds),
                 int(self.config.retry_base_seconds)
                 * (2 ** max(0, job.failure_count - 1)),
             )
-            job.next_run_ts = now_ts + max(5, backoff)
+            job.next_run_ts = finished_ts + max(5, backoff)
             if job.failure_count >= int(self.config.max_failures):
                 job.enabled = False
 
             self._write_jsonl(
                 self.failures_file,
                 {
-                    "timestamp_ms": int(now_ts * 1000),
+                    "timestamp_ms": int(finished_ts * 1000),
                     "job_id": job.id,
                     "name": job.name,
                     "status": "error",
+                    "trigger": "manual" if manual_run else "scheduled",
+                    "scheduled_at_ms": int(scheduled_ts * 1000)
+                    if scheduled_ts is not None
+                    else None,
+                    "started_at_ms": int(started_ts * 1000),
+                    "finished_at_ms": int(finished_ts * 1000),
+                    "duration_ms": duration_ms,
+                    "schedule_lag_ms": schedule_lag_ms,
                     "error": str(exc),
                     "failure_count": job.failure_count,
                     "next_run_ts": job.next_run_ts,
@@ -444,7 +479,7 @@ class CronScheduler:
                     continue
                 if job.next_run_ts > now_ts:
                     continue
-                await self._run_job(job, now_ts)
+                await self._run_job(job, now_ts, manual_run=False)
                 changed = True
 
             if changed:
