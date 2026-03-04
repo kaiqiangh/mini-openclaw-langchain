@@ -36,6 +36,8 @@ flowchart TB
 | `runtime.tool_network.block_private_networks` | Block localhost/private/link-local targets. |
 | `runtime.tool_network.max_redirects`          | Redirect safety cap.                        |
 | `runtime.tool_network.max_content_bytes`      | Maximum fetched response size.              |
+| `runtime.chat_enabled_tools`                  | Explicit chat-trigger high-risk tools.      |
+| `runtime.tool_execution.terminal.*`           | Terminal sandbox, allowlist, and limits.    |
 | `runtime.scheduler.api_enabled`               | Enable/disable scheduler API routes.        |
 | `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.    |
 | `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
@@ -100,7 +102,7 @@ flowchart TB
 
 - Workspace path escape prevention in file tools/endpoints.
 - URL fetch restrictions (scheme, host policy, content bounds, redirect cap).
-- Terminal command deny-list plus environment secret scrubbing.
+- Terminal command allowlist + process sandbox backend + environment secret scrubbing.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
@@ -109,9 +111,10 @@ flowchart TB
   - rate limiting
   - baseline hardening headers
 
-Known limitation:
+Known limitations:
 
-- Terminal execution is not a full process/container sandbox yet.
+- Sandbox guarantees are host-local and depend on available OS sandbox backend.
+- In `hybrid_auto` mode without a compatible backend, terminal execution is denied unless explicitly set to `unsafe_none`.
 
 ## Retrieval Notes
 

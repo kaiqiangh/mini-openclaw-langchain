@@ -56,6 +56,16 @@ class ToolRunner:
         context: ToolContext,
         explicit_enabled_tools: list[str] | None = None,
     ) -> ToolResult:
+        tool_metadata_fn = getattr(tool, "audit_metadata", None)
+        tool_metadata: dict[str, Any] = {}
+        if callable(tool_metadata_fn):
+            try:
+                candidate = tool_metadata_fn()
+                if isinstance(candidate, dict):
+                    tool_metadata = candidate
+            except Exception:
+                tool_metadata = {}
+
         effective_enabled_tools = explicit_enabled_tools
         if effective_enabled_tools is None and context.explicit_enabled_tools:
             effective_enabled_tools = list(context.explicit_enabled_tools)
@@ -69,6 +79,7 @@ class ToolRunner:
                 "session_id": context.session_id,
                 "trigger_type": context.trigger_type,
                 "args": args,
+                "tool_metadata": tool_metadata,
                 "timestamp_ms": int(time.time() * 1000),
             }
         )
@@ -92,6 +103,7 @@ class ToolRunner:
                     "ok": False,
                     "policy_decision": "denied",
                     "reason": decision.reason,
+                    "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
             )
@@ -133,6 +145,7 @@ class ToolRunner:
                     "ok": False,
                     "policy_decision": "denied",
                     "reason": reason,
+                    "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
             )
@@ -170,6 +183,7 @@ class ToolRunner:
                     "duration_ms": result.meta.duration_ms,
                     "ok": result.ok,
                     "policy_decision": "allowed",
+                    "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
             )
@@ -197,6 +211,7 @@ class ToolRunner:
                     "ok": False,
                     "policy_decision": "allowed",
                     "error": str(exc),
+                    "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
             )

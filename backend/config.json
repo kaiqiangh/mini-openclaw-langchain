@@ -51,6 +51,18 @@
     "fetch_url_chars": 5000,
     "read_file_chars": 10000
   },
+  "tool_execution": {
+    "terminal": {
+      "sandbox_mode": "hybrid_auto",
+      "require_sandbox": true,
+      "allowed_command_prefixes": [],
+      "allow_network": false,
+      "allow_shell_syntax": false,
+      "max_args": 32,
+      "max_arg_length": 256
+    }
+  },
+  "chat_enabled_tools": [],
   "autonomous_tools": {
     "heartbeat_enabled_tools": [],
     "cron_enabled_tools": [

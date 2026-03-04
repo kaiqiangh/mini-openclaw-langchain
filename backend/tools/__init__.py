@@ -20,6 +20,8 @@ from .web_search_tool import WebSearchTool
 
 
 def get_explicit_enabled_tools(runtime: RuntimeConfig, trigger_type: str) -> list[str]:
+    if trigger_type == "chat":
+        return list(runtime.chat_enabled_tools)
     if trigger_type == "heartbeat":
         return list(runtime.autonomous_tools.heartbeat_enabled_tools)
     if trigger_type == "cron":
@@ -40,18 +42,40 @@ def get_all_tools(
     trigger_type: str = "chat",
     config_base_dir: Path | None = None,
 ):
+    terminal_mode = runtime.tool_execution.terminal.sandbox_mode
+    terminal_mode_value = (
+        terminal_mode.value if hasattr(terminal_mode, "value") else str(terminal_mode)
+    )
     all_tools: list[MiniTool] = [
         TerminalTool(
             root_dir=base_dir,
             timeout_seconds=runtime.tool_timeouts.terminal_seconds,
             output_char_limit=runtime.tool_output_limits.terminal_chars,
+            sandbox_mode=terminal_mode_value,
+            require_sandbox=runtime.tool_execution.terminal.require_sandbox,
+            allowed_command_prefixes=tuple(
+                runtime.tool_execution.terminal.allowed_command_prefixes
+            ),
+            allow_network=runtime.tool_execution.terminal.allow_network,
+            allow_shell_syntax=runtime.tool_execution.terminal.allow_shell_syntax,
+            max_args=runtime.tool_execution.terminal.max_args,
+            max_arg_length=runtime.tool_execution.terminal.max_arg_length,
         ),
         TerminalTool(
             root_dir=base_dir,
             timeout_seconds=runtime.tool_timeouts.terminal_seconds,
             output_char_limit=runtime.tool_output_limits.terminal_chars,
+            sandbox_mode=terminal_mode_value,
+            require_sandbox=runtime.tool_execution.terminal.require_sandbox,
+            allowed_command_prefixes=tuple(
+                runtime.tool_execution.terminal.allowed_command_prefixes
+            ),
+            allow_network=runtime.tool_execution.terminal.allow_network,
+            allow_shell_syntax=runtime.tool_execution.terminal.allow_shell_syntax,
+            max_args=runtime.tool_execution.terminal.max_args,
+            max_arg_length=runtime.tool_execution.terminal.max_arg_length,
             name="exec",
-            description="Execute shell commands in workspace sandbox",
+            description="Execute allowlisted commands in a constrained process sandbox",
         ),
         PythonReplTool(
             timeout_seconds=runtime.tool_timeouts.python_repl_seconds,

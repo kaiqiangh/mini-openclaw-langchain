@@ -29,6 +29,13 @@ class LLMDriver(str, Enum):
     OPENAI_COMPATIBLE = "openai_compatible"
 
 
+class TerminalSandboxMode(str, Enum):
+    HYBRID_AUTO = "hybrid_auto"
+    DARWIN_SANDBOX = "darwin_sandbox"
+    LINUX_BWRAP = "linux_bwrap"
+    UNSAFE_NONE = "unsafe_none"
+
+
 @dataclass
 class ToolTimeouts:
     terminal_seconds: int = 30
@@ -112,6 +119,23 @@ class ToolNetworkConfig:
     max_content_bytes: int = 2_000_000
 
 
+@dataclass
+class TerminalExecutionConfig:
+    sandbox_mode: TerminalSandboxMode = TerminalSandboxMode.HYBRID_AUTO
+    require_sandbox: bool = True
+    allowed_command_prefixes: list[str] = field(default_factory=list)
+    allow_network: bool = False
+    allow_shell_syntax: bool = False
+    max_args: int = 32
+    max_arg_length: int = 256
+
+
+@dataclass
+class ToolExecutionConfig:
+    terminal: TerminalExecutionConfig = field(default_factory=TerminalExecutionConfig)
+
+
+DEFAULT_CHAT_ENABLED_TOOLS: tuple[str, ...] = ()
 DEFAULT_HEARTBEAT_ENABLED_TOOLS: tuple[str, ...] = ()
 DEFAULT_CRON_ENABLED_TOOLS: tuple[str, ...] = (
     "web_search",
@@ -174,6 +198,10 @@ class RuntimeConfig:
     tool_network: ToolNetworkConfig = field(default_factory=ToolNetworkConfig)
     tool_timeouts: ToolTimeouts = field(default_factory=ToolTimeouts)
     tool_output_limits: ToolOutputLimits = field(default_factory=ToolOutputLimits)
+    tool_execution: ToolExecutionConfig = field(default_factory=ToolExecutionConfig)
+    chat_enabled_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CHAT_ENABLED_TOOLS)
+    )
     autonomous_tools: AutonomousToolsConfig = field(
         default_factory=AutonomousToolsConfig
     )
@@ -233,6 +261,12 @@ def _deep_diff(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str,
 
 
 def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
+    sandbox_mode = runtime.tool_execution.terminal.sandbox_mode
+    sandbox_mode_value = (
+        sandbox_mode.value
+        if isinstance(sandbox_mode, TerminalSandboxMode)
+        else (str(sandbox_mode).strip() or TerminalSandboxMode.HYBRID_AUTO.value)
+    )
     return {
         "rag_mode": runtime.rag_mode,
         "injection_mode": runtime.injection_mode.value,
@@ -287,6 +321,20 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "fetch_url_chars": runtime.tool_output_limits.fetch_url_chars,
             "read_file_chars": runtime.tool_output_limits.read_file_chars,
         },
+        "tool_execution": {
+            "terminal": {
+                "sandbox_mode": sandbox_mode_value,
+                "require_sandbox": runtime.tool_execution.terminal.require_sandbox,
+                "allowed_command_prefixes": list(
+                    runtime.tool_execution.terminal.allowed_command_prefixes
+                ),
+                "allow_network": runtime.tool_execution.terminal.allow_network,
+                "allow_shell_syntax": runtime.tool_execution.terminal.allow_shell_syntax,
+                "max_args": runtime.tool_execution.terminal.max_args,
+                "max_arg_length": runtime.tool_execution.terminal.max_arg_length,
+            }
+        },
+        "chat_enabled_tools": list(runtime.chat_enabled_tools),
         "autonomous_tools": {
             "heartbeat_enabled_tools": list(
                 runtime.autonomous_tools.heartbeat_enabled_tools
@@ -331,6 +379,12 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     storage_retrieval = retrieval.get("storage", {})
     tool_retry_guard = payload.get("tool_retry_guard", {})
     tool_network = payload.get("tool_network", {})
+    tool_execution = payload.get("tool_execution", {})
+    terminal_execution = {}
+    if isinstance(tool_execution, dict):
+        maybe_terminal = tool_execution.get("terminal", {})
+        if isinstance(maybe_terminal, dict):
+            terminal_execution = maybe_terminal
     scheduler = payload.get("scheduler", {})
 
     injection_value = payload.get("injection_mode", InjectionMode.EVERY_TURN.value)
@@ -353,6 +407,13 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         if not normalized and fallback_on_empty:
             return list(fallback)
         return normalized
+
+    def _terminal_sandbox_mode(value: Any) -> TerminalSandboxMode:
+        raw = str(value).strip().lower() or TerminalSandboxMode.HYBRID_AUTO.value
+        try:
+            return TerminalSandboxMode(raw)
+        except ValueError:
+            return TerminalSandboxMode.HYBRID_AUTO
 
     return RuntimeConfig(
         rag_mode=bool(payload.get("rag_mode", False)),
@@ -426,6 +487,32 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             terminal_chars=int(tool_output_limits.get("terminal_chars", 5000)),
             fetch_url_chars=int(tool_output_limits.get("fetch_url_chars", 5000)),
             read_file_chars=int(tool_output_limits.get("read_file_chars", 10000)),
+        ),
+        tool_execution=ToolExecutionConfig(
+            terminal=TerminalExecutionConfig(
+                sandbox_mode=_terminal_sandbox_mode(
+                    terminal_execution.get(
+                        "sandbox_mode", TerminalSandboxMode.HYBRID_AUTO.value
+                    )
+                ),
+                require_sandbox=bool(terminal_execution.get("require_sandbox", True)),
+                allowed_command_prefixes=_normalized_tool_list(
+                    terminal_execution.get("allowed_command_prefixes"),
+                    (),
+                ),
+                allow_network=bool(terminal_execution.get("allow_network", False)),
+                allow_shell_syntax=bool(
+                    terminal_execution.get("allow_shell_syntax", False)
+                ),
+                max_args=max(1, int(terminal_execution.get("max_args", 32))),
+                max_arg_length=max(
+                    16, int(terminal_execution.get("max_arg_length", 256))
+                ),
+            )
+        ),
+        chat_enabled_tools=_normalized_tool_list(
+            payload.get("chat_enabled_tools"),
+            DEFAULT_CHAT_ENABLED_TOOLS,
         ),
         autonomous_tools=AutonomousToolsConfig(
             heartbeat_enabled_tools=_normalized_tool_list(

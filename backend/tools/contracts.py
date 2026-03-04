@@ -13,6 +13,8 @@ ErrorCode = Literal[
     "E_TIMEOUT",
     "E_HTTP",
     "E_EXEC",
+    "E_SANDBOX_UNAVAILABLE",
+    "E_SANDBOX_REQUIRED",
     "E_INTERNAL",
 ]
 

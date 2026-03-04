@@ -19,12 +19,13 @@ class PolicyDecision:
 
 
 DEFAULT_MAX_LEVEL_BY_TRIGGER: dict[str, PermissionLevel] = {
-    "chat": PermissionLevel.L3_SYSTEM,
+    "chat": PermissionLevel.L2_NETWORK,
     "heartbeat": PermissionLevel.L0_READ,
     "cron": PermissionLevel.L0_READ,
 }
 
 AUTONOMOUS_TRIGGERS = {"heartbeat", "cron"}
+CHAT_HIGH_RISK_TOOLS = {"terminal", "exec"}
 
 
 class ToolPolicyEngine:
@@ -44,7 +45,13 @@ class ToolPolicyEngine:
         if trigger_type in AUTONOMOUS_TRIGGERS:
             if tool_name in enabled:
                 return PolicyDecision(True, "allowed_via_explicit_enable")
-        elif enabled and tool_name not in enabled:
+        elif trigger_type == "chat" and tool_name in CHAT_HIGH_RISK_TOOLS:
+            if tool_name in enabled:
+                return PolicyDecision(True, "allowed_via_explicit_enable")
+            return PolicyDecision(
+                False, f"high risk tool '{tool_name}' requires explicit enable"
+            )
+        elif trigger_type != "chat" and enabled and tool_name not in enabled:
             return PolicyDecision(
                 False, f"tool '{tool_name}' is not in explicit enabled set"
             )
