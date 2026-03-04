@@ -136,6 +136,7 @@ class ToolExecutionConfig:
 
 
 DEFAULT_CHAT_ENABLED_TOOLS: tuple[str, ...] = ()
+DEFAULT_CHAT_BLOCKED_TOOLS: tuple[str, ...] = ()
 DEFAULT_HEARTBEAT_ENABLED_TOOLS: tuple[str, ...] = ()
 DEFAULT_CRON_ENABLED_TOOLS: tuple[str, ...] = (
     "web_search",
@@ -206,6 +207,9 @@ class RuntimeConfig:
     tool_execution: ToolExecutionConfig = field(default_factory=ToolExecutionConfig)
     chat_enabled_tools: list[str] = field(
         default_factory=lambda: list(DEFAULT_CHAT_ENABLED_TOOLS)
+    )
+    chat_blocked_tools: list[str] = field(
+        default_factory=lambda: list(DEFAULT_CHAT_BLOCKED_TOOLS)
     )
     autonomous_tools: AutonomousToolsConfig = field(
         default_factory=AutonomousToolsConfig
@@ -340,6 +344,7 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             }
         },
         "chat_enabled_tools": list(runtime.chat_enabled_tools),
+        "chat_blocked_tools": list(runtime.chat_blocked_tools),
         "autonomous_tools": {
             "heartbeat_enabled_tools": list(
                 runtime.autonomous_tools.heartbeat_enabled_tools
@@ -518,6 +523,10 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         chat_enabled_tools=_normalized_tool_list(
             payload.get("chat_enabled_tools"),
             DEFAULT_CHAT_ENABLED_TOOLS,
+        ),
+        chat_blocked_tools=_normalized_tool_list(
+            payload.get("chat_blocked_tools"),
+            DEFAULT_CHAT_BLOCKED_TOOLS,
         ),
         autonomous_tools=AutonomousToolsConfig(
             heartbeat_enabled_tools=_normalized_tool_list(

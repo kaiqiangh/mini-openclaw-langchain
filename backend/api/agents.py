@@ -511,7 +511,13 @@ async def update_agent_tool_selection(
         )
 
     if request.trigger == "chat":
+        enabled_set = set(normalized_enabled)
         runtime.runtime_config.chat_enabled_tools = normalized_enabled
+        runtime.runtime_config.chat_blocked_tools = sorted(
+            tool_name
+            for tool_name in declared_names
+            if tool_name not in enabled_set
+        )
     elif request.trigger == "heartbeat":
         runtime.runtime_config.autonomous_tools.heartbeat_enabled_tools = (
             normalized_enabled

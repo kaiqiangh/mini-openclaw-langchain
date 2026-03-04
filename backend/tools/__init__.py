@@ -45,6 +45,12 @@ def get_explicit_enabled_tools(runtime: RuntimeConfig, trigger_type: str) -> lis
     return []
 
 
+def get_explicit_blocked_tools(runtime: RuntimeConfig, trigger_type: str) -> list[str]:
+    if trigger_type == "chat":
+        return list(runtime.chat_blocked_tools)
+    return []
+
+
 def _build_declared_tools(
     base_dir: Path,
     runtime: RuntimeConfig,
@@ -137,9 +143,17 @@ def build_tool_catalog(
     trigger_explicit_tools = {
         trigger: get_explicit_enabled_tools(runtime, trigger) for trigger in TRIGGER_TYPES
     }
+    trigger_blocked_tools = {
+        trigger: get_explicit_blocked_tools(runtime, trigger)
+        for trigger in TRIGGER_TYPES
+    }
     trigger_enabled_sets = {
         trigger: set(enabled_tools)
         for trigger, enabled_tools in trigger_explicit_tools.items()
+    }
+    trigger_blocked_sets = {
+        trigger: set(blocked_tools)
+        for trigger, blocked_tools in trigger_blocked_tools.items()
     }
     trigger_effective_tools = {trigger: [] for trigger in TRIGGER_TYPES}
     all_tools = _build_declared_tools(
@@ -151,17 +165,20 @@ def build_tool_catalog(
     for tool in all_tools:
         trigger_status: dict[str, Any] = {}
         for trigger, enabled_tools in trigger_explicit_tools.items():
+            blocked_tools = trigger_blocked_tools[trigger]
             decision = policy.is_allowed(
                 tool_name=tool.name,
                 permission_level=tool.permission_level,
                 trigger_type=trigger,
                 explicit_enabled_tools=enabled_tools,
+                explicit_blocked_tools=blocked_tools,
             )
             if decision.allowed:
                 trigger_effective_tools[trigger].append(tool.name)
             trigger_status[trigger] = {
                 "enabled": bool(decision.allowed),
                 "explicitly_enabled": tool.name in trigger_enabled_sets[trigger],
+                "explicitly_blocked": tool.name in trigger_blocked_sets[trigger],
                 "allowed_by_policy": bool(decision.allowed),
                 "reason": decision.reason,
             }
@@ -177,6 +194,7 @@ def build_tool_catalog(
         "triggers": list(TRIGGER_TYPES),
         "enabled_tools": trigger_effective_tools,
         "explicit_enabled_tools": trigger_explicit_tools,
+        "explicit_blocked_tools": trigger_blocked_tools,
         "tools": rows,
     }
 
@@ -194,6 +212,7 @@ def get_all_tools(
     )
     policy = ToolPolicyEngine()
     explicit_enabled_tools = get_explicit_enabled_tools(runtime, trigger_type)
+    explicit_blocked_tools = get_explicit_blocked_tools(runtime, trigger_type)
     enabled: list[MiniTool] = []
     for tool in all_tools:
         decision = policy.is_allowed(
@@ -201,6 +220,7 @@ def get_all_tools(
             permission_level=tool.permission_level,
             trigger_type=trigger_type,
             explicit_enabled_tools=explicit_enabled_tools,
+            explicit_blocked_tools=explicit_blocked_tools,
         )
         if decision.allowed:
             enabled.append(tool)
@@ -224,6 +244,7 @@ __all__ = [
     "build_tool_catalog",
     "get_all_declared_tools",
     "get_all_tools",
+    "get_explicit_blocked_tools",
     "get_tool_runner",
     "scan_skills",
     "get_explicit_enabled_tools",

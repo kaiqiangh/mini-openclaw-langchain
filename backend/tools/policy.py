@@ -39,8 +39,16 @@ class ToolPolicyEngine:
         permission_level: PermissionLevel,
         trigger_type: str,
         explicit_enabled_tools: Iterable[str] | None = None,
+        explicit_blocked_tools: Iterable[str] | None = None,
     ) -> PolicyDecision:
         enabled = set(explicit_enabled_tools or [])
+        blocked = set(explicit_blocked_tools or [])
+
+        if tool_name in blocked:
+            return PolicyDecision(
+                False, f"tool '{tool_name}' is explicitly blocked for trigger"
+            )
+
         # Autonomous triggers are strict explicit allowlists.
         if trigger_type in AUTONOMOUS_TRIGGERS:
             if tool_name not in enabled:

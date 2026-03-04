@@ -126,6 +126,21 @@ def test_agent_tools_catalog_and_selection_update(client):
         "terminal",
         "read_files",
     ]
+    assert "chat_blocked_tools" in runtime.json()["data"]["config"]
+
+    disable_read_files = client.put(
+        "/api/v1/agents/default/tools/selection",
+        json={"trigger": "chat", "enabled_tools": ["terminal"]},
+    )
+    assert disable_read_files.status_code == 200
+    disabled_tools = {
+        item["name"]: item["trigger_status"]["chat"]["enabled"]
+        for item in disable_read_files.json()["data"]["tools"]
+    }
+    assert disabled_tools["read_files"] is False
+    runtime_after_disable = client.get("/api/v1/agents/default/config/runtime")
+    blocked = runtime_after_disable.json()["data"]["config"]["chat_blocked_tools"]
+    assert "read_files" in blocked
 
     cron_reset = client.put(
         "/api/v1/agents/default/tools/selection",

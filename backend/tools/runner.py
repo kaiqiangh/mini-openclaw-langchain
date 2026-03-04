@@ -55,6 +55,7 @@ class ToolRunner:
         args: dict[str, Any],
         context: ToolContext,
         explicit_enabled_tools: list[str] | None = None,
+        explicit_blocked_tools: list[str] | None = None,
     ) -> ToolResult:
         tool_metadata_fn = getattr(tool, "audit_metadata", None)
         tool_metadata: dict[str, Any] = {}
@@ -69,6 +70,9 @@ class ToolRunner:
         effective_enabled_tools = explicit_enabled_tools
         if effective_enabled_tools is None and context.explicit_enabled_tools:
             effective_enabled_tools = list(context.explicit_enabled_tools)
+        effective_blocked_tools = explicit_blocked_tools
+        if effective_blocked_tools is None and context.explicit_blocked_tools:
+            effective_blocked_tools = list(context.explicit_blocked_tools)
 
         started = time.monotonic()
         self._write_audit(
@@ -89,6 +93,7 @@ class ToolRunner:
             permission_level=tool.permission_level,
             trigger_type=context.trigger_type,
             explicit_enabled_tools=effective_enabled_tools,
+            explicit_blocked_tools=effective_blocked_tools,
         )
         if not decision.allowed:
             duration_ms = int((time.monotonic() - started) * 1000)

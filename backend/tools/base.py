@@ -13,6 +13,7 @@ class ToolContext:
     workspace_root: Path
     trigger_type: str
     explicit_enabled_tools: tuple[str, ...] = ()
+    explicit_blocked_tools: tuple[str, ...] = ()
     run_id: str | None = None
     session_id: str | None = None
 

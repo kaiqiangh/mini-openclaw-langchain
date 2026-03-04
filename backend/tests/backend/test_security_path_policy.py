@@ -87,3 +87,16 @@ def test_chat_baseline_mode_allows_low_risk_without_explicit_list():
         explicit_enabled_tools=[],
     )
     assert allowed.allowed is True
+
+
+def test_chat_explicit_blocklist_can_disable_default_enabled_tools():
+    policy = ToolPolicyEngine()
+    denied = policy.is_allowed(
+        tool_name="read_files",
+        permission_level=PermissionLevel.L0_READ,
+        trigger_type="chat",
+        explicit_enabled_tools=[],
+        explicit_blocked_tools=["read_files"],
+    )
+    assert denied.allowed is False
+    assert "explicitly blocked" in denied.reason

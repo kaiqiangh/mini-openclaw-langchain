@@ -9,7 +9,12 @@ from langchain_openai import ChatOpenAI
 
 from config import LLMProfile, RuntimeConfig
 from storage.run_store import AuditStore
-from tools import get_all_tools, get_explicit_enabled_tools, get_tool_runner
+from tools import (
+    get_all_tools,
+    get_explicit_blocked_tools,
+    get_explicit_enabled_tools,
+    get_tool_runner,
+)
 from tools.base import ToolContext
 from tools.langchain_tools import build_langchain_tools
 
@@ -45,6 +50,7 @@ class ToolOrchestrator:
             config_base_dir=config_base_dir,
         )
         explicit_enabled_tools = get_explicit_enabled_tools(runtime, trigger_type)
+        explicit_blocked_tools = get_explicit_blocked_tools(runtime, trigger_type)
         runner = get_tool_runner(
             runtime_root,
             runtime_audit_store,
@@ -57,6 +63,7 @@ class ToolOrchestrator:
                 workspace_root=runtime_root,
                 trigger_type=trigger_type,
                 explicit_enabled_tools=tuple(explicit_enabled_tools),
+                explicit_blocked_tools=tuple(explicit_blocked_tools),
                 run_id=run_id,
                 session_id=session_id,
             ),

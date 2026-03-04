@@ -144,6 +144,7 @@ def test_agent_runtime_isolation_between_agents(tmp_path: Path):
 def test_runtime_config_round_trip_preserves_terminal_execution_settings():
     runtime = RuntimeConfig()
     runtime.chat_enabled_tools = ["terminal"]
+    runtime.chat_blocked_tools = ["read_files"]
     runtime.tool_execution.terminal.sandbox_mode = TerminalSandboxMode.UNSAFE_NONE
     runtime.tool_execution.terminal.require_sandbox = False
     runtime.tool_execution.terminal.allowed_command_prefixes = ["echo", "python3 -c"]
@@ -156,6 +157,7 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
     loaded = runtime_from_payload(payload)
 
     assert loaded.chat_enabled_tools == ["terminal"]
+    assert loaded.chat_blocked_tools == ["read_files"]
     assert loaded.tool_execution.terminal.sandbox_mode == TerminalSandboxMode.UNSAFE_NONE
     assert loaded.tool_execution.terminal.require_sandbox is False
     assert loaded.tool_execution.terminal.allowed_command_prefixes == [
