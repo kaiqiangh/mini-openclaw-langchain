@@ -41,17 +41,21 @@ class ToolPolicyEngine:
         explicit_enabled_tools: Iterable[str] | None = None,
     ) -> PolicyDecision:
         enabled = set(explicit_enabled_tools or [])
-        # Autonomous triggers default to least authority; explicit-enabled tools bypass level caps.
+        # Autonomous triggers are strict explicit allowlists.
         if trigger_type in AUTONOMOUS_TRIGGERS:
-            if tool_name in enabled:
-                return PolicyDecision(True, "allowed_via_explicit_enable")
-        elif trigger_type == "chat" and tool_name in CHAT_HIGH_RISK_TOOLS:
+            if tool_name not in enabled:
+                return PolicyDecision(
+                    False, f"tool '{tool_name}' is not in explicit enabled set"
+                )
+            return PolicyDecision(True, "allowed_via_explicit_enable")
+
+        if trigger_type == "chat" and tool_name in CHAT_HIGH_RISK_TOOLS:
             if tool_name in enabled:
                 return PolicyDecision(True, "allowed_via_explicit_enable")
             return PolicyDecision(
                 False, f"high risk tool '{tool_name}' requires explicit enable"
             )
-        elif trigger_type != "chat" and enabled and tool_name not in enabled:
+        if trigger_type != "chat" and enabled and tool_name not in enabled:
             return PolicyDecision(
                 False, f"tool '{tool_name}' is not in explicit enabled set"
             )

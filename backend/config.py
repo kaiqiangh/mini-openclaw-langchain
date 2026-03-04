@@ -527,7 +527,6 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             cron_enabled_tools=_normalized_tool_list(
                 autonomous_tools.get("cron_enabled_tools"),
                 DEFAULT_CRON_ENABLED_TOOLS,
-                fallback_on_empty=True,
             ),
         ),
         scheduler=SchedulerRuntimeConfig(

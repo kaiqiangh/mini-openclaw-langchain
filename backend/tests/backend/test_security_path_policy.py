@@ -55,23 +55,10 @@ def test_chat_terminal_requires_explicit_enable():
     assert allowed.allowed is True
 
 
-def test_cron_tools_fallback_when_agent_config_is_empty():
+def test_cron_tools_can_be_explicitly_cleared():
     runtime = RuntimeConfig()
     runtime.autonomous_tools.cron_enabled_tools = []
-    assert get_explicit_enabled_tools(runtime, "cron") == [
-        "web_search",
-        "fetch_url",
-        "read_files",
-        "read_pdf",
-        "search_knowledge_base",
-        "sessions_list",
-        "session_history",
-        "agents_list",
-        "scheduler_cron_jobs",
-        "scheduler_cron_runs",
-        "scheduler_heartbeat_status",
-        "scheduler_heartbeat_runs",
-    ]
+    assert get_explicit_enabled_tools(runtime, "cron") == []
 
 
 def test_chat_explicit_tools_are_agent_scoped():
@@ -87,5 +74,16 @@ def test_chat_explicit_high_risk_tools_do_not_block_low_risk_tools():
         permission_level=PermissionLevel.L0_READ,
         trigger_type="chat",
         explicit_enabled_tools=["terminal"],
+    )
+    assert allowed.allowed is True
+
+
+def test_chat_baseline_mode_allows_low_risk_without_explicit_list():
+    policy = ToolPolicyEngine()
+    allowed = policy.is_allowed(
+        tool_name="read_files",
+        permission_level=PermissionLevel.L0_READ,
+        trigger_type="chat",
+        explicit_enabled_tools=[],
     )
     assert allowed.allowed is True
