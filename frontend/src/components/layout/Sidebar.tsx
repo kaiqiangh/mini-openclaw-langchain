@@ -21,6 +21,14 @@ import {
 } from "@/components/ui/primitives";
 
 type ToolStatusFilter = "all" | "enabled" | "disabled";
+type SidebarSectionKey = "agents" | "sessions" | "tools";
+
+const SIDEBAR_SECTION_STATE_KEY = "mini-openclaw:sidebar-sections:v1";
+const DEFAULT_SECTIONS: Record<SidebarSectionKey, boolean> = {
+  agents: true,
+  sessions: true,
+  tools: true,
+};
 
 function inferToolCategory(toolName: string): string {
   if (toolName.startsWith("scheduler_")) return "Scheduler";
@@ -47,6 +55,8 @@ export function Sidebar() {
   const [toolsStatus, setToolsStatus] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkStatus, setBulkStatus] = useState("");
+  const [sections, setSections] =
+    useState<Record<SidebarSectionKey, boolean>>(DEFAULT_SECTIONS);
   const {
     agents,
     currentAgentId,
@@ -74,6 +84,27 @@ export function Sidebar() {
       ),
     );
   }, [agents]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SIDEBAR_SECTION_STATE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<SidebarSectionKey, boolean>>;
+      setSections({
+        agents: parsed.agents ?? true,
+        sessions: parsed.sessions ?? true,
+        tools: parsed.tools ?? true,
+      });
+    } catch {
+      setSections(DEFAULT_SECTIONS);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIDEBAR_SECTION_STATE_KEY, JSON.stringify(sections));
+  }, [sections]);
 
   useEffect(() => {
     let cancelled = false;
@@ -226,435 +257,512 @@ export function Sidebar() {
     }
   }
 
+  function toggleSection(key: SidebarSectionKey) {
+    setSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
   return (
     <aside className="panel-shell flex min-h-0 flex-col">
       <div className="ui-panel-header">
         <h2 className="ui-panel-title">Agent Console</h2>
-        <Badge tone={sessionsScope === "active" ? "success" : "warn"}>
-          Scope: {sessionsScope === "active" ? "Active" : "Archived"}
-        </Badge>
-      </div>
-
-      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
-        <div>
-          <label className="ui-label" htmlFor="agent-selector">
-            Agents
-          </label>
-          <Select
-            id="agent-selector"
-            name="agent-selector"
-            className="mt-1 ui-mono text-xs"
-            value={currentAgentId}
-            onChange={(event) => {
-              void setCurrentAgent(event.target.value);
-            }}
-          >
-            {agents.map((agent) => (
-              <option key={agent.agent_id} value={agent.agent_id}>
-                {agent.agent_id} ({agent.active_sessions}/
-                {agent.archived_sessions})
-              </option>
-            ))}
-          </Select>
-          <div className="mt-2 flex gap-1">
-            <Input
-              name="new-agent-id"
-              aria-label="New agent id"
-              autoComplete="off"
-              spellCheck={false}
-              className="min-w-0 flex-1 ui-mono text-xs"
-              placeholder="new-agent-id…"
-              value={agentDraft}
-              onChange={(event) => setAgentDraft(event.target.value)}
-            />
-            <Button
-              type="button"
-              size="sm"
-              className="min-w-[72px] px-2"
-              disabled={!agentDraft.trim()}
-              onClick={() => {
-                const value = agentDraft.trim();
-                setAgentDraft("");
-                void createAgentById(value);
-              }}
-            >
-              Create
-            </Button>
-            <Button
-              type="button"
-              variant="danger"
-              size="sm"
-              className="min-w-[72px] px-2"
-              disabled={currentAgentId === "default"}
-              onClick={() => {
-                void deleteAgentById(currentAgentId);
-              }}
-            >
-              Delete
-            </Button>
-          </div>
-          <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="ui-label">Bulk Actions</span>
-              <Badge tone="neutral">{selectedAgentIds.length} selected</Badge>
-            </div>
-            <ul className="max-h-36 space-y-1 overflow-auto pr-1">
-              {agents.map((agent) => (
-                <li
-                  key={`bulk-${agent.agent_id}`}
-                  className="flex items-center justify-between rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
-                >
-                  <label className="flex min-w-0 items-center gap-2 text-xs text-[var(--muted)]">
-                    <input
-                      type="checkbox"
-                      checked={selectedAgentIds.includes(agent.agent_id)}
-                      onChange={() => toggleBulkAgent(agent.agent_id)}
-                    />
-                    <span className="ui-mono truncate">{agent.agent_id}</span>
-                  </label>
-                  <span className="text-xs text-[var(--muted-soft)]">
-                    {agent.active_sessions}/{agent.archived_sessions}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-2 flex flex-wrap gap-1">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setSelectedAgentIds(agents.map((item) => item.agent_id))}
-              >
-                Select All
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => setSelectedAgentIds([])}
-              >
-                Clear
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                loading={bulkBusy}
-                disabled={selectedAgentIds.length === 0}
-                onClick={() => {
-                  void runBulkExport();
-                }}
-              >
-                Export
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="danger"
-                loading={bulkBusy}
-                disabled={selectedAgentIds.length === 0}
-                onClick={() => {
-                  void runBulkDelete();
-                }}
-              >
-                Delete
-              </Button>
-            </div>
-            {bulkStatus ? (
-              <p className="ui-helper mt-2" aria-live="polite">
-                {bulkStatus}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="ui-label">Agent Tools</span>
-            <Badge tone="neutral">{filteredTools.length}</Badge>
-          </div>
-          <TabsList
-            className="grid grid-cols-3"
-            ariaLabel="Tool trigger scope"
-            value={toolTrigger}
-            onChange={(value) => setToolTrigger(value as ToolSelectionTrigger)}
-          >
-            <TabButton id="tools-tab-chat" controls="tools-panel" value="chat">
-              Chat
-            </TabButton>
-            <TabButton
-              id="tools-tab-heartbeat"
-              controls="tools-panel"
-              value="heartbeat"
-            >
-              Heartbeat
-            </TabButton>
-            <TabButton id="tools-tab-cron" controls="tools-panel" value="cron">
-              Cron
-            </TabButton>
-          </TabsList>
-          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-            <Input
-              value={toolQuery}
-              onChange={(event) => setToolQuery(event.target.value)}
-              placeholder="Search tools..."
-              className="sm:col-span-3"
-              aria-label="Search tools"
-            />
-            <Select
-              value={toolStatusFilter}
-              onChange={(event) =>
-                setToolStatusFilter(event.target.value as ToolStatusFilter)
-              }
-              aria-label="Filter tools by status"
-            >
-              <option value="all">All status</option>
-              <option value="enabled">Enabled</option>
-              <option value="disabled">Disabled</option>
-            </Select>
-            <Select
-              value={toolCategoryFilter}
-              onChange={(event) => setToolCategoryFilter(event.target.value)}
-              aria-label="Filter tools by category"
-              className="sm:col-span-2"
-            >
-              <option value="all">All categories</option>
-              {toolCategories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div
-            id="tools-panel"
-            role="tabpanel"
-            aria-labelledby={`tools-tab-${toolTrigger}`}
-            className="mt-2"
-          >
-            {toolsLoading ? (
-              <div className="ui-status" aria-live="polite">
-                Loading tools…
-              </div>
-            ) : !toolCatalog || toolCatalog.tools.length === 0 ? (
-              <EmptyState
-                title="No Tools"
-                description="No tools are registered for this agent."
-              />
-            ) : filteredTools.length === 0 ? (
-              <EmptyState
-                title="No Matching Tools"
-                description="Change search or filters to see tool rows."
-              />
-            ) : (
-              <div className="space-y-2 pr-1">
-                {groupedTools.map(([category, tools]) => (
-                  <details
-                    key={`${toolTrigger}-${category}`}
-                    className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2"
-                    open
-                  >
-                    <summary className="cursor-pointer select-none text-xs font-semibold text-[var(--muted)]">
-                      {category} · {tools.length}
-                    </summary>
-                    <ul className="mt-2 space-y-1">
-                      {tools.map((tool) => {
-                        const explicit = selectedToolNames.has(tool.name);
-                        const triggerState = tool.trigger_status[toolTrigger];
-                        return (
-                          <li
-                            key={`${toolTrigger}-${category}-${tool.name}`}
-                            className="rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
-                          >
-                            <label className="flex min-h-[44px] cursor-pointer items-start justify-between gap-2 text-xs">
-                              <div className="min-w-0 space-y-1">
-                                <div className="flex items-center gap-1">
-                                  <span className="ui-mono truncate text-[var(--text)]">
-                                    {tool.name}
-                                  </span>
-                                  <Badge
-                                    tone={triggerState.enabled ? "success" : "warn"}
-                                    className="text-[10px]"
-                                  >
-                                    {triggerState.enabled ? "Enabled" : "Blocked"}
-                                  </Badge>
-                                </div>
-                                <div className="line-clamp-2 text-[var(--muted)]">
-                                  {tool.description}
-                                </div>
-                                <div className="text-[11px] text-[var(--muted-soft)]">
-                                  {triggerState.reason}
-                                </div>
-                              </div>
-                              <input
-                                type="checkbox"
-                                checked={explicit}
-                                disabled={toolsSaving}
-                                onChange={() => {
-                                  void toggleToolSelection(tool.name);
-                                }}
-                                aria-label={`Toggle ${tool.name} in ${toolTrigger} explicit allowlist`}
-                              />
-                            </label>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </details>
-                ))}
-              </div>
-            )}
-            <p className="ui-helper mt-2" aria-live="polite">
-              {toolsStatus ||
-                "Tip: use search + category filters, then toggle allowlist checkboxes for this trigger."}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <h2 className="ui-panel-title">Sessions</h2>
+        <div className="flex items-center gap-2">
+          <Badge tone={sessionsScope === "active" ? "success" : "warn"}>
+            Scope: {sessionsScope === "active" ? "Active" : "Archived"}
+          </Badge>
           <Button
             type="button"
             size="sm"
-            className="px-3"
-            disabled={sessionsScope !== "active"}
-            onClick={() => {
-              void createNewSession();
-            }}
+            className="px-2"
+            onClick={() => setSections(DEFAULT_SECTIONS)}
           >
-            New
+            Expand All
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="px-2"
+            onClick={() =>
+              setSections({
+                agents: false,
+                sessions: false,
+                tools: false,
+              })
+            }
+          >
+            Collapse All
           </Button>
         </div>
+      </div>
 
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <TabsList
-            className="flex-1 grid-cols-2"
-            ariaLabel="Session scope"
-            value={sessionsScope}
-            onChange={(value) => {
-              void setSessionsScope(value as "active" | "archived");
-            }}
-          >
-            <TabButton
-              id="sessions-tab-active"
-              controls="sessions-panel-active"
-              value="active"
+      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
+        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="ui-label">Agents</span>
+            <Button
+              type="button"
+              size="sm"
+              className="px-2"
+              aria-expanded={sections.agents}
+              onClick={() => toggleSection("agents")}
             >
-              Active
-            </TabButton>
-            <TabButton
-              id="sessions-tab-archived"
-              controls="sessions-panel-archived"
-              value="archived"
-            >
-              Archived
-            </TabButton>
-          </TabsList>
-          <Badge tone="neutral">{sessions.length} items</Badge>
-        </div>
-
-        {!initialized ? (
-          <div className="ui-status" aria-live="polite">
-            Loading…
+              {sections.agents ? "Collapse" : "Expand"}
+            </Button>
           </div>
-        ) : (
-          <div
-            id={
-              sessionsScope === "active"
-                ? "sessions-panel-active"
-                : "sessions-panel-archived"
-            }
-            role="tabpanel"
-            aria-labelledby={
-              sessionsScope === "active"
-                ? "sessions-tab-active"
-                : "sessions-tab-archived"
-            }
-            className="min-h-0 flex-1"
-          >
-            <ul className="ui-scroll-area space-y-2 pr-1">
-              {sessions.map((session) => (
-                <li key={session.session_id}>
-                  <div
-                    className={`rounded-md border p-3 text-sm transition-colors duration-200 ${
-                      session.session_id === currentSessionId
-                        ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-                        : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
-                    }`}
-                  >
-                    <button
-                      className="w-full text-left"
-                      onClick={() => {
-                        void selectSession(session.session_id);
-                      }}
+          {sections.agents ? (
+            <>
+              <label className="ui-label" htmlFor="agent-selector">
+                Agent
+              </label>
+              <Select
+                id="agent-selector"
+                name="agent-selector"
+                className="mt-1 ui-mono text-xs"
+                value={currentAgentId}
+                onChange={(event) => {
+                  void setCurrentAgent(event.target.value);
+                }}
+              >
+                {agents.map((agent) => (
+                  <option key={agent.agent_id} value={agent.agent_id}>
+                    {agent.agent_id} ({agent.active_sessions}/
+                    {agent.archived_sessions})
+                  </option>
+                ))}
+              </Select>
+              <div className="mt-2 flex gap-1">
+                <Input
+                  name="new-agent-id"
+                  aria-label="New agent id"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="min-w-0 flex-1 ui-mono text-xs"
+                  placeholder="new-agent-id…"
+                  value={agentDraft}
+                  onChange={(event) => setAgentDraft(event.target.value)}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  className="min-w-[72px] px-2"
+                  disabled={!agentDraft.trim()}
+                  onClick={() => {
+                    const value = agentDraft.trim();
+                    setAgentDraft("");
+                    void createAgentById(value);
+                  }}
+                >
+                  Create
+                </Button>
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  className="min-w-[72px] px-2"
+                  disabled={currentAgentId === "default"}
+                  onClick={() => {
+                    void deleteAgentById(currentAgentId);
+                  }}
+                >
+                  Delete
+                </Button>
+              </div>
+              <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="ui-label">Bulk Actions</span>
+                  <Badge tone="neutral">{selectedAgentIds.length} selected</Badge>
+                </div>
+                <ul className="max-h-36 space-y-1 overflow-auto pr-1">
+                  {agents.map((agent) => (
+                    <li
+                      key={`bulk-${agent.agent_id}`}
+                      className="flex items-center justify-between rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
                     >
-                      <div className="truncate font-semibold text-[var(--text)]">
-                        {session.title || "New Session"}
-                      </div>
-                      <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
-                        {session.session_id.slice(0, 8)}
-                      </div>
-                    </button>
-                    <div className="mt-3 flex flex-wrap gap-1">
-                      {sessionsScope === "active" ? (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              void archiveSessionById(session.session_id);
-                            }}
-                          >
-                            Archive
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="danger"
-                            onClick={() => {
-                              void deleteSessionById(session.session_id, false);
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </>
-                      ) : (
-                        <>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() => {
-                              void restoreSessionById(session.session_id);
-                            }}
-                          >
-                            Restore
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="danger"
-                            onClick={() => {
-                              void deleteSessionById(session.session_id, true);
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                      <label className="flex min-w-0 items-center gap-2 text-xs text-[var(--muted)]">
+                        <input
+                          type="checkbox"
+                          checked={selectedAgentIds.includes(agent.agent_id)}
+                          onChange={() => toggleBulkAgent(agent.agent_id)}
+                        />
+                        <span className="ui-mono truncate">{agent.agent_id}</span>
+                      </label>
+                      <span className="text-xs text-[var(--muted-soft)]">
+                        {agent.active_sessions}/{agent.archived_sessions}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      setSelectedAgentIds(agents.map((item) => item.agent_id))
+                    }
+                  >
+                    Select All
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => setSelectedAgentIds([])}
+                  >
+                    Clear
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    loading={bulkBusy}
+                    disabled={selectedAgentIds.length === 0}
+                    onClick={() => {
+                      void runBulkExport();
+                    }}
+                  >
+                    Export
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    loading={bulkBusy}
+                    disabled={selectedAgentIds.length === 0}
+                    onClick={() => {
+                      void runBulkDelete();
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </div>
+                {bulkStatus ? (
+                  <p className="ui-helper mt-2" aria-live="polite">
+                    {bulkStatus}
+                  </p>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </section>
+
+        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="ui-label">Sessions</span>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                className="px-3"
+                disabled={sessionsScope !== "active"}
+                onClick={() => {
+                  void createNewSession();
+                }}
+              >
+                New
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.sessions}
+                onClick={() => toggleSection("sessions")}
+              >
+                {sections.sessions ? "Collapse" : "Expand"}
+              </Button>
+            </div>
           </div>
-        )}
-        {initialized && sessions.length === 0 ? (
-          <EmptyState
-            title="No Sessions"
-            description={
-              sessionsScope === "active"
-                ? "Create a new session to begin."
-                : "No archived sessions."
-            }
-          />
-        ) : null}
+          {sections.sessions ? (
+            <>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <TabsList
+                  className="flex-1 grid-cols-2"
+                  ariaLabel="Session scope"
+                  value={sessionsScope}
+                  onChange={(value) => {
+                    void setSessionsScope(value as "active" | "archived");
+                  }}
+                >
+                  <TabButton
+                    id="sessions-tab-active"
+                    controls="sessions-panel-active"
+                    value="active"
+                  >
+                    Active
+                  </TabButton>
+                  <TabButton
+                    id="sessions-tab-archived"
+                    controls="sessions-panel-archived"
+                    value="archived"
+                  >
+                    Archived
+                  </TabButton>
+                </TabsList>
+                <Badge tone="neutral">{sessions.length} items</Badge>
+              </div>
+
+              {!initialized ? (
+                <div className="ui-status" aria-live="polite">
+                  Loading…
+                </div>
+              ) : (
+                <div
+                  id={
+                    sessionsScope === "active"
+                      ? "sessions-panel-active"
+                      : "sessions-panel-archived"
+                  }
+                  role="tabpanel"
+                  aria-labelledby={
+                    sessionsScope === "active"
+                      ? "sessions-tab-active"
+                      : "sessions-tab-archived"
+                  }
+                  className="min-h-0"
+                >
+                  <ul className="space-y-2">
+                    {sessions.map((session) => (
+                      <li key={session.session_id}>
+                        <div
+                          className={`rounded-md border p-3 text-sm transition-colors duration-200 ${
+                            session.session_id === currentSessionId
+                              ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                              : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
+                          }`}
+                        >
+                          <button
+                            className="w-full text-left"
+                            onClick={() => {
+                              void selectSession(session.session_id);
+                            }}
+                          >
+                            <div className="truncate font-semibold text-[var(--text)]">
+                              {session.title || "New Session"}
+                            </div>
+                            <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
+                              {session.session_id.slice(0, 8)}
+                            </div>
+                          </button>
+                          <div className="mt-3 flex flex-wrap gap-1">
+                            {sessionsScope === "active" ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    void archiveSessionById(session.session_id);
+                                  }}
+                                >
+                                  Archive
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="danger"
+                                  onClick={() => {
+                                    void deleteSessionById(session.session_id, false);
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    void restoreSessionById(session.session_id);
+                                  }}
+                                >
+                                  Restore
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="danger"
+                                  onClick={() => {
+                                    void deleteSessionById(session.session_id, true);
+                                  }}
+                                >
+                                  Delete
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {initialized && sessions.length === 0 ? (
+                <EmptyState
+                  title="No Sessions"
+                  description={
+                    sessionsScope === "active"
+                      ? "Create a new session to begin."
+                      : "No archived sessions."
+                  }
+                />
+              ) : null}
+            </>
+          ) : null}
+        </section>
+
+        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="ui-label">Agent Tools</span>
+            <div className="flex items-center gap-1">
+              <Badge tone="neutral">{filteredTools.length}</Badge>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.tools}
+                onClick={() => toggleSection("tools")}
+              >
+                {sections.tools ? "Collapse" : "Expand"}
+              </Button>
+            </div>
+          </div>
+          {sections.tools ? (
+            <>
+              <TabsList
+                className="grid grid-cols-3"
+                ariaLabel="Tool trigger scope"
+                value={toolTrigger}
+                onChange={(value) => setToolTrigger(value as ToolSelectionTrigger)}
+              >
+                <TabButton id="tools-tab-chat" controls="tools-panel" value="chat">
+                  Chat
+                </TabButton>
+                <TabButton
+                  id="tools-tab-heartbeat"
+                  controls="tools-panel"
+                  value="heartbeat"
+                >
+                  Heartbeat
+                </TabButton>
+                <TabButton id="tools-tab-cron" controls="tools-panel" value="cron">
+                  Cron
+                </TabButton>
+              </TabsList>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <Input
+                  value={toolQuery}
+                  onChange={(event) => setToolQuery(event.target.value)}
+                  placeholder="Search tools..."
+                  className="sm:col-span-3"
+                  aria-label="Search tools"
+                />
+                <Select
+                  value={toolStatusFilter}
+                  onChange={(event) =>
+                    setToolStatusFilter(event.target.value as ToolStatusFilter)
+                  }
+                  aria-label="Filter tools by status"
+                >
+                  <option value="all">All status</option>
+                  <option value="enabled">Enabled</option>
+                  <option value="disabled">Disabled</option>
+                </Select>
+                <Select
+                  value={toolCategoryFilter}
+                  onChange={(event) => setToolCategoryFilter(event.target.value)}
+                  aria-label="Filter tools by category"
+                  className="sm:col-span-2"
+                >
+                  <option value="all">All categories</option>
+                  {toolCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div
+                id="tools-panel"
+                role="tabpanel"
+                aria-labelledby={`tools-tab-${toolTrigger}`}
+                className="mt-2"
+              >
+                {toolsLoading ? (
+                  <div className="ui-status" aria-live="polite">
+                    Loading tools…
+                  </div>
+                ) : !toolCatalog || toolCatalog.tools.length === 0 ? (
+                  <EmptyState
+                    title="No Tools"
+                    description="No tools are registered for this agent."
+                  />
+                ) : filteredTools.length === 0 ? (
+                  <EmptyState
+                    title="No Matching Tools"
+                    description="Change search or filters to see tool rows."
+                  />
+                ) : (
+                  <div className="space-y-2 pr-1">
+                    {groupedTools.map(([category, tools]) => (
+                      <details
+                        key={`${toolTrigger}-${category}`}
+                        className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2"
+                        open
+                      >
+                        <summary className="cursor-pointer select-none text-xs font-semibold text-[var(--muted)]">
+                          {category} · {tools.length}
+                        </summary>
+                        <ul className="mt-2 space-y-1">
+                          {tools.map((tool) => {
+                            const explicit = selectedToolNames.has(tool.name);
+                            const triggerState = tool.trigger_status[toolTrigger];
+                            return (
+                              <li
+                                key={`${toolTrigger}-${category}-${tool.name}`}
+                                className="rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
+                              >
+                                <label className="flex min-h-[44px] cursor-pointer items-start justify-between gap-2 text-xs">
+                                  <div className="min-w-0 space-y-1">
+                                    <div className="flex items-center gap-1">
+                                      <span className="ui-mono truncate text-[var(--text)]">
+                                        {tool.name}
+                                      </span>
+                                      <Badge
+                                        tone={triggerState.enabled ? "success" : "warn"}
+                                        className="text-[10px]"
+                                      >
+                                        {triggerState.enabled ? "Enabled" : "Blocked"}
+                                      </Badge>
+                                    </div>
+                                    <div className="line-clamp-2 text-[var(--muted)]">
+                                      {tool.description}
+                                    </div>
+                                    <div className="text-[11px] text-[var(--muted-soft)]">
+                                      {triggerState.reason}
+                                    </div>
+                                  </div>
+                                  <input
+                                    type="checkbox"
+                                    checked={explicit}
+                                    disabled={toolsSaving}
+                                    onChange={() => {
+                                      void toggleToolSelection(tool.name);
+                                    }}
+                                    aria-label={`Toggle ${tool.name} in ${toolTrigger} explicit allowlist`}
+                                  />
+                                </label>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
+                    ))}
+                  </div>
+                )}
+                <p className="ui-helper mt-2" aria-live="polite">
+                  {toolsStatus ||
+                    "Tip: use search + category filters, then toggle enabled checkboxes for this trigger."}
+                </p>
+              </div>
+            </>
+          ) : null}
+        </section>
       </div>
     </aside>
   );

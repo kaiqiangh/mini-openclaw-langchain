@@ -36,6 +36,27 @@ import {
 import { useAppStore } from "@/lib/store";
 
 type ScheduleType = "at" | "every" | "cron";
+type SchedulerSectionKey =
+  | "composer"
+  | "metrics"
+  | "trend"
+  | "cron"
+  | "heartbeat"
+  | "recent_runs"
+  | "recent_failures"
+  | "heartbeat_runs";
+
+const SCHEDULER_SECTIONS_KEY = "mini-openclaw:scheduler-sections:v1";
+const DEFAULT_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
+  composer: true,
+  metrics: true,
+  trend: true,
+  cron: true,
+  heartbeat: true,
+  recent_runs: true,
+  recent_failures: true,
+  heartbeat_runs: true,
+};
 
 type JobDraft = {
   id: string | null;
@@ -139,6 +160,9 @@ export default function SchedulerPage() {
     "comfortable",
   );
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
+  const [sections, setSections] = useState<Record<SchedulerSectionKey, boolean>>(
+    DEFAULT_SCHEDULER_SECTIONS,
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -152,6 +176,32 @@ export default function SchedulerPage() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem("mini-openclaw:scheduler-density", density);
   }, [density]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(SCHEDULER_SECTIONS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<SchedulerSectionKey, boolean>>;
+      setSections({
+        composer: parsed.composer ?? true,
+        metrics: parsed.metrics ?? true,
+        trend: parsed.trend ?? true,
+        cron: parsed.cron ?? true,
+        heartbeat: parsed.heartbeat ?? true,
+        recent_runs: parsed.recent_runs ?? true,
+        recent_failures: parsed.recent_failures ?? true,
+        heartbeat_runs: parsed.heartbeat_runs ?? true,
+      });
+    } catch {
+      setSections(DEFAULT_SCHEDULER_SECTIONS);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SCHEDULER_SECTIONS_KEY, JSON.stringify(sections));
+  }, [sections]);
 
   async function refreshAll(nextAgentId: string, window: SchedulerMetricsWindow) {
     setLoading(true);
@@ -299,6 +349,10 @@ export default function SchedulerPage() {
     }
   }
 
+  function toggleSection(key: SchedulerSectionKey) {
+    setSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
   return (
     <main
       id="main-content"
@@ -354,9 +408,46 @@ export default function SchedulerPage() {
               )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Agent {agentId}</Badge>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={() => setSections(DEFAULT_SCHEDULER_SECTIONS)}
+              >
+                Expand All
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={() =>
+                  setSections({
+                    composer: false,
+                    metrics: false,
+                    trend: false,
+                    cron: false,
+                    heartbeat: false,
+                    recent_runs: false,
+                    recent_failures: false,
+                    heartbeat_runs: false,
+                  })
+                }
+              >
+                Collapse All
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.composer}
+                onClick={() => toggleSection("composer")}
+              >
+                {sections.composer ? "Collapse" : "Expand"}
+              </Button>
             </div>
           </div>
-          <div className="grid gap-3 p-4 md:grid-cols-5">
+          {sections.composer ? (
+            <div className="grid gap-3 p-4 md:grid-cols-5">
             <label className="min-w-0">
               <span className="ui-label">Agent</span>
               <Select
@@ -494,7 +585,8 @@ export default function SchedulerPage() {
                 </Button>
               ) : null}
             </div>
-          </div>
+            </div>
+          ) : null}
           {error ? (
             <div className="px-4 pb-4">
               <div className="ui-alert" role="alert">
@@ -504,131 +596,174 @@ export default function SchedulerPage() {
           ) : null}
         </div>
 
-        <div className="grid min-w-0 gap-3 lg:grid-cols-4">
-          <div className="panel-shell p-4">
-            <div className="ui-label">Scheduler Events</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {metrics?.totals.events ?? 0}
-            </div>
-            <div className="mt-1 text-xs text-[var(--muted)]">
-              Cron {metrics?.totals.cron_events ?? 0} · Heartbeat{" "}
-              {metrics?.totals.heartbeat_events ?? 0}
-            </div>
+        <div className="panel-shell min-w-0">
+          <div className="ui-panel-header">
+            <h2 className="ui-panel-title">Scheduler Metrics</h2>
+            <Button
+              type="button"
+              size="sm"
+              className="px-2"
+              aria-expanded={sections.metrics}
+              onClick={() => toggleSection("metrics")}
+            >
+              {sections.metrics ? "Collapse" : "Expand"}
+            </Button>
           </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Cron Success Rate</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {metrics?.cron.success_rate ?? 0}%
+          {sections.metrics ? (
+            <div className="grid min-w-0 gap-3 p-4 lg:grid-cols-4">
+              <div className="panel-shell p-4">
+                <div className="ui-label">Scheduler Events</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {metrics?.totals.events ?? 0}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Cron {metrics?.totals.cron_events ?? 0} · Heartbeat{" "}
+                  {metrics?.totals.heartbeat_events ?? 0}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Cron Success Rate</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {metrics?.cron.success_rate ?? 0}%
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  ok {metrics?.cron.ok ?? 0} · error {metrics?.cron.error ?? 0}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Duration p90 / p99</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {asMs(metrics?.duration.p90_ms)} / {asMs(metrics?.duration.p99_ms)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  avg {asMs(metrics?.duration.avg_ms)} · max{" "}
+                  {asMs(metrics?.duration.max_ms)}
+                </div>
+              </div>
+              <div className="panel-shell p-4">
+                <div className="ui-label">Latency p90 / p99</div>
+                <div className="ui-tabular mt-1 text-lg font-semibold">
+                  {asMs(metrics?.latency.p90_ms)} / {asMs(metrics?.latency.p99_ms)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  avg {asMs(metrics?.latency.avg_ms)} · max{" "}
+                  {asMs(metrics?.latency.max_ms)}
+                </div>
+              </div>
             </div>
-            <div className="mt-1 text-xs text-[var(--muted)]">
-              ok {metrics?.cron.ok ?? 0} · error {metrics?.cron.error ?? 0}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Duration p90 / p99</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {asMs(metrics?.duration.p90_ms)} / {asMs(metrics?.duration.p99_ms)}
-            </div>
-            <div className="mt-1 text-xs text-[var(--muted)]">
-              avg {asMs(metrics?.duration.avg_ms)} · max{" "}
-              {asMs(metrics?.duration.max_ms)}
-            </div>
-          </div>
-          <div className="panel-shell p-4">
-            <div className="ui-label">Latency p90 / p99</div>
-            <div className="ui-tabular mt-1 text-lg font-semibold">
-              {asMs(metrics?.latency.p90_ms)} / {asMs(metrics?.latency.p99_ms)}
-            </div>
-            <div className="mt-1 text-xs text-[var(--muted)]">
-              avg {asMs(metrics?.latency.avg_ms)} · max{" "}
-              {asMs(metrics?.latency.max_ms)}
-            </div>
-          </div>
+          ) : null}
         </div>
 
         <div className="panel-shell min-w-0">
           <div className="ui-panel-header">
             <h2 className="ui-panel-title">Observability Trend</h2>
-            <Badge tone="neutral">
-              {metricsSeries?.points.length ?? 0} buckets
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge tone="neutral">
+                {metricsSeries?.points.length ?? 0} buckets
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.trend}
+                onClick={() => toggleSection("trend")}
+              >
+                {sections.trend ? "Collapse" : "Expand"}
+              </Button>
+            </div>
           </div>
-          <div className="p-4">
-            {loading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-24 w-full" />
-                <Skeleton className="h-4 w-2/3" />
-              </div>
-            ) : trendPoints.length === 0 ? (
-              <EmptyState
-                title="No Trend Data"
-                description="No scheduler events in the selected window."
-              />
-            ) : (
-              <>
-                <div className="h-28 w-full">
-                  <svg
-                    viewBox={`0 0 ${Math.max(1, trendPoints.length)} 100`}
-                    preserveAspectRatio="none"
-                    className="h-full w-full"
-                  >
-                    {trendPoints.map((point, index) => {
-                      const height = (point.total / trendMax) * 92;
-                      const y = 96 - height;
-                      return (
-                        <rect
-                          key={`${point.ts_ms}-${index}`}
-                          x={index + 0.12}
-                          y={y}
-                          width={0.76}
-                          height={Math.max(2, height)}
-                          rx={0.1}
-                          fill="var(--accent)"
-                          opacity={0.88}
-                        />
-                      );
-                    })}
-                  </svg>
+          {sections.trend ? (
+            <div className="p-4">
+              {loading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-4 w-2/3" />
                 </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
-                  {trendPoints.slice(Math.max(0, trendPoints.length - 8)).map((point) => (
-                    <span
-                      key={`trend-label-${point.ts_ms}`}
-                      className="rounded border border-[var(--border)] px-2 py-0.5"
+              ) : trendPoints.length === 0 ? (
+                <EmptyState
+                  title="No Trend Data"
+                  description="No scheduler events in the selected window."
+                />
+              ) : (
+                <>
+                  <div className="h-28 w-full">
+                    <svg
+                      viewBox={`0 0 ${Math.max(1, trendPoints.length)} 100`}
+                      preserveAspectRatio="none"
+                      className="h-full w-full"
                     >
-                      {new Date(point.ts_ms).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
+                      {trendPoints.map((point, index) => {
+                        const height = (point.total / trendMax) * 92;
+                        const y = 96 - height;
+                        return (
+                          <rect
+                            key={`${point.ts_ms}-${index}`}
+                            x={index + 0.12}
+                            y={y}
+                            width={0.76}
+                            height={Math.max(2, height)}
+                            rx={0.1}
+                            fill="var(--accent)"
+                            opacity={0.88}
+                          />
+                        );
                       })}
-                      : {point.total}
-                    </span>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+                    </svg>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                    {trendPoints
+                      .slice(Math.max(0, trendPoints.length - 8))
+                      .map((point) => (
+                        <span
+                          key={`trend-label-${point.ts_ms}`}
+                          className="rounded border border-[var(--border)] px-2 py-0.5"
+                        >
+                          {new Date(point.ts_ms).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                          : {point.total}
+                        </span>
+                      ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="grid min-w-0 gap-3 lg:grid-cols-3">
           <div className="panel-shell min-w-0 lg:col-span-2">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Cron Jobs</h2>
-              <Badge tone="neutral">{jobs.length} jobs</Badge>
+              <div className="flex items-center gap-2">
+                <Badge tone="neutral">{jobs.length} jobs</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.cron}
+                  onClick={() => toggleSection("cron")}
+                >
+                  {sections.cron ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
-              {loading ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                </div>
-              ) : jobs.length === 0 ? (
-                <EmptyState
-                  title="No Cron Jobs"
-                  description="Create a cron job to start scheduled automation."
-                />
-              ) : (
-                <>
+            {sections.cron ? (
+              <div className="p-3">
+                {loading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : jobs.length === 0 ? (
+                  <EmptyState
+                    title="No Cron Jobs"
+                    description="Create a cron job to start scheduled automation."
+                  />
+                ) : (
+                  <>
                   <div className="space-y-2 lg:hidden">
                     {jobs.map((job) => (
                       <article
@@ -791,9 +926,10 @@ export default function SchedulerPage() {
                       </tbody>
                     </DataTable>
                   </TableWrap>
-                </>
-              )}
-            </div>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
 
           <div className="panel-shell min-w-0">
@@ -814,99 +950,110 @@ export default function SchedulerPage() {
                 >
                   {heartbeatHealth}
                 </Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.heartbeat}
+                  onClick={() => toggleSection("heartbeat")}
+                >
+                  {sections.heartbeat ? "Collapse" : "Expand"}
+                </Button>
               </div>
             </div>
-            <div className="space-y-2 p-4">
-              <label className="flex items-center gap-2 text-sm text-[var(--muted)]">
-                <input
-                  type="checkbox"
-                  checked={heartbeat.enabled}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      enabled: event.target.checked,
-                    }))
-                  }
-                />
-                Enabled
-              </label>
-              <label className="block">
-                <span className="ui-label">Interval Seconds</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  value={String(heartbeat.interval_seconds)}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      interval_seconds: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </label>
-              <label className="block">
-                <span className="ui-label">Timezone</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  value={heartbeat.timezone}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      timezone: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <label className="block">
-                <span className="ui-label">Active Start Hour</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  value={String(heartbeat.active_start_hour)}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      active_start_hour: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </label>
-              <label className="block">
-                <span className="ui-label">Active End Hour</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  value={String(heartbeat.active_end_hour)}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      active_end_hour: Number(event.target.value || 0),
-                    }))
-                  }
-                />
-              </label>
-              <label className="block">
-                <span className="ui-label">Session ID</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  value={heartbeat.session_id}
-                  onChange={(event) =>
-                    setHeartbeat((prev) => ({
-                      ...prev,
-                      session_id: event.target.value,
-                    }))
-                  }
-                />
-              </label>
-              <Button
-                type="button"
-                className="w-full text-sm"
-                loading={loading}
-                onClick={async () => {
-                  await updateHeartbeatConfig(heartbeat, agentId);
-                  await refreshAll(agentId, metricsWindow);
-                }}
-              >
-                Save Heartbeat
-              </Button>
-            </div>
+            {sections.heartbeat ? (
+              <div className="space-y-2 p-4">
+                <label className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                  <input
+                    type="checkbox"
+                    checked={heartbeat.enabled}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        enabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  Enabled
+                </label>
+                <label className="block">
+                  <span className="ui-label">Interval Seconds</span>
+                  <Input
+                    className="mt-1 ui-mono text-sm"
+                    value={String(heartbeat.interval_seconds)}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        interval_seconds: Number(event.target.value || 0),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="ui-label">Timezone</span>
+                  <Input
+                    className="mt-1 ui-mono text-sm"
+                    value={heartbeat.timezone}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        timezone: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="ui-label">Active Start Hour</span>
+                  <Input
+                    className="mt-1 ui-mono text-sm"
+                    value={String(heartbeat.active_start_hour)}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        active_start_hour: Number(event.target.value || 0),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="ui-label">Active End Hour</span>
+                  <Input
+                    className="mt-1 ui-mono text-sm"
+                    value={String(heartbeat.active_end_hour)}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        active_end_hour: Number(event.target.value || 0),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="block">
+                  <span className="ui-label">Session ID</span>
+                  <Input
+                    className="mt-1 ui-mono text-sm"
+                    value={heartbeat.session_id}
+                    onChange={(event) =>
+                      setHeartbeat((prev) => ({
+                        ...prev,
+                        session_id: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <Button
+                  type="button"
+                  className="w-full text-sm"
+                  loading={loading}
+                  onClick={async () => {
+                    await updateHeartbeatConfig(heartbeat, agentId);
+                    await refreshAll(agentId, metricsWindow);
+                  }}
+                >
+                  Save Heartbeat
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -914,9 +1061,20 @@ export default function SchedulerPage() {
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Recent Runs</h2>
-              <Badge tone="neutral">{recentRuns.length}</Badge>
+              <div className="flex items-center gap-2">
+                <Badge tone="neutral">{recentRuns.length}</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.recent_runs}
+                  onClick={() => toggleSection("recent_runs")}
+                >
+                  {sections.recent_runs ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
+            {sections.recent_runs ? <div className="p-3">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-9 w-full" />
@@ -973,14 +1131,25 @@ export default function SchedulerPage() {
                   </TableWrap>
                 </>
               )}
-            </div>
+            </div> : null}
           </div>
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Recent Failures</h2>
-              <Badge tone="warn">{recentFailures.length}</Badge>
+              <div className="flex items-center gap-2">
+                <Badge tone="warn">{recentFailures.length}</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.recent_failures}
+                  onClick={() => toggleSection("recent_failures")}
+                >
+                  {sections.recent_failures ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
+            {sections.recent_failures ? <div className="p-3">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-9 w-full" />
@@ -1037,14 +1206,25 @@ export default function SchedulerPage() {
                   </TableWrap>
                 </>
               )}
-            </div>
+            </div> : null}
           </div>
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Heartbeat Runs</h2>
-              <Badge tone="neutral">{recentHeartbeat.length}</Badge>
+              <div className="flex items-center gap-2">
+                <Badge tone="neutral">{recentHeartbeat.length}</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.heartbeat_runs}
+                  onClick={() => toggleSection("heartbeat_runs")}
+                >
+                  {sections.heartbeat_runs ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
+            {sections.heartbeat_runs ? <div className="p-3">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-9 w-full" />
@@ -1113,7 +1293,7 @@ export default function SchedulerPage() {
                   </TableWrap>
                 </>
               )}
-            </div>
+            </div> : null}
           </div>
         </div>
         {selectedJob ? (
