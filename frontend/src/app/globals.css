@@ -538,6 +538,15 @@ h4 {
   background: var(--accent-soft);
 }
 
+.ui-table.ui-table-compact {
+  font-size: 12px;
+}
+
+.ui-table.ui-table-compact th,
+.ui-table.ui-table-compact td {
+  padding: 6px 8px;
+}
+
 .ui-tooltip {
   position: relative;
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getAgentRuntimeDiff,
@@ -79,6 +79,10 @@ export function InspectorPanel() {
   );
   const [bulkPatchStatus, setBulkPatchStatus] = useState<string>("");
   const [bulkPatchLoading, setBulkPatchLoading] = useState<boolean>(false);
+  const [runtimeActionStatus, setRuntimeActionStatus] = useState<string>("");
+  const [runtimeFullscreen, setRuntimeFullscreen] = useState<boolean>(false);
+  const runtimeEditorRef = useRef<any>(null);
+  const fileEditorRef = useRef<any>(null);
 
   const {
     agents,
@@ -213,6 +217,40 @@ export function InspectorPanel() {
     };
   }, []);
 
+  useEffect(() => {
+    setRuntimeActionStatus("");
+  }, [currentAgentId, mode]);
+
+  useEffect(() => {
+    if (mode !== "runtime" && runtimeFullscreen) {
+      setRuntimeFullscreen(false);
+    }
+  }, [mode, runtimeFullscreen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (mode !== "runtime") return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveRuntimeConfigContent();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        void runtimeEditorRef.current?.getAction?.("actions.find")?.run?.();
+        return;
+      }
+      if (event.key === "Escape" && runtimeFullscreen) {
+        event.preventDefault();
+        setRuntimeFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mode, runtimeFullscreen]);
+
   const fileOptions = useMemo(() => {
     const merged = [...workspaceFileOptions, ...skillFileOptions];
     if (!merged.includes(selectedFilePath)) {
@@ -314,25 +352,81 @@ export function InspectorPanel() {
     }
   }
 
+  function formatRuntimeJson() {
+    try {
+      const parsed = JSON.parse(runtimeConfigContent) as Record<string, unknown>;
+      setRuntimeConfigContent(JSON.stringify(parsed, null, 2));
+      setRuntimeConfigDirty(true);
+      setRuntimeActionStatus("JSON formatted.");
+      setRuntimeConfigError("");
+    } catch {
+      setRuntimeConfigError("Runtime config JSON is invalid.");
+      setRuntimeActionStatus("");
+    }
+  }
+
+  function validateRuntimeJson() {
+    try {
+      JSON.parse(runtimeConfigContent);
+      setRuntimeConfigError("");
+      setRuntimeActionStatus("JSON is valid.");
+    } catch {
+      setRuntimeConfigError("Runtime config JSON is invalid.");
+      setRuntimeActionStatus("");
+    }
+  }
+
+  async function copyRuntimeJson() {
+    try {
+      await navigator.clipboard.writeText(runtimeConfigContent);
+      setRuntimeActionStatus("Runtime config copied.");
+    } catch {
+      setRuntimeActionStatus("Copy failed.");
+    }
+  }
+
+  function openRuntimeSearch() {
+    void runtimeEditorRef.current?.getAction?.("actions.find")?.run?.();
+  }
+
   return (
-    <aside className="panel-shell flex min-h-0 flex-col">
+    <aside
+      className={`panel-shell flex min-h-0 flex-col ${runtimeFullscreen ? "fixed inset-3 z-40 shadow-2xl" : ""}`}
+    >
       <div className="ui-panel-header">
         <h2 className="ui-panel-title">Inspector</h2>
-        <Button
-          type="button"
-          size="sm"
-          className="px-3"
-          disabled={mode === "file" ? !fileDirty : !runtimeConfigDirty}
-          onClick={() => {
-            if (mode === "file") {
-              void saveSelectedFile();
-            } else {
-              void saveRuntimeConfigContent();
-            }
-          }}
-        >
-          Save
-        </Button>
+        <div className="flex items-center gap-2">
+          {mode === "runtime" ? (
+            <Badge tone={runtimeConfigDirty ? "warn" : "success"}>
+              {runtimeConfigDirty ? "Unsaved" : "Saved"}
+            </Badge>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            className="px-3"
+            disabled={mode === "file" ? !fileDirty : !runtimeConfigDirty}
+            onClick={() => {
+              if (mode === "file") {
+                void saveSelectedFile();
+              } else {
+                void saveRuntimeConfigContent();
+              }
+            }}
+          >
+            Save
+          </Button>
+          {mode === "runtime" ? (
+            <Button
+              type="button"
+              size="sm"
+              className="px-3"
+              onClick={() => setRuntimeFullscreen((prev) => !prev)}
+            >
+              {runtimeFullscreen ? "Exit Focus" : "Focus"}
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <TabsList
@@ -357,7 +451,7 @@ export function InspectorPanel() {
         </TabButton>
       </TabsList>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-3 p-4">
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge tone="neutral">Agent {currentAgentId}</Badge>
           {mode === "file" ? (
@@ -410,6 +504,9 @@ export function InspectorPanel() {
                 language="markdown"
                 theme={editorTheme}
                 value={selectedFileContent}
+                onMount={(editor) => {
+                  fileEditorRef.current = editor;
+                }}
                 onChange={(value) => updateSelectedFileContent(value ?? "")}
                 options={{
                   minimap: { enabled: false },
@@ -429,11 +526,46 @@ export function InspectorPanel() {
             id="inspector-panel-runtime"
             role="tabpanel"
             aria-labelledby="inspector-tab-runtime"
-            className="flex min-h-0 flex-1 flex-col gap-3"
+            className="flex min-w-0 flex-col gap-3 pb-2"
           >
-            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--muted)]">
-              Edit validated runtime settings for this agent. Save will call
-              `/api/v1/agents/&lt;agent_id&gt;/config/runtime`.
+            <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
+              <Button type="button" size="sm" onClick={formatRuntimeJson}>
+                Format
+              </Button>
+              <Button type="button" size="sm" onClick={validateRuntimeJson}>
+                Validate
+              </Button>
+              <Button type="button" size="sm" onClick={() => void copyRuntimeJson()}>
+                Copy
+              </Button>
+              <Button type="button" size="sm" onClick={openRuntimeSearch}>
+                Search
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                loading={runtimeDiffLoading}
+                onClick={() => {
+                  void refreshRuntimeDiff();
+                }}
+              >
+                Diff
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="primary"
+                disabled={!runtimeConfigDirty}
+                onClick={() => {
+                  void saveRuntimeConfigContent();
+                }}
+              >
+                Save Runtime
+              </Button>
+              <span className="ui-helper ml-auto" aria-live="polite">
+                {runtimeActionStatus ||
+                  "Shortcuts: Ctrl/Cmd+S save, Ctrl/Cmd+F search."}
+              </span>
             </div>
             <div className="grid gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 md:grid-cols-2">
               <label className="block">
@@ -557,12 +689,20 @@ export function InspectorPanel() {
                 {bulkPatchStatus}
               </div>
             ) : null}
-            <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
+            {runtimeActionStatus ? (
+              <div className="ui-status" aria-live="polite">
+                {runtimeActionStatus}
+              </div>
+            ) : null}
+            <div className="h-[48vh] min-h-[320px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
               <MonacoEditor
                 height="100%"
                 language="json"
                 theme={editorTheme}
                 value={runtimeConfigContent}
+                onMount={(editor) => {
+                  runtimeEditorRef.current = editor;
+                }}
                 onChange={(value) => {
                   setRuntimeConfigContent(value ?? "");
                   setRuntimeConfigDirty(true);

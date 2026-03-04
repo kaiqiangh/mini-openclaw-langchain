@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { InspectorPanel } from "@/components/editor/InspectorPanel";
@@ -21,6 +21,8 @@ const MIN_CENTER = 420;
 export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
   const [layout, setLayout] = useState(DEFAULT_LAYOUT);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
   const [dragging, setDragging] = useState<DragTarget>(null);
   const containerRef = useRef<HTMLElement | null>(null);
 
@@ -29,11 +31,18 @@ export default function Home() {
     try {
       const raw = window.localStorage.getItem(LAYOUT_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as { left?: number; right?: number };
+      const parsed = JSON.parse(raw) as {
+        left?: number;
+        right?: number;
+        leftCollapsed?: boolean;
+        rightCollapsed?: boolean;
+      };
       const left = Number(parsed.left);
       const right = Number(parsed.right);
       if (!Number.isFinite(left) || !Number.isFinite(right)) return;
       setLayout({ left, right });
+      setLeftCollapsed(Boolean(parsed.leftCollapsed));
+      setRightCollapsed(Boolean(parsed.rightCollapsed));
     } catch {
       // ignore malformed localStorage payload
     }
@@ -41,8 +50,29 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
-  }, [layout]);
+    window.localStorage.setItem(
+      LAYOUT_KEY,
+      JSON.stringify({ ...layout, leftCollapsed, rightCollapsed }),
+    );
+  }, [layout, leftCollapsed, rightCollapsed]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey) return;
+      if (event.key.toLowerCase() === "[") {
+        event.preventDefault();
+        setLeftCollapsed((prev) => !prev);
+      }
+      if (event.key.toLowerCase() === "]") {
+        event.preventDefault();
+        setRightCollapsed((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   function startResize(target: Exclude<DragTarget, null>, startX: number) {
     const host = containerRef.current;
@@ -84,6 +114,20 @@ export default function Home() {
     window.addEventListener("pointerup", handleUp);
   }
 
+  const desktopTemplateColumns = useMemo(() => {
+    const cols: string[] = [];
+    if (!leftCollapsed) {
+      cols.push(`${layout.left}px`);
+      cols.push("10px");
+    }
+    cols.push("minmax(0,1fr)");
+    if (!rightCollapsed) {
+      cols.push("10px");
+      cols.push(`${layout.right}px`);
+    }
+    return cols.join(" ");
+  }, [layout.left, layout.right, leftCollapsed, rightCollapsed]);
+
   return (
     <main
       id="main-content"
@@ -91,30 +135,65 @@ export default function Home() {
     >
       <Navbar />
 
-      <section
-        ref={containerRef}
-        className="hidden h-full min-w-0 gap-0 p-3 md:grid"
-        style={{
-          gridTemplateColumns: `${layout.left}px 10px minmax(0,1fr) 10px ${layout.right}px`,
-        }}
-      >
-        <Sidebar />
-        <ResizeHandle
-          dragging={dragging === "left"}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            startResize("left", event.clientX);
-          }}
-        />
-        <ChatPanel />
-        <ResizeHandle
-          dragging={dragging === "right"}
-          onPointerDown={(event) => {
-            event.preventDefault();
-            startResize("right", event.clientX);
-          }}
-        />
-        <InspectorPanel />
+      <section className="hidden h-full min-w-0 p-3 md:flex md:flex-col">
+        <div className="mb-2 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            onClick={() => setLeftCollapsed((prev) => !prev)}
+            aria-pressed={leftCollapsed}
+            aria-label={leftCollapsed ? "Show agent console" : "Hide agent console"}
+          >
+            {leftCollapsed ? "Show Console" : "Hide Console"}
+          </button>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm"
+            onClick={() => setRightCollapsed((prev) => !prev)}
+            aria-pressed={rightCollapsed}
+            aria-label={rightCollapsed ? "Show inspector" : "Hide inspector"}
+          >
+            {rightCollapsed ? "Show Inspector" : "Hide Inspector"}
+          </button>
+          <button
+            type="button"
+            className="ui-btn ui-btn-sm ui-btn-ghost"
+            onClick={() => {
+              setLeftCollapsed(false);
+              setRightCollapsed(false);
+              setLayout(DEFAULT_LAYOUT);
+            }}
+          >
+            Reset Layout
+          </button>
+        </div>
+        <section
+          ref={containerRef}
+          className="grid min-h-0 flex-1 min-w-0 gap-0"
+          style={{ gridTemplateColumns: desktopTemplateColumns }}
+        >
+          {!leftCollapsed ? <Sidebar /> : null}
+          {!leftCollapsed ? (
+            <ResizeHandle
+              dragging={dragging === "left"}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                startResize("left", event.clientX);
+              }}
+            />
+          ) : null}
+          <ChatPanel />
+          {!rightCollapsed ? (
+            <ResizeHandle
+              dragging={dragging === "right"}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                startResize("right", event.clientX);
+              }}
+            />
+          ) : null}
+          {!rightCollapsed ? <InspectorPanel /> : null}
+        </section>
       </section>
 
       <section className="h-full min-w-0 p-3 pb-24 md:hidden">

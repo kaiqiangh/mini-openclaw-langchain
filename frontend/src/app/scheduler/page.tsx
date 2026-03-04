@@ -88,6 +88,26 @@ function timeseriesBucket(window: SchedulerMetricsWindow): "1m" | "5m" | "15m" |
   return "1h";
 }
 
+function describeSchedule(type: ScheduleType, value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "Enter a schedule value.";
+  if (type === "every") {
+    const seconds = Number(normalized);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return "Interval must be a positive number of seconds.";
+    }
+    return `Runs every ${seconds} seconds.`;
+  }
+  if (type === "at") {
+    const parsed = Date.parse(normalized);
+    if (Number.isNaN(parsed)) {
+      return "Use an ISO datetime, e.g. 2026-03-01T10:00:00Z.";
+    }
+    return `Runs once at ${new Date(parsed).toLocaleString()}.`;
+  }
+  return "Cron expression with 5 fields (minute hour day month weekday).";
+}
+
 export default function SchedulerPage() {
   const { currentAgentId } = useAppStore();
   const [agents, setAgents] = useState<string[]>(["default"]);
@@ -115,6 +135,23 @@ export default function SchedulerPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    "comfortable",
+  );
+  const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("mini-openclaw:scheduler-density");
+    if (saved === "compact" || saved === "comfortable") {
+      setDensity(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("mini-openclaw:scheduler-density", density);
+  }, [density]);
 
   async function refreshAll(nextAgentId: string, window: SchedulerMetricsWindow) {
     setLoading(true);
@@ -186,6 +223,18 @@ export default function SchedulerPage() {
     void refreshAll(agentId, metricsWindow);
   }, [agentId, metricsWindow]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedJob(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   const recentRuns = useMemo(() => runs.slice(0, 10), [runs]);
   const recentFailures = useMemo(() => failures.slice(0, 10), [failures]);
   const recentHeartbeat = useMemo(
@@ -197,6 +246,18 @@ export default function SchedulerPage() {
     () => Math.max(1, ...trendPoints.map((point) => point.total)),
     [trendPoints],
   );
+  const scheduleHint = useMemo(
+    () => describeSchedule(draft.schedule_type, draft.schedule),
+    [draft.schedule, draft.schedule_type],
+  );
+  const heartbeatHealth = useMemo(() => {
+    const latest = recentHeartbeat[0];
+    const ts = Number(latest?.timestamp_ms ?? 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "unknown";
+    const ageMs = Date.now() - ts;
+    const staleAfterMs = Math.max(60, heartbeat.interval_seconds * 2) * 1000;
+    return ageMs > staleAfterMs ? "stale" : "healthy";
+  }, [heartbeat.interval_seconds, recentHeartbeat]);
 
   async function handleSubmitJob() {
     setSubmitAttempted(true);
@@ -275,6 +336,17 @@ export default function SchedulerPage() {
                   </option>
                 ))}
               </Select>
+              <Select
+                aria-label="Scheduler density"
+                className="min-h-[36px] w-[120px] text-sm"
+                value={density}
+                onChange={(event) =>
+                  setDensity(event.target.value as "comfortable" | "compact")
+                }
+              >
+                <option value="comfortable">Comfortable</option>
+                <option value="compact">Compact</option>
+              </Select>
               {loading ? (
                 <Badge tone="accent">Loading</Badge>
               ) : (
@@ -348,7 +420,7 @@ export default function SchedulerPage() {
               >
                 {submitAttempted && !draft.schedule.trim()
                   ? "Schedule is required."
-                  : "Use seconds, cron, or ISO datetime depending on schedule type."}
+                  : scheduleHint}
               </span>
             </label>
             <label className="min-w-0 md:col-span-2">
@@ -561,7 +633,8 @@ export default function SchedulerPage() {
                     {jobs.map((job) => (
                       <article
                         key={`${job.id}-mobile`}
-                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        onClick={() => setSelectedJob(job)}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="ui-mono">{job.name || job.id.slice(0, 8)}</div>
@@ -579,7 +652,8 @@ export default function SchedulerPage() {
                           <Button
                             type="button"
                             size="sm"
-                            onClick={() =>
+                            onClick={(event) => {
+                              event.stopPropagation();
                               setDraft({
                                 id: job.id,
                                 name: job.name,
@@ -587,15 +661,17 @@ export default function SchedulerPage() {
                                 schedule: job.schedule,
                                 prompt: job.prompt,
                                 enabled: job.enabled,
-                              })
-                            }
+                              });
+                            }}
                           >
                             Edit
                           </Button>
                           <Button
                             type="button"
                             size="sm"
-                            onClick={async () => {
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              setSelectedJob(null);
                               await runCronJob(job.id, agentId);
                               await refreshAll(agentId, metricsWindow);
                             }}
@@ -606,7 +682,9 @@ export default function SchedulerPage() {
                             type="button"
                             size="sm"
                             variant="danger"
-                            onClick={async () => {
+                            onClick={async (event) => {
+                              event.stopPropagation();
+                              setSelectedJob(null);
                               await deleteCronJob(job.id, agentId);
                               await refreshAll(agentId, metricsWindow);
                             }}
@@ -617,8 +695,10 @@ export default function SchedulerPage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[430px] lg:block">
-                    <DataTable>
+                  <TableWrap className="hidden lg:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Name</th>
@@ -631,14 +711,35 @@ export default function SchedulerPage() {
                       </thead>
                       <tbody>
                         {jobs.map((job) => (
-                          <tr key={job.id}>
+                          <tr
+                            key={job.id}
+                            className="cursor-pointer"
+                            onClick={() => setSelectedJob(job)}
+                          >
                             <td className="ui-mono">
                               {job.name || job.id.slice(0, 8)}
                             </td>
                             <td className="ui-mono">
                               {job.schedule_type} {job.schedule}
                             </td>
-                            <td>{job.enabled ? "yes" : "no"}</td>
+                            <td>
+                              <label className="flex items-center gap-2 text-xs">
+                                <input
+                                  type="checkbox"
+                                  checked={job.enabled}
+                                  onChange={async (event) => {
+                                    event.stopPropagation();
+                                    await updateCronJob(
+                                      job.id,
+                                      { enabled: event.target.checked },
+                                      agentId,
+                                    );
+                                    await refreshAll(agentId, metricsWindow);
+                                  }}
+                                />
+                                {job.enabled ? "on" : "off"}
+                              </label>
+                            </td>
                             <td>{asDateTime(job.next_run_ts)}</td>
                             <td>{job.failure_count}</td>
                             <td>
@@ -646,7 +747,8 @@ export default function SchedulerPage() {
                                 <Button
                                   type="button"
                                   size="sm"
-                                  onClick={() =>
+                                  onClick={(event) => {
+                                    event.stopPropagation();
                                     setDraft({
                                       id: job.id,
                                       name: job.name,
@@ -654,15 +756,16 @@ export default function SchedulerPage() {
                                       schedule: job.schedule,
                                       prompt: job.prompt,
                                       enabled: job.enabled,
-                                    })
-                                  }
+                                    });
+                                  }}
                                 >
                                   Edit
                                 </Button>
                                 <Button
                                   type="button"
                                   size="sm"
-                                  onClick={async () => {
+                                  onClick={async (event) => {
+                                    event.stopPropagation();
                                     await runCronJob(job.id, agentId);
                                     await refreshAll(agentId, metricsWindow);
                                   }}
@@ -673,7 +776,8 @@ export default function SchedulerPage() {
                                   type="button"
                                   size="sm"
                                   variant="danger"
-                                  onClick={async () => {
+                                  onClick={async (event) => {
+                                    event.stopPropagation();
                                     await deleteCronJob(job.id, agentId);
                                     await refreshAll(agentId, metricsWindow);
                                   }}
@@ -695,9 +799,22 @@ export default function SchedulerPage() {
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Heartbeat</h2>
-              <Badge tone={heartbeat.enabled ? "success" : "warn"}>
-                {heartbeat.enabled ? "Enabled" : "Disabled"}
-              </Badge>
+              <div className="flex items-center gap-1">
+                <Badge tone={heartbeat.enabled ? "success" : "warn"}>
+                  {heartbeat.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+                <Badge
+                  tone={
+                    heartbeatHealth === "healthy"
+                      ? "success"
+                      : heartbeatHealth === "stale"
+                        ? "warn"
+                        : "neutral"
+                  }
+                >
+                  {heartbeatHealth}
+                </Badge>
+              </div>
             </div>
             <div className="space-y-2 p-4">
               <label className="flex items-center gap-2 text-sm text-[var(--muted)]">
@@ -830,8 +947,10 @@ export default function SchedulerPage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[320px] md:block">
-                    <DataTable>
+                  <TableWrap className="hidden md:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Time</th>
@@ -892,8 +1011,10 @@ export default function SchedulerPage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[320px] md:block">
-                    <DataTable>
+                  <TableWrap className="hidden md:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Time</th>
@@ -960,8 +1081,10 @@ export default function SchedulerPage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[320px] md:block">
-                    <DataTable>
+                  <TableWrap className="hidden md:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Time</th>
@@ -993,6 +1116,71 @@ export default function SchedulerPage() {
             </div>
           </div>
         </div>
+        {selectedJob ? (
+          <aside className="fixed inset-y-3 right-3 z-50 w-[min(520px,92vw)] rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
+            <div className="ui-panel-header">
+              <h2 className="ui-panel-title">Cron Job Detail</h2>
+              <Button type="button" size="sm" onClick={() => setSelectedJob(null)}>
+                Close
+              </Button>
+            </div>
+            <div className="ui-scroll-area h-[calc(100%-56px)] space-y-3 p-4 text-sm">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                <div className="ui-label">Job</div>
+                <div className="ui-mono mt-1">
+                  {selectedJob.name || selectedJob.id.slice(0, 8)}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  {selectedJob.enabled ? "Enabled" : "Disabled"} · failures{" "}
+                  {selectedJob.failure_count}
+                </div>
+              </div>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                <div className="ui-label">Schedule</div>
+                <div className="ui-mono mt-1">
+                  {selectedJob.schedule_type} {selectedJob.schedule}
+                </div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Next run {asDateTime(selectedJob.next_run_ts)}
+                </div>
+              </div>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                <div className="ui-label">Prompt</div>
+                <pre className="ui-mono mt-1 whitespace-pre-wrap text-xs text-[var(--text)]">
+                  {selectedJob.prompt}
+                </pre>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={async () => {
+                    await runCronJob(selectedJob.id, agentId);
+                    await refreshAll(agentId, metricsWindow);
+                  }}
+                >
+                  Run now
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    setDraft({
+                      id: selectedJob.id,
+                      name: selectedJob.name,
+                      schedule_type: selectedJob.schedule_type,
+                      schedule: selectedJob.schedule,
+                      prompt: selectedJob.prompt,
+                      enabled: selectedJob.enabled,
+                    })
+                  }
+                >
+                  Edit in form
+                </Button>
+              </div>
+            </div>
+          </aside>
+        ) : null}
       </section>
     </main>
   );

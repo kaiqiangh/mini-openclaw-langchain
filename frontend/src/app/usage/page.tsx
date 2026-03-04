@@ -164,6 +164,35 @@ export default function UsagePage() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [copyState, setCopyState] = useState<string>("");
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    "comfortable",
+  );
+  const [selectedRun, setSelectedRun] = useState<UsageRecord | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("mini-openclaw:usage-density");
+    if (saved === "compact" || saved === "comfortable") {
+      setDensity(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("mini-openclaw:usage-density", density);
+  }, [density]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedRun(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -340,7 +369,7 @@ export default function UsagePage() {
             </div>
           </div>
 
-          <div className="grid gap-3 p-4 md:grid-cols-6">
+          <div className="grid gap-3 p-4 md:grid-cols-7">
             <label className="min-w-0">
               <span className="ui-label">Agent</span>
               <Select
@@ -422,6 +451,20 @@ export default function UsagePage() {
                 <option value="chat">chat</option>
                 <option value="heartbeat">heartbeat</option>
                 <option value="cron">cron</option>
+              </Select>
+            </label>
+            <label className="min-w-0">
+              <span className="ui-label">Density</span>
+              <Select
+                name="density-filter"
+                className="mt-1 text-sm"
+                value={density}
+                onChange={(event) =>
+                  setDensity(event.target.value as "comfortable" | "compact")
+                }
+              >
+                <option value="comfortable">Comfortable</option>
+                <option value="compact">Compact</option>
               </Select>
             </label>
 
@@ -624,8 +667,10 @@ export default function UsagePage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[420px] md:block">
-                    <DataTable>
+                  <TableWrap className="hidden md:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Provider</th>
@@ -684,7 +729,8 @@ export default function UsagePage() {
                     {records.map((row, index) => (
                       <article
                         key={`${row.run_id}-${index}-mobile`}
-                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        onClick={() => setSelectedRun(row)}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div className="ui-mono text-sm">{row.run_id.slice(0, 8)}</div>
@@ -692,7 +738,8 @@ export default function UsagePage() {
                             type="button"
                             size="sm"
                             aria-label={`Copy run id ${row.run_id}`}
-                            onClick={() => {
+                            onClick={(clickEvent) => {
+                              clickEvent.stopPropagation();
                               void copyRunId(row.run_id);
                             }}
                           >
@@ -714,8 +761,10 @@ export default function UsagePage() {
                       </article>
                     ))}
                   </div>
-                  <TableWrap className="hidden max-h-[420px] md:block">
-                    <DataTable>
+                  <TableWrap className="hidden md:block">
+                    <DataTable
+                      className={density === "compact" ? "ui-table-compact" : ""}
+                    >
                       <thead>
                         <tr>
                           <th>Run</th>
@@ -729,7 +778,11 @@ export default function UsagePage() {
                       </thead>
                       <tbody>
                         {records.map((row, index) => (
-                          <tr key={`${row.run_id}-${index}`}>
+                          <tr
+                            key={`${row.run_id}-${index}`}
+                            className="cursor-pointer"
+                            onClick={() => setSelectedRun(row)}
+                          >
                             <td className="ui-mono">
                               <div className="flex items-center gap-2">
                                 <span>{row.run_id.slice(0, 8)}</span>
@@ -737,7 +790,8 @@ export default function UsagePage() {
                                   type="button"
                                   size="sm"
                                   aria-label={`Copy run id ${row.run_id}`}
-                                  onClick={() => {
+                                  onClick={(clickEvent) => {
+                                    clickEvent.stopPropagation();
                                     void copyRunId(row.run_id);
                                   }}
                                 >
@@ -795,6 +849,59 @@ export default function UsagePage() {
             </div>
           </div>
         </div>
+        {selectedRun ? (
+          <aside className="fixed inset-y-3 right-3 z-50 w-[min(560px,92vw)] rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
+            <div className="ui-panel-header">
+              <h2 className="ui-panel-title">Run Detail</h2>
+              <Button type="button" size="sm" onClick={() => setSelectedRun(null)}>
+                Close
+              </Button>
+            </div>
+            <div className="ui-scroll-area h-[calc(100%-56px)] space-y-3 p-4 text-sm">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                <div className="ui-label">Run</div>
+                <div className="ui-mono mt-1 break-all">{selectedRun.run_id}</div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  {formatUtcTimestamp(selectedRun.timestamp_ms)} ·{" "}
+                  {selectedRun.trigger_type}
+                </div>
+              </div>
+              <div className="grid gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 sm:grid-cols-2">
+                <div>
+                  <div className="ui-label">Provider</div>
+                  <div className="ui-mono">{selectedRun.provider}</div>
+                </div>
+                <div>
+                  <div className="ui-label">Model</div>
+                  <div className="ui-mono break-all">{selectedRun.model}</div>
+                </div>
+                <div>
+                  <div className="ui-label">Session</div>
+                  <div className="ui-mono break-all">{selectedRun.session_id}</div>
+                </div>
+                <div>
+                  <div className="ui-label">Cost</div>
+                  <div>{formatUsdMaybe(selectedRun.cost_usd)}</div>
+                </div>
+              </div>
+              <div className="grid gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 sm:grid-cols-2">
+                <div>Input {formatNumber(selectedRun.input_tokens)}</div>
+                <div>Output {formatNumber(selectedRun.output_tokens)}</div>
+                <div>Total {formatNumber(selectedRun.total_tokens)}</div>
+                <div>Reasoning {formatNumber(selectedRun.reasoning_tokens)}</div>
+                <div>Tool input {formatNumber(selectedRun.tool_input_tokens)}</div>
+                <div>
+                  Cache read {formatNumber(selectedRun.input_cache_read_tokens)}
+                </div>
+              </div>
+              {!selectedRun.priced ? (
+                <div className="ui-alert">
+                  {selectedRun.pricing.unpriced_reason ?? "Unpriced run"}
+                </div>
+              ) : null}
+            </div>
+          </aside>
+        ) : null}
       </section>
     </main>
   );
