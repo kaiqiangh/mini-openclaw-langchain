@@ -11,8 +11,14 @@ import {
 } from "react";
 
 import {
+  AgentBulkDeleteResult,
+  AgentBulkExportResult,
+  AgentBulkRuntimePatchResult,
   AgentMeta,
   archiveSession,
+  bulkDeleteAgentWorkspaces,
+  bulkExportAgentWorkspaces,
+  bulkPatchAgentRuntime,
   createAgentWorkspace,
   createSession,
   deleteAgentWorkspace,
@@ -71,9 +77,17 @@ type AppState = {
   selectedFileContent: string;
   fileDirty: boolean;
   error: string | null;
+  reloadAgents: () => Promise<void>;
   setCurrentAgent: (agentId: string) => Promise<void>;
   createAgentById: (agentId: string) => Promise<void>;
   deleteAgentById: (agentId: string) => Promise<void>;
+  bulkDeleteAgents: (agentIds: string[]) => Promise<AgentBulkDeleteResult>;
+  bulkExportAgents: (agentIds: string[]) => Promise<AgentBulkExportResult>;
+  bulkPatchRuntime: (
+    agentIds: string[],
+    patch: Record<string, unknown>,
+    mode?: "merge" | "replace",
+  ) => Promise<AgentBulkRuntimePatchResult>;
   setSelectedFilePath: (path: string) => Promise<void>;
   updateSelectedFileContent: (content: string) => void;
   saveSelectedFile: () => Promise<void>;
@@ -264,6 +278,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await setCurrentAgent(fallback);
     },
     [refreshAgents, setCurrentAgent],
+  );
+
+  const reloadAgents = useCallback(async () => {
+    setError(null);
+    await refreshAgents();
+  }, [refreshAgents]);
+
+  const bulkDeleteAgents = useCallback(
+    async (agentIds: string[]) => {
+      setError(null);
+      const normalized = Array.from(
+        new Set(agentIds.map((item) => item.trim()).filter(Boolean)),
+      );
+      const result = await bulkDeleteAgentWorkspaces(normalized);
+      const next = await refreshAgents();
+      if (!next.some((item) => item.agent_id === currentAgentId)) {
+        const fallback =
+          next.find((item) => item.agent_id === "default")?.agent_id ??
+          next[0]?.agent_id ??
+          "default";
+        await setCurrentAgent(fallback);
+      }
+      return result;
+    },
+    [currentAgentId, refreshAgents, setCurrentAgent],
+  );
+
+  const bulkExportAgents = useCallback(async (agentIds: string[]) => {
+    setError(null);
+    const normalized = Array.from(
+      new Set(agentIds.map((item) => item.trim()).filter(Boolean)),
+    );
+    return bulkExportAgentWorkspaces(normalized);
+  }, []);
+
+  const bulkPatchRuntime = useCallback(
+    async (
+      agentIds: string[],
+      patch: Record<string, unknown>,
+      mode: "merge" | "replace" = "merge",
+    ) => {
+      setError(null);
+      const normalized = Array.from(
+        new Set(agentIds.map((item) => item.trim()).filter(Boolean)),
+      );
+      return bulkPatchAgentRuntime(normalized, patch, mode);
+    },
+    [],
   );
 
   const createNewSession = useCallback(async () => {
@@ -743,9 +805,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectedFileContent,
       fileDirty,
       error,
+      reloadAgents,
       setCurrentAgent,
       createAgentById,
       deleteAgentById,
+      bulkDeleteAgents,
+      bulkExportAgents,
+      bulkPatchRuntime,
       setSelectedFilePath,
       updateSelectedFileContent,
       saveSelectedFile,
@@ -772,9 +838,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       selectedFileContent,
       fileDirty,
       error,
+      reloadAgents,
       setCurrentAgent,
       createAgentById,
       deleteAgentById,
+      bulkDeleteAgents,
+      bulkExportAgents,
+      bulkPatchRuntime,
       setSelectedFilePath,
       updateSelectedFileContent,
       saveSelectedFile,

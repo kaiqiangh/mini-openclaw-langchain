@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useAppStore } from "@/lib/store";
 import {
@@ -15,12 +15,17 @@ import {
 
 export function Sidebar() {
   const [agentDraft, setAgentDraft] = useState("");
+  const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkStatus, setBulkStatus] = useState("");
   const {
     agents,
     currentAgentId,
     setCurrentAgent,
     createAgentById,
     deleteAgentById,
+    bulkDeleteAgents,
+    bulkExportAgents,
     sessions,
     sessionsScope,
     currentSessionId,
@@ -32,6 +37,62 @@ export function Sidebar() {
     deleteSessionById,
     initialized,
   } = useAppStore();
+
+  useEffect(() => {
+    setSelectedAgentIds((previous) =>
+      previous.filter((agentId) =>
+        agents.some((item) => item.agent_id === agentId),
+      ),
+    );
+  }, [agents]);
+
+  function toggleBulkAgent(agentId: string) {
+    setSelectedAgentIds((previous) =>
+      previous.includes(agentId)
+        ? previous.filter((item) => item !== agentId)
+        : [...previous, agentId],
+    );
+  }
+
+  async function runBulkExport() {
+    if (selectedAgentIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkStatus("");
+    try {
+      const exported = await bulkExportAgents(selectedAgentIds);
+      const blob = new Blob([JSON.stringify(exported, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = href;
+      anchor.download = `agents-export-${Date.now()}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(href);
+      setBulkStatus(`Exported ${exported.agents.length} agents.`);
+    } catch (error) {
+      setBulkStatus(error instanceof Error ? error.message : "Bulk export failed.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function runBulkDelete() {
+    if (selectedAgentIds.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkStatus("");
+    try {
+      const result = await bulkDeleteAgents(selectedAgentIds);
+      setSelectedAgentIds([]);
+      setBulkStatus(`Deleted ${result.deleted_count} agent(s).`);
+    } catch (error) {
+      setBulkStatus(error instanceof Error ? error.message : "Bulk delete failed.");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   return (
     <aside className="panel-shell flex min-h-0 flex-col">
@@ -99,6 +160,76 @@ export function Sidebar() {
             >
               Delete
             </Button>
+          </div>
+          <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="ui-label">Bulk Actions</span>
+              <Badge tone="neutral">{selectedAgentIds.length} selected</Badge>
+            </div>
+            <ul className="max-h-36 space-y-1 overflow-auto pr-1">
+              {agents.map((agent) => (
+                <li
+                  key={`bulk-${agent.agent_id}`}
+                  className="flex items-center justify-between rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
+                >
+                  <label className="flex min-w-0 items-center gap-2 text-xs text-[var(--muted)]">
+                    <input
+                      type="checkbox"
+                      checked={selectedAgentIds.includes(agent.agent_id)}
+                      onChange={() => toggleBulkAgent(agent.agent_id)}
+                    />
+                    <span className="ui-mono truncate">{agent.agent_id}</span>
+                  </label>
+                  <span className="text-xs text-[var(--muted-soft)]">
+                    {agent.active_sessions}/{agent.archived_sessions}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-2 flex flex-wrap gap-1">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setSelectedAgentIds(agents.map((item) => item.agent_id))}
+              >
+                Select All
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setSelectedAgentIds([])}
+              >
+                Clear
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                loading={bulkBusy}
+                disabled={selectedAgentIds.length === 0}
+                onClick={() => {
+                  void runBulkExport();
+                }}
+              >
+                Export
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                loading={bulkBusy}
+                disabled={selectedAgentIds.length === 0}
+                onClick={() => {
+                  void runBulkDelete();
+                }}
+              >
+                Delete
+              </Button>
+            </div>
+            {bulkStatus ? (
+              <p className="ui-helper mt-2" aria-live="polite">
+                {bulkStatus}
+              </p>
+            ) : null}
           </div>
         </div>
 

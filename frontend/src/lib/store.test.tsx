@@ -7,6 +7,9 @@ const {
   mockGetAgents,
   mockCreateAgentWorkspace,
   mockDeleteAgentWorkspace,
+  mockBulkDeleteAgentWorkspaces,
+  mockBulkExportAgentWorkspaces,
+  mockBulkPatchAgentRuntime,
   mockGetRagMode,
   mockGetSessions,
   mockCreateSession,
@@ -46,6 +49,22 @@ const {
     archived_sessions: 0,
   })),
   mockDeleteAgentWorkspace: vi.fn(async () => undefined),
+  mockBulkDeleteAgentWorkspaces: vi.fn(async () => ({
+    requested_count: 0,
+    deleted_count: 0,
+    results: [],
+  })),
+  mockBulkExportAgentWorkspaces: vi.fn(async () => ({
+    format: "json",
+    generated_at_ms: 0,
+    agents: [],
+    errors: [],
+  })),
+  mockBulkPatchAgentRuntime: vi.fn(async () => ({
+    requested_count: 0,
+    updated_count: 0,
+    results: [],
+  })),
   mockGetRagMode: vi.fn(async () => false),
   mockGetSessions: vi.fn(async (_scope?: string, agentId?: string) =>
     agentId === "elon"
@@ -83,6 +102,9 @@ vi.mock("@/lib/api", () => ({
   getAgents: mockGetAgents,
   createAgentWorkspace: mockCreateAgentWorkspace,
   deleteAgentWorkspace: mockDeleteAgentWorkspace,
+  bulkDeleteAgentWorkspaces: mockBulkDeleteAgentWorkspaces,
+  bulkExportAgentWorkspaces: mockBulkExportAgentWorkspaces,
+  bulkPatchAgentRuntime: mockBulkPatchAgentRuntime,
   getRagMode: mockGetRagMode,
   getSessions: mockGetSessions,
   createSession: mockCreateSession,

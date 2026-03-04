@@ -183,6 +183,139 @@ export type HeartbeatConfig = {
   session_id: string;
 };
 
+export type SchedulerMetricsWindow =
+  | "1h"
+  | "4h"
+  | "12h"
+  | "24h"
+  | "7d"
+  | "30d";
+
+export type SchedulerMetricsBucket = "1m" | "5m" | "15m" | "1h";
+
+export type SchedulerMetrics = {
+  agent_id: string;
+  window: SchedulerMetricsWindow;
+  since_ms: number;
+  generated_at_ms: number;
+  totals: {
+    events: number;
+    cron_events: number;
+    heartbeat_events: number;
+  };
+  cron: {
+    runs: number;
+    ok: number;
+    error: number;
+    success_rate: number | null;
+  };
+  heartbeat: {
+    runs: number;
+    ok: number;
+    error: number;
+    skipped: number;
+  };
+  duration: {
+    count: number;
+    avg_ms: number | null;
+    min_ms: number | null;
+    max_ms: number | null;
+    p50_ms: number | null;
+    p90_ms: number | null;
+    p99_ms: number | null;
+  };
+  latency: {
+    count: number;
+    avg_ms: number | null;
+    min_ms: number | null;
+    max_ms: number | null;
+    p50_ms: number | null;
+    p90_ms: number | null;
+    p99_ms: number | null;
+  };
+  status_breakdown: Record<string, number>;
+};
+
+export type SchedulerMetricsSeriesPoint = {
+  ts_ms: number;
+  label: string;
+  total: number;
+  cron_runs: number;
+  cron_failures: number;
+  heartbeat_runs: number;
+  heartbeat_ok: number;
+  heartbeat_error: number;
+  heartbeat_skipped: number;
+  avg_duration_ms: number | null;
+  avg_latency_ms: number | null;
+};
+
+export type SchedulerMetricsSeries = {
+  agent_id: string;
+  window: SchedulerMetricsWindow;
+  bucket: SchedulerMetricsBucket;
+  since_ms: number;
+  generated_at_ms: number;
+  points: SchedulerMetricsSeriesPoint[];
+};
+
+export type AgentTemplateMeta = {
+  name: string;
+  description: string;
+  path: string;
+  updated_at: number;
+};
+
+export type AgentTemplateDetail = AgentTemplateMeta & {
+  runtime_config: RuntimeConfigPayload;
+};
+
+export type AgentBulkDeleteResult = {
+  requested_count: number;
+  deleted_count: number;
+  results: Array<{
+    agent_id: string;
+    deleted: boolean;
+    error?: string;
+  }>;
+};
+
+export type AgentBulkExportResult = {
+  format: "json";
+  generated_at_ms: number;
+  agents: Array<{
+    agent_id: string;
+    metadata: AgentMeta;
+    runtime_config: RuntimeConfigPayload;
+  }>;
+  errors: Array<{ agent_id: string; error: string }>;
+};
+
+export type AgentBulkRuntimePatchResult = {
+  requested_count: number;
+  updated_count: number;
+  results: Array<{
+    agent_id: string;
+    updated: boolean;
+    config?: RuntimeConfigPayload;
+    error?: string;
+  }>;
+};
+
+export type AgentRuntimeDiff = {
+  agent_id: string;
+  baseline: string;
+  summary: {
+    added: number;
+    removed: number;
+    changed: number;
+    total: number;
+  };
+  added: Record<string, unknown>;
+  removed: Record<string, unknown>;
+  changed: Record<string, { from: unknown; to: unknown }>;
+};
+
 export type TracingConfig = {
   provider: "langsmith";
   config_key: "OBS_TRACING_ENABLED";
@@ -241,6 +374,76 @@ export async function deleteAgentWorkspace(agentId: string): Promise<void> {
       method: "DELETE",
     },
   );
+}
+
+export async function bulkDeleteAgentWorkspaces(
+  agentIds: string[],
+): Promise<AgentBulkDeleteResult> {
+  const payload = await requestJson<{ data: AgentBulkDeleteResult }>(
+    `${API_BASE}/api/v1/agents/bulk-delete`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_ids: agentIds }),
+    },
+  );
+  return payload.data;
+}
+
+export async function bulkExportAgentWorkspaces(
+  agentIds: string[],
+): Promise<AgentBulkExportResult> {
+  const payload = await requestJson<{ data: AgentBulkExportResult }>(
+    `${API_BASE}/api/v1/agents/bulk-export`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_ids: agentIds, format: "json" }),
+    },
+  );
+  return payload.data;
+}
+
+export async function bulkPatchAgentRuntime(
+  agentIds: string[],
+  patch: RuntimeConfigPayload,
+  mode: "merge" | "replace" = "merge",
+): Promise<AgentBulkRuntimePatchResult> {
+  const payload = await requestJson<{ data: AgentBulkRuntimePatchResult }>(
+    `${API_BASE}/api/v1/agents/bulk-runtime-patch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_ids: agentIds, patch, mode }),
+    },
+  );
+  return payload.data;
+}
+
+export async function listAgentTemplates(): Promise<AgentTemplateMeta[]> {
+  const payload = await requestJson<{ data: AgentTemplateMeta[] }>(
+    `${API_BASE}/api/v1/agents/templates`,
+  );
+  return payload.data;
+}
+
+export async function getAgentTemplate(
+  templateName: string,
+): Promise<AgentTemplateDetail> {
+  const payload = await requestJson<{ data: AgentTemplateDetail }>(
+    `${API_BASE}/api/v1/agents/templates/${encodeURIComponent(templateName)}`,
+  );
+  return payload.data;
+}
+
+export async function getAgentRuntimeDiff(
+  agentId: string,
+  baseline: string,
+): Promise<AgentRuntimeDiff> {
+  const payload = await requestJson<{ data: AgentRuntimeDiff }>(
+    `${agentBase(agentId)}/runtime-diff?baseline=${encodeURIComponent(baseline)}`,
+  );
+  return payload.data;
 }
 
 export async function getSessions(
@@ -582,6 +785,27 @@ export async function listHeartbeatRuns(
     data: { runs: Array<Record<string, unknown>> };
   }>(`${agentBase(agentId)}/scheduler/heartbeat/runs?limit=${limit}`);
   return payload.data.runs;
+}
+
+export async function getSchedulerMetrics(
+  agentId = "default",
+  window: SchedulerMetricsWindow = "24h",
+): Promise<SchedulerMetrics> {
+  const payload = await requestJson<{ data: SchedulerMetrics }>(
+    `${agentBase(agentId)}/scheduler/metrics?window=${encodeURIComponent(window)}`,
+  );
+  return payload.data;
+}
+
+export async function getSchedulerMetricsTimeseries(
+  agentId = "default",
+  window: SchedulerMetricsWindow = "24h",
+  bucket: SchedulerMetricsBucket = "5m",
+): Promise<SchedulerMetricsSeries> {
+  const payload = await requestJson<{ data: SchedulerMetricsSeries }>(
+    `${agentBase(agentId)}/scheduler/metrics/timeseries?window=${encodeURIComponent(window)}&bucket=${encodeURIComponent(bucket)}`,
+  );
+  return payload.data;
 }
 
 export async function streamChat(

@@ -20,11 +20,16 @@ import {
   getAgents,
   getHeartbeatConfig,
   HeartbeatConfig,
+  getSchedulerMetrics,
+  getSchedulerMetricsTimeseries,
   listCronFailures,
   listCronJobs,
   listCronRuns,
   listHeartbeatRuns,
   runCronJob,
+  SchedulerMetrics,
+  SchedulerMetricsSeries,
+  SchedulerMetricsWindow,
   updateCronJob,
   updateHeartbeatConfig,
 } from "@/lib/api";
@@ -50,6 +55,15 @@ const EMPTY_DRAFT: JobDraft = {
   enabled: true,
 };
 
+const METRICS_WINDOWS: Array<{ label: string; value: SchedulerMetricsWindow }> = [
+  { label: "1h", value: "1h" },
+  { label: "4h", value: "4h" },
+  { label: "12h", value: "12h" },
+  { label: "24h", value: "24h" },
+  { label: "7d", value: "7d" },
+  { label: "30d", value: "30d" },
+];
+
 function asDateTime(value: unknown): string {
   const ts = Number(value);
   if (!Number.isFinite(ts) || ts <= 0) return "—";
@@ -62,16 +76,33 @@ function asRunTime(value: unknown): string {
   return new Date(ts).toLocaleString();
 }
 
+function asMs(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `${Math.round(value)}ms`;
+}
+
+function timeseriesBucket(window: SchedulerMetricsWindow): "1m" | "5m" | "15m" | "1h" {
+  if (window === "1h") return "1m";
+  if (window === "4h" || window === "12h") return "5m";
+  if (window === "24h") return "15m";
+  return "1h";
+}
+
 export default function SchedulerPage() {
   const { currentAgentId } = useAppStore();
   const [agents, setAgents] = useState<string[]>(["default"]);
-  const [agentId, setAgentId] = useState<string>("default");
+  const [agentId, setAgentId] = useState<string>(currentAgentId || "default");
+  const [metricsWindow, setMetricsWindow] = useState<SchedulerMetricsWindow>("24h");
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [runs, setRuns] = useState<Array<Record<string, unknown>>>([]);
   const [failures, setFailures] = useState<Array<Record<string, unknown>>>([]);
   const [heartbeatRuns, setHeartbeatRuns] = useState<
     Array<Record<string, unknown>>
   >([]);
+  const [metrics, setMetrics] = useState<SchedulerMetrics | null>(null);
+  const [metricsSeries, setMetricsSeries] = useState<SchedulerMetricsSeries | null>(
+    null,
+  );
   const [heartbeat, setHeartbeat] = useState<HeartbeatConfig>({
     enabled: false,
     interval_seconds: 300,
@@ -85,23 +116,34 @@ export default function SchedulerPage() {
   const [error, setError] = useState("");
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  async function refreshAll(nextAgentId: string) {
+  async function refreshAll(nextAgentId: string, window: SchedulerMetricsWindow) {
     setLoading(true);
     setError("");
     try {
-      const [jobRows, runRows, failureRows, heartbeatConfig, heartbeatRunRows] =
-        await Promise.all([
-          listCronJobs(nextAgentId),
-          listCronRuns(nextAgentId, 100),
-          listCronFailures(nextAgentId, 100),
-          getHeartbeatConfig(nextAgentId),
-          listHeartbeatRuns(nextAgentId, 100),
-        ]);
+      const [
+        jobRows,
+        runRows,
+        failureRows,
+        heartbeatConfig,
+        heartbeatRunRows,
+        metricsSummary,
+        metricsTrend,
+      ] = await Promise.all([
+        listCronJobs(nextAgentId),
+        listCronRuns(nextAgentId, 100),
+        listCronFailures(nextAgentId, 100),
+        getHeartbeatConfig(nextAgentId),
+        listHeartbeatRuns(nextAgentId, 100),
+        getSchedulerMetrics(nextAgentId, window),
+        getSchedulerMetricsTimeseries(nextAgentId, window, timeseriesBucket(window)),
+      ]);
       setJobs(jobRows);
       setRuns(runRows);
       setFailures(failureRows);
       setHeartbeat(heartbeatConfig);
       setHeartbeatRuns(heartbeatRunRows);
+      setMetrics(metricsSummary);
+      setMetricsSeries(metricsTrend);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load scheduler data",
@@ -121,20 +163,16 @@ export default function SchedulerPage() {
         const safeIds = ids.length > 0 ? ids : ["default"];
         setAgents(safeIds);
 
-        const localStored =
-          typeof window === "undefined"
-            ? ""
-            : (window.localStorage.getItem("mini-openclaw:scheduler-agent") ??
-              "");
-        const preferred = [localStored, currentAgentId, "default", safeIds[0]];
+        const preferred = [currentAgentId, agentId, "default", safeIds[0]];
         const selected =
-          preferred.find((candidate) => candidate && safeIds.includes(candidate)) ??
-          safeIds[0];
+          preferred.find(
+            (candidate) => Boolean(candidate) && safeIds.includes(String(candidate)),
+          ) ?? safeIds[0];
         setAgentId(selected);
       } catch {
         if (!cancelled) {
           setAgents(["default"]);
-          setAgentId("default");
+          setAgentId(currentAgentId || "default");
         }
       }
     }
@@ -145,19 +183,19 @@ export default function SchedulerPage() {
   }, [currentAgentId]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("mini-openclaw:scheduler-agent", agentId);
-  }, [agentId]);
-
-  useEffect(() => {
-    void refreshAll(agentId);
-  }, [agentId]);
+    void refreshAll(agentId, metricsWindow);
+  }, [agentId, metricsWindow]);
 
   const recentRuns = useMemo(() => runs.slice(0, 10), [runs]);
   const recentFailures = useMemo(() => failures.slice(0, 10), [failures]);
   const recentHeartbeat = useMemo(
     () => heartbeatRuns.slice(0, 10),
     [heartbeatRuns],
+  );
+  const trendPoints = useMemo(() => metricsSeries?.points ?? [], [metricsSeries]);
+  const trendMax = useMemo(
+    () => Math.max(1, ...trendPoints.map((point) => point.total)),
+    [trendPoints],
   );
 
   async function handleSubmitJob() {
@@ -194,7 +232,7 @@ export default function SchedulerPage() {
       }
       setDraft(EMPTY_DRAFT);
       setSubmitAttempted(false);
-      await refreshAll(agentId);
+      await refreshAll(agentId, metricsWindow);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save cron job");
     }
@@ -220,6 +258,20 @@ export default function SchedulerPage() {
                 {agents.map((id) => (
                   <option key={`header-${id}`} value={id}>
                     {id}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label="Scheduler metrics window"
+                className="min-h-[36px] w-[92px] text-sm"
+                value={metricsWindow}
+                onChange={(event) =>
+                  setMetricsWindow(event.target.value as SchedulerMetricsWindow)
+                }
+              >
+                {METRICS_WINDOWS.map((window) => (
+                  <option key={`window-${window.value}`} value={window.value}>
+                    {window.label}
                   </option>
                 ))}
               </Select>
@@ -380,6 +432,111 @@ export default function SchedulerPage() {
           ) : null}
         </div>
 
+        <div className="grid min-w-0 gap-3 lg:grid-cols-4">
+          <div className="panel-shell p-4">
+            <div className="ui-label">Scheduler Events</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {metrics?.totals.events ?? 0}
+            </div>
+            <div className="mt-1 text-xs text-[var(--muted)]">
+              Cron {metrics?.totals.cron_events ?? 0} · Heartbeat{" "}
+              {metrics?.totals.heartbeat_events ?? 0}
+            </div>
+          </div>
+          <div className="panel-shell p-4">
+            <div className="ui-label">Cron Success Rate</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {metrics?.cron.success_rate ?? 0}%
+            </div>
+            <div className="mt-1 text-xs text-[var(--muted)]">
+              ok {metrics?.cron.ok ?? 0} · error {metrics?.cron.error ?? 0}
+            </div>
+          </div>
+          <div className="panel-shell p-4">
+            <div className="ui-label">Duration p90 / p99</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {asMs(metrics?.duration.p90_ms)} / {asMs(metrics?.duration.p99_ms)}
+            </div>
+            <div className="mt-1 text-xs text-[var(--muted)]">
+              avg {asMs(metrics?.duration.avg_ms)} · max{" "}
+              {asMs(metrics?.duration.max_ms)}
+            </div>
+          </div>
+          <div className="panel-shell p-4">
+            <div className="ui-label">Latency p90 / p99</div>
+            <div className="ui-tabular mt-1 text-lg font-semibold">
+              {asMs(metrics?.latency.p90_ms)} / {asMs(metrics?.latency.p99_ms)}
+            </div>
+            <div className="mt-1 text-xs text-[var(--muted)]">
+              avg {asMs(metrics?.latency.avg_ms)} · max{" "}
+              {asMs(metrics?.latency.max_ms)}
+            </div>
+          </div>
+        </div>
+
+        <div className="panel-shell min-w-0">
+          <div className="ui-panel-header">
+            <h2 className="ui-panel-title">Observability Trend</h2>
+            <Badge tone="neutral">
+              {metricsSeries?.points.length ?? 0} buckets
+            </Badge>
+          </div>
+          <div className="p-4">
+            {loading ? (
+              <div className="space-y-2">
+                <Skeleton className="h-24 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+            ) : trendPoints.length === 0 ? (
+              <EmptyState
+                title="No Trend Data"
+                description="No scheduler events in the selected window."
+              />
+            ) : (
+              <>
+                <div className="h-28 w-full">
+                  <svg
+                    viewBox={`0 0 ${Math.max(1, trendPoints.length)} 100`}
+                    preserveAspectRatio="none"
+                    className="h-full w-full"
+                  >
+                    {trendPoints.map((point, index) => {
+                      const height = (point.total / trendMax) * 92;
+                      const y = 96 - height;
+                      return (
+                        <rect
+                          key={`${point.ts_ms}-${index}`}
+                          x={index + 0.12}
+                          y={y}
+                          width={0.76}
+                          height={Math.max(2, height)}
+                          rx={0.1}
+                          fill="var(--accent)"
+                          opacity={0.88}
+                        />
+                      );
+                    })}
+                  </svg>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                  {trendPoints.slice(Math.max(0, trendPoints.length - 8)).map((point) => (
+                    <span
+                      key={`trend-label-${point.ts_ms}`}
+                      className="rounded border border-[var(--border)] px-2 py-0.5"
+                    >
+                      {new Date(point.ts_ms).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                      : {point.total}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
         <div className="grid min-w-0 gap-3 lg:grid-cols-3">
           <div className="panel-shell min-w-0 lg:col-span-2">
             <div className="ui-panel-header">
@@ -440,7 +597,7 @@ export default function SchedulerPage() {
                             size="sm"
                             onClick={async () => {
                               await runCronJob(job.id, agentId);
-                              await refreshAll(agentId);
+                              await refreshAll(agentId, metricsWindow);
                             }}
                           >
                             Run now
@@ -451,7 +608,7 @@ export default function SchedulerPage() {
                             variant="danger"
                             onClick={async () => {
                               await deleteCronJob(job.id, agentId);
-                              await refreshAll(agentId);
+                              await refreshAll(agentId, metricsWindow);
                             }}
                           >
                             Delete
@@ -507,7 +664,7 @@ export default function SchedulerPage() {
                                   size="sm"
                                   onClick={async () => {
                                     await runCronJob(job.id, agentId);
-                                    await refreshAll(agentId);
+                                    await refreshAll(agentId, metricsWindow);
                                   }}
                                 >
                                   Run now
@@ -518,7 +675,7 @@ export default function SchedulerPage() {
                                   variant="danger"
                                   onClick={async () => {
                                     await deleteCronJob(job.id, agentId);
-                                    await refreshAll(agentId);
+                                    await refreshAll(agentId, metricsWindow);
                                   }}
                                 >
                                   Delete
@@ -627,7 +784,7 @@ export default function SchedulerPage() {
                 loading={loading}
                 onClick={async () => {
                   await updateHeartbeatConfig(heartbeat, agentId);
-                  await refreshAll(agentId);
+                  await refreshAll(agentId, metricsWindow);
                 }}
               >
                 Save Heartbeat

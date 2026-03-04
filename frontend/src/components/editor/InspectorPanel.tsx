@@ -4,6 +4,9 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getAgentRuntimeDiff,
+  getAgentTemplate,
+  listAgentTemplates,
   getRuntimeConfig,
   listSkills,
   listWorkspaceFiles,
@@ -57,9 +60,30 @@ export function InspectorPanel() {
   const [runtimeConfigError, setRuntimeConfigError] = useState<string>("");
   const [runtimeConfigLoading, setRuntimeConfigLoading] =
     useState<boolean>(false);
+  const [templates, setTemplates] = useState<
+    Array<{ name: string; description: string; path: string; updated_at: number }>
+  >([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+  const [diffBaseline, setDiffBaseline] = useState<string>("default");
+  const [runtimeDiff, setRuntimeDiff] = useState<{
+    summary: { added: number; removed: number; changed: number; total: number };
+    added: Record<string, unknown>;
+    removed: Record<string, unknown>;
+    changed: Record<string, { from: unknown; to: unknown }>;
+  } | null>(null);
+  const [runtimeDiffLoading, setRuntimeDiffLoading] = useState<boolean>(false);
+  const [runtimeDiffError, setRuntimeDiffError] = useState<string>("");
+  const [bulkAgentIds, setBulkAgentIds] = useState<string>("default");
+  const [bulkPatchMode, setBulkPatchMode] = useState<"merge" | "replace">(
+    "merge",
+  );
+  const [bulkPatchStatus, setBulkPatchStatus] = useState<string>("");
+  const [bulkPatchLoading, setBulkPatchLoading] = useState<boolean>(false);
 
   const {
+    agents,
     currentAgentId,
+    bulkPatchRuntime,
     selectedFilePath,
     selectedFileContent,
     fileDirty,
@@ -153,6 +177,29 @@ export function InspectorPanel() {
   }, [currentAgentId]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadTemplates() {
+      try {
+        const rows = await listAgentTemplates();
+        if (cancelled) return;
+        setTemplates(rows);
+      } catch {
+        if (!cancelled) setTemplates([]);
+      }
+    }
+
+    void loadTemplates();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setBulkAgentIds(currentAgentId);
+  }, [currentAgentId]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
@@ -191,6 +238,79 @@ export function InspectorPanel() {
       setRuntimeConfigError(
         err instanceof Error ? err.message : "Failed to save runtime config",
       );
+    }
+  }
+
+  async function applyTemplateSelection() {
+    if (!selectedTemplate) return;
+    setRuntimeConfigError("");
+    try {
+      const template = await getAgentTemplate(selectedTemplate);
+      setRuntimeConfigContent(JSON.stringify(template.runtime_config, null, 2));
+      setRuntimeConfigDirty(true);
+    } catch (err) {
+      setRuntimeConfigError(
+        err instanceof Error ? err.message : "Failed to load template",
+      );
+    }
+  }
+
+  async function refreshRuntimeDiff() {
+    setRuntimeDiffError("");
+    setRuntimeDiffLoading(true);
+    try {
+      const payload = await getAgentRuntimeDiff(currentAgentId, diffBaseline);
+      setRuntimeDiff({
+        summary: payload.summary,
+        added: payload.added,
+        removed: payload.removed,
+        changed: payload.changed,
+      });
+    } catch (err) {
+      setRuntimeDiff(null);
+      setRuntimeDiffError(
+        err instanceof Error ? err.message : "Failed to load runtime diff",
+      );
+    } finally {
+      setRuntimeDiffLoading(false);
+    }
+  }
+
+  async function applyBulkPatch() {
+    setBulkPatchStatus("");
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(runtimeConfigContent) as Record<string, unknown>;
+    } catch {
+      setBulkPatchStatus("Runtime config JSON is invalid.");
+      return;
+    }
+
+    const targetIds = Array.from(
+      new Set(
+        bulkAgentIds
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+    if (targetIds.length === 0) {
+      setBulkPatchStatus("Provide one or more target agent IDs.");
+      return;
+    }
+
+    setBulkPatchLoading(true);
+    try {
+      const result = await bulkPatchRuntime(targetIds, payload, bulkPatchMode);
+      setBulkPatchStatus(
+        `Updated ${result.updated_count}/${result.requested_count} agents.`,
+      );
+    } catch (err) {
+      setBulkPatchStatus(
+        err instanceof Error ? err.message : "Bulk patch failed.",
+      );
+    } finally {
+      setBulkPatchLoading(false);
     }
   }
 
@@ -315,9 +435,126 @@ export function InspectorPanel() {
               Edit validated runtime settings for this agent. Save will call
               `/api/v1/agents/&lt;agent_id&gt;/config/runtime`.
             </div>
+            <div className="grid gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 md:grid-cols-2">
+              <label className="block">
+                <span className="ui-label">Template</span>
+                <Select
+                  className="mt-1 ui-mono text-xs"
+                  value={selectedTemplate}
+                  onChange={(event) => setSelectedTemplate(event.target.value)}
+                >
+                  <option value="">Select template…</option>
+                  {templates.map((template) => (
+                    <option key={template.name} value={template.name}>
+                      {template.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full"
+                  disabled={!selectedTemplate}
+                  onClick={() => {
+                    void applyTemplateSelection();
+                  }}
+                >
+                  Load Template Into Editor
+                </Button>
+              </div>
+              <label className="block">
+                <span className="ui-label">Diff Baseline</span>
+                <Select
+                  className="mt-1 ui-mono text-xs"
+                  value={diffBaseline}
+                  onChange={(event) => setDiffBaseline(event.target.value)}
+                >
+                  <option value="default">default</option>
+                  {agents.map((agent) => (
+                    <option
+                      key={`baseline-agent-${agent.agent_id}`}
+                      value={`agent:${agent.agent_id}`}
+                    >
+                      agent:{agent.agent_id}
+                    </option>
+                  ))}
+                  {templates.map((template) => (
+                    <option
+                      key={`baseline-template-${template.name}`}
+                      value={`template:${template.name}`}
+                    >
+                      template:{template.name}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  loading={runtimeDiffLoading}
+                  className="w-full"
+                  onClick={() => {
+                    void refreshRuntimeDiff();
+                  }}
+                >
+                  Compare Runtime
+                </Button>
+              </div>
+              <label className="block md:col-span-2">
+                <span className="ui-label">Bulk Patch Target Agent IDs</span>
+                <input
+                  className="ui-input mt-1 ui-mono text-xs"
+                  value={bulkAgentIds}
+                  onChange={(event) => setBulkAgentIds(event.target.value)}
+                  placeholder="default, elon"
+                />
+                <span className="ui-helper mt-1 block">
+                  Comma-separated list of agents to patch using current editor JSON.
+                </span>
+              </label>
+              <label className="block">
+                <span className="ui-label">Bulk Patch Mode</span>
+                <Select
+                  className="mt-1 ui-mono text-xs"
+                  value={bulkPatchMode}
+                  onChange={(event) =>
+                    setBulkPatchMode(event.target.value as "merge" | "replace")
+                  }
+                >
+                  <option value="merge">merge</option>
+                  <option value="replace">replace</option>
+                </Select>
+              </label>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  loading={bulkPatchLoading}
+                  className="w-full"
+                  onClick={() => {
+                    void applyBulkPatch();
+                  }}
+                >
+                  Apply Bulk Patch
+                </Button>
+              </div>
+            </div>
             {runtimeConfigError ? (
               <div className="ui-alert" role="alert">
                 {runtimeConfigError}
+              </div>
+            ) : null}
+            {runtimeDiffError ? (
+              <div className="ui-alert" role="alert">
+                {runtimeDiffError}
+              </div>
+            ) : null}
+            {bulkPatchStatus ? (
+              <div className="ui-status" aria-live="polite">
+                {bulkPatchStatus}
               </div>
             ) : null}
             <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
@@ -343,6 +580,48 @@ export function InspectorPanel() {
                 }}
               />
             </div>
+            {runtimeDiff ? (
+              <div className="max-h-56 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-xs">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <Badge tone="neutral">Added {runtimeDiff.summary.added}</Badge>
+                  <Badge tone="warn">Removed {runtimeDiff.summary.removed}</Badge>
+                  <Badge tone="accent">Changed {runtimeDiff.summary.changed}</Badge>
+                  <Badge tone="success">Total {runtimeDiff.summary.total}</Badge>
+                </div>
+                <div className="space-y-2">
+                  {Object.entries(runtimeDiff.changed)
+                    .slice(0, 60)
+                    .map(([path, value]) => (
+                      <div key={`changed-${path}`} className="rounded border border-[var(--border)] p-2">
+                        <div className="ui-mono text-[var(--text)]">{path}</div>
+                        <div className="text-[var(--muted)]">
+                          {JSON.stringify(value.from)} → {JSON.stringify(value.to)}
+                        </div>
+                      </div>
+                    ))}
+                  {Object.entries(runtimeDiff.added)
+                    .slice(0, 40)
+                    .map(([path, value]) => (
+                      <div key={`added-${path}`} className="rounded border border-[var(--border)] p-2">
+                        <div className="ui-mono text-[var(--success)]">+ {path}</div>
+                        <div className="text-[var(--muted)]">
+                          {JSON.stringify(value)}
+                        </div>
+                      </div>
+                    ))}
+                  {Object.entries(runtimeDiff.removed)
+                    .slice(0, 40)
+                    .map(([path, value]) => (
+                      <div key={`removed-${path}`} className="rounded border border-[var(--border)] p-2">
+                        <div className="ui-mono text-[var(--danger)]">- {path}</div>
+                        <div className="text-[var(--muted)]">
+                          {JSON.stringify(value)}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
       </div>

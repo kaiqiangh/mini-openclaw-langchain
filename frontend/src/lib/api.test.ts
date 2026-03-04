@@ -1,4 +1,12 @@
 import {
+  bulkDeleteAgentWorkspaces,
+  bulkExportAgentWorkspaces,
+  bulkPatchAgentRuntime,
+  getAgentRuntimeDiff,
+  getAgentTemplate,
+  getSchedulerMetrics,
+  getSchedulerMetricsTimeseries,
+  listAgentTemplates,
   getRagMode,
   getTracingConfig,
   setRagMode,
@@ -108,5 +116,146 @@ describe("tracing config requests", () => {
     expect(secondUrl).toContain("/api/v1/config/tracing");
     expect(firstUrl).not.toContain("agent_id=");
     expect(secondUrl).not.toContain("agent_id=");
+  });
+});
+
+describe("scheduler metrics requests", () => {
+  it("calls scheduler metrics and timeseries endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              agent_id: "default",
+              window: "24h",
+              since_ms: 0,
+              generated_at_ms: 0,
+              totals: { events: 0, cron_events: 0, heartbeat_events: 0 },
+              cron: { runs: 0, ok: 0, error: 0, success_rate: null },
+              heartbeat: { runs: 0, ok: 0, error: 0, skipped: 0 },
+              duration: {
+                count: 0,
+                avg_ms: null,
+                min_ms: null,
+                max_ms: null,
+                p50_ms: null,
+                p90_ms: null,
+                p99_ms: null,
+              },
+              latency: {
+                count: 0,
+                avg_ms: null,
+                min_ms: null,
+                max_ms: null,
+                p50_ms: null,
+                p90_ms: null,
+                p99_ms: null,
+              },
+              status_breakdown: {},
+            },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              agent_id: "default",
+              window: "24h",
+              bucket: "15m",
+              since_ms: 0,
+              generated_at_ms: 0,
+              points: [],
+            },
+          }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getSchedulerMetrics("default", "24h");
+    await getSchedulerMetricsTimeseries("default", "24h", "15m");
+
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    const secondUrl = String(fetchMock.mock.calls[1][0]);
+    expect(firstUrl).toContain("/api/v1/agents/default/scheduler/metrics?window=24h");
+    expect(secondUrl).toContain(
+      "/api/v1/agents/default/scheduler/metrics/timeseries?window=24h&bucket=15m",
+    );
+  });
+});
+
+describe("agent bulk/template requests", () => {
+  it("calls agent bulk actions and template/runtime diff endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: { requested_count: 1, deleted_count: 1, results: [] },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: { format: "json", generated_at_ms: 1, agents: [], errors: [] },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: { requested_count: 1, updated_count: 1, results: [] },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ data: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              name: "safe-local",
+              description: "",
+              path: "/tmp",
+              updated_at: 0,
+              runtime_config: {},
+            },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              agent_id: "default",
+              baseline: "default",
+              summary: { added: 0, removed: 0, changed: 0, total: 0 },
+              added: {},
+              removed: {},
+              changed: {},
+            },
+          }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bulkDeleteAgentWorkspaces(["default"]);
+    await bulkExportAgentWorkspaces(["default"]);
+    await bulkPatchAgentRuntime(["default"], {}, "merge");
+    await listAgentTemplates();
+    await getAgentTemplate("safe-local");
+    await getAgentRuntimeDiff("default", "default");
+
+    const urls = fetchMock.mock.calls.map((item) => String(item[0]));
+    expect(urls[0]).toContain("/api/v1/agents/bulk-delete");
+    expect(urls[1]).toContain("/api/v1/agents/bulk-export");
+    expect(urls[2]).toContain("/api/v1/agents/bulk-runtime-patch");
+    expect(urls[3]).toContain("/api/v1/agents/templates");
+    expect(urls[4]).toContain("/api/v1/agents/templates/safe-local");
+    expect(urls[5]).toContain("/api/v1/agents/default/runtime-diff?baseline=default");
   });
 });

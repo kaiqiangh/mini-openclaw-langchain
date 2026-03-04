@@ -8,7 +8,7 @@ Next.js App Router frontend for Mini-OpenClaw.
 | ------------ | ------------------------------------------------------- |
 | `/`          | Main workspace UI (agents/sessions + chat + inspector). |
 | `/usage`     | Usage analytics, trend chart, CSV export.               |
-| `/scheduler` | Cron + heartbeat control plane and run history.         |
+| `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history. |
 
 ## UI Model
 
@@ -17,6 +17,10 @@ Next.js App Router frontend for Mini-OpenClaw.
 - Inspector modes:
   - workspace file editing
   - per-agent runtime config editing (`/api/v1/agents/{agent_id}/config/runtime`)
+  - template loading, runtime diff views, and bulk runtime patch actions
+- Agent management:
+  - single create/delete + switch
+  - bulk export/delete actions
 - Chat rendering:
   - markdown + GFM
   - sanitization
@@ -56,8 +60,9 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 `src/lib/api.ts` includes typed wrappers for:
 
 - agent/sessions/chat/files/tokens/usage
-- config: rag mode + runtime config
-- scheduler: cron jobs, runs/failures, heartbeat config/runs
+- config: rag mode + runtime config + runtime diff
+- scheduler: cron jobs, runs/failures, heartbeat config/runs + metrics/timeseries
+- agent management: bulk delete/export/runtime patch and template discovery
 
 All agent-scoped calls append `agent_id`, and all API calls target `/api/v1/*`.
 Auth token source order:
@@ -92,3 +97,4 @@ Current tests cover:
 - store agent/file flows
 - chat rendering (retrieval/tool cards + markdown sanitization)
 - API agent scoping for rag mode
+- scheduler metrics and agent bulk/template API routes
