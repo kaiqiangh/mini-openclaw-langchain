@@ -10,6 +10,15 @@ Reliability-first, local-first agent workspace inspired by OpenClaw patterns wit
 - SQLite-first retrieval index with FTS prefilter and JSON migration fallback.
 - Streaming chat with retrieval/tool traces and markdown rendering.
 
+Canonical tool surface (aliases removed):
+
+- `terminal`, `python_repl`, `fetch_url`
+- `read_files`, `read_pdf`, `search_knowledge_base`, `web_search`
+- `sessions_list`, `session_history`, `agents_list`
+- `scheduler_cron_jobs`, `scheduler_cron_runs`
+- `scheduler_heartbeat_status`, `scheduler_heartbeat_runs`
+- `apply_patch`
+
 ## Architecture
 
 ```mermaid
@@ -63,6 +72,8 @@ flowchart LR
 cd backend
 uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
+# Optional PDF extraction support:
+# uv pip install --python .venv/bin/python -r requirements-pdf.txt
 cp .env.example .env
 uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000
 ```

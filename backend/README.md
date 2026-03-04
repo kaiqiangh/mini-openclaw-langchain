@@ -11,6 +11,19 @@ FastAPI backend for Mini-OpenClaw LangChain.
 - Retrieval over memory/knowledge using SQLite-first indexes.
 - Per-agent usage accounting.
 
+## Canonical Tool Catalog
+
+Aliases were removed in favor of one canonical name per capability.
+
+- `terminal`, `python_repl`, `fetch_url`
+- `read_files` (supports both `path` and `paths`)
+- `read_pdf` (optional dependency: `requirements-pdf.txt`)
+- `search_knowledge_base`, `web_search`
+- `sessions_list`, `session_history`, `agents_list`
+- `scheduler_cron_jobs`, `scheduler_cron_runs`
+- `scheduler_heartbeat_status`, `scheduler_heartbeat_runs`
+- `apply_patch`
+
 ## Service Graph
 
 ```mermaid
@@ -283,6 +296,8 @@ Known limitations:
 cd backend
 uv venv --python=python3.13.7
 uv pip install -r requirements.txt
+# Optional PDF tool support:
+# uv pip install -r requirements-pdf.txt
 cp .env.example .env
 uv run uvicorn app:app --host 127.0.0.1 --port 8000
 ```
