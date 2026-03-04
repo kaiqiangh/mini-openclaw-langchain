@@ -71,11 +71,18 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
 
     manager = api_app["agent_manager"]
     call_count = {"value": 0}
+    captured_histories: list[list[tuple[str, str]]] = []
 
     async def scripted_stream(
         self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
     ):
-        _ = self, history, kwargs
+        _ = self, kwargs
+        captured_histories.append(
+            [
+                (str(item.get("role", "")), str(item.get("content", "")))
+                for item in history
+            ]
+        )
         call_count["value"] += 1
         if call_count["value"] == 1:
             yield {"type": "run_start", "data": {"run_id": "run-first", "attempt": 1}}
@@ -104,6 +111,9 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
 
     created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
+    session_manager = manager.get_runtime("default").session_manager
+    session_manager.save_message(session_id, "user", "prior-question")
+    session_manager.save_message(session_id, "assistant", "prior-answer")
 
     first = client.post(
         "/api/v1/agents/default/chat",
@@ -129,5 +139,17 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
     ).json()["data"]["messages"]
     user_messages = [row for row in history if row.get("role") == "user"]
     assistant_messages = [row for row in history if row.get("role") == "assistant"]
-    assert len(user_messages) == 1
-    assert len(assistant_messages) == 1
+    assert len(user_messages) == 2
+    assert len(assistant_messages) == 2
+    assert user_messages[0]["content"] == "prior-question"
+    assert user_messages[1]["content"] == "hello"
+    assert assistant_messages[0]["content"] == "prior-answer"
+    assert assistant_messages[1]["content"] == "continued"
+
+    assert len(captured_histories) == 2
+    first_call, second_call = captured_histories
+    assert ("user", "prior-question") in first_call
+    assert ("assistant", "prior-answer") in first_call
+    assert ("user", "prior-question") in second_call
+    assert ("assistant", "prior-answer") in second_call
+    assert ("user", "hello") not in second_call
