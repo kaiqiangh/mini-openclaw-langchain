@@ -2,6 +2,7 @@ import {
   bulkDeleteAgentWorkspaces,
   bulkExportAgentWorkspaces,
   bulkPatchAgentRuntime,
+  getAgentTools,
   getAgentRuntimeDiff,
   getAgentTemplate,
   getSchedulerMetrics,
@@ -10,6 +11,7 @@ import {
   getRagMode,
   getTracingConfig,
   setRagMode,
+  setAgentToolSelection,
   setTracingConfig,
   streamChat,
 } from "@/lib/api";
@@ -257,5 +259,53 @@ describe("agent bulk/template requests", () => {
     expect(urls[3]).toContain("/api/v1/agents/templates");
     expect(urls[4]).toContain("/api/v1/agents/templates/safe-local");
     expect(urls[5]).toContain("/api/v1/agents/default/runtime-diff?baseline=default");
+  });
+});
+
+describe("agent tools requests", () => {
+  it("calls tool catalog and selection endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              agent_id: "default",
+              triggers: ["chat", "heartbeat", "cron"],
+              enabled_tools: {
+                chat: [],
+                heartbeat: [],
+                cron: [],
+              },
+              tools: [],
+            },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            data: {
+              agent_id: "default",
+              triggers: ["chat", "heartbeat", "cron"],
+              enabled_tools: {
+                chat: ["terminal"],
+                heartbeat: [],
+                cron: [],
+              },
+              tools: [],
+            },
+          }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAgentTools("default");
+    await setAgentToolSelection("chat", ["terminal"], "default");
+
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    const secondUrl = String(fetchMock.mock.calls[1][0]);
+    expect(firstUrl).toContain("/api/v1/agents/default/tools");
+    expect(secondUrl).toContain("/api/v1/agents/default/tools/selection");
   });
 });

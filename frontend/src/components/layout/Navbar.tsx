@@ -68,7 +68,7 @@ export function Navbar() {
                 : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
             }`}
           >
-            Workspace
+            Agent
           </Link>
           <Link
             href="/usage"

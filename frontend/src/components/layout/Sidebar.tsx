@@ -1,7 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import {
+  AgentToolCatalog,
+  AgentToolItem,
+  getAgentTools,
+  setAgentToolSelection,
+  ToolSelectionTrigger,
+} from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import {
   Badge,
@@ -13,9 +20,31 @@ import {
   TabsList,
 } from "@/components/ui/primitives";
 
+type ToolStatusFilter = "all" | "enabled" | "disabled";
+
+function inferToolCategory(toolName: string): string {
+  if (toolName.startsWith("scheduler_")) return "Scheduler";
+  if (toolName.startsWith("session")) return "Sessions";
+  if (toolName.includes("knowledge")) return "Knowledge";
+  if (toolName.includes("web") || toolName.includes("fetch")) return "Web";
+  if (toolName.includes("read") || toolName.includes("pdf")) return "Files";
+  if (toolName.includes("terminal") || toolName.includes("python")) return "Execution";
+  if (toolName.includes("agent")) return "Agents";
+  return "Core";
+}
+
 export function Sidebar() {
   const [agentDraft, setAgentDraft] = useState("");
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  const [toolCatalog, setToolCatalog] = useState<AgentToolCatalog | null>(null);
+  const [toolTrigger, setToolTrigger] = useState<ToolSelectionTrigger>("chat");
+  const [toolQuery, setToolQuery] = useState("");
+  const [toolStatusFilter, setToolStatusFilter] =
+    useState<ToolStatusFilter>("all");
+  const [toolCategoryFilter, setToolCategoryFilter] = useState("all");
+  const [toolsLoading, setToolsLoading] = useState(false);
+  const [toolsSaving, setToolsSaving] = useState(false);
+  const [toolsStatus, setToolsStatus] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkStatus, setBulkStatus] = useState("");
   const {
@@ -45,6 +74,109 @@ export function Sidebar() {
       ),
     );
   }, [agents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setToolsLoading(true);
+    setToolsStatus("");
+    void getAgentTools(currentAgentId)
+      .then((catalog) => {
+        if (cancelled) return;
+        setToolCatalog(catalog);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setToolCatalog(null);
+        setToolsStatus(
+          error instanceof Error ? error.message : "Failed to load tools",
+        );
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setToolsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAgentId]);
+
+  const selectedToolNames = useMemo(
+    () => new Set(toolCatalog?.enabled_tools[toolTrigger] ?? []),
+    [toolCatalog, toolTrigger],
+  );
+
+  const toolCategories = useMemo(() => {
+    const values = new Set<string>();
+    for (const item of toolCatalog?.tools ?? []) {
+      values.add(inferToolCategory(item.name));
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b));
+  }, [toolCatalog]);
+
+  useEffect(() => {
+    if (toolCategoryFilter === "all") return;
+    if (toolCategories.includes(toolCategoryFilter)) return;
+    setToolCategoryFilter("all");
+  }, [toolCategories, toolCategoryFilter]);
+
+  const filteredTools = useMemo(() => {
+    const q = toolQuery.trim().toLowerCase();
+    return (toolCatalog?.tools ?? []).filter((tool) => {
+      const state = tool.trigger_status[toolTrigger];
+      const category = inferToolCategory(tool.name);
+      if (toolCategoryFilter !== "all" && category !== toolCategoryFilter) {
+        return false;
+      }
+      if (toolStatusFilter === "enabled" && !state.enabled) return false;
+      if (toolStatusFilter === "disabled" && state.enabled) return false;
+      if (!q) return true;
+      return (
+        tool.name.toLowerCase().includes(q) ||
+        tool.description.toLowerCase().includes(q) ||
+        category.toLowerCase().includes(q)
+      );
+    });
+  }, [toolCatalog, toolCategoryFilter, toolQuery, toolStatusFilter, toolTrigger]);
+
+  const groupedTools = useMemo(() => {
+    const map = new Map<string, AgentToolItem[]>();
+    for (const tool of filteredTools) {
+      const key = inferToolCategory(tool.name);
+      const rows = map.get(key) ?? [];
+      rows.push(tool);
+      map.set(key, rows);
+    }
+    return Array.from(map.entries()).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+  }, [filteredTools]);
+
+  async function toggleToolSelection(toolName: string) {
+    if (!toolCatalog || toolsSaving) return;
+    const current = new Set(selectedToolNames);
+    if (current.has(toolName)) {
+      current.delete(toolName);
+    } else {
+      current.add(toolName);
+    }
+    setToolsSaving(true);
+    setToolsStatus("");
+    try {
+      const updated = await setAgentToolSelection(
+        toolTrigger,
+        Array.from(current),
+        currentAgentId,
+      );
+      setToolCatalog(updated);
+      setToolsStatus(`Saved ${toolTrigger} tool selection.`);
+    } catch (error) {
+      setToolsStatus(
+        error instanceof Error ? error.message : "Failed to save tool selection.",
+      );
+    } finally {
+      setToolsSaving(false);
+    }
+  }
 
   function toggleBulkAgent(agentId: string) {
     setSelectedAgentIds((previous) =>
@@ -103,7 +235,7 @@ export function Sidebar() {
         </Badge>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
         <div>
           <label className="ui-label" htmlFor="agent-selector">
             Agents
@@ -230,6 +362,149 @@ export function Sidebar() {
                 {bulkStatus}
               </p>
             ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="ui-label">Agent Tools</span>
+            <Badge tone="neutral">{filteredTools.length}</Badge>
+          </div>
+          <TabsList
+            className="grid grid-cols-3"
+            ariaLabel="Tool trigger scope"
+            value={toolTrigger}
+            onChange={(value) => setToolTrigger(value as ToolSelectionTrigger)}
+          >
+            <TabButton id="tools-tab-chat" controls="tools-panel" value="chat">
+              Chat
+            </TabButton>
+            <TabButton
+              id="tools-tab-heartbeat"
+              controls="tools-panel"
+              value="heartbeat"
+            >
+              Heartbeat
+            </TabButton>
+            <TabButton id="tools-tab-cron" controls="tools-panel" value="cron">
+              Cron
+            </TabButton>
+          </TabsList>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            <Input
+              value={toolQuery}
+              onChange={(event) => setToolQuery(event.target.value)}
+              placeholder="Search tools..."
+              className="sm:col-span-3"
+              aria-label="Search tools"
+            />
+            <Select
+              value={toolStatusFilter}
+              onChange={(event) =>
+                setToolStatusFilter(event.target.value as ToolStatusFilter)
+              }
+              aria-label="Filter tools by status"
+            >
+              <option value="all">All status</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </Select>
+            <Select
+              value={toolCategoryFilter}
+              onChange={(event) => setToolCategoryFilter(event.target.value)}
+              aria-label="Filter tools by category"
+              className="sm:col-span-2"
+            >
+              <option value="all">All categories</option>
+              {toolCategories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div
+            id="tools-panel"
+            role="tabpanel"
+            aria-labelledby={`tools-tab-${toolTrigger}`}
+            className="mt-2"
+          >
+            {toolsLoading ? (
+              <div className="ui-status" aria-live="polite">
+                Loading tools…
+              </div>
+            ) : !toolCatalog || toolCatalog.tools.length === 0 ? (
+              <EmptyState
+                title="No Tools"
+                description="No tools are registered for this agent."
+              />
+            ) : filteredTools.length === 0 ? (
+              <EmptyState
+                title="No Matching Tools"
+                description="Change search or filters to see tool rows."
+              />
+            ) : (
+              <div className="space-y-2 pr-1">
+                {groupedTools.map(([category, tools]) => (
+                  <details
+                    key={`${toolTrigger}-${category}`}
+                    className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2"
+                    open
+                  >
+                    <summary className="cursor-pointer select-none text-xs font-semibold text-[var(--muted)]">
+                      {category} · {tools.length}
+                    </summary>
+                    <ul className="mt-2 space-y-1">
+                      {tools.map((tool) => {
+                        const explicit = selectedToolNames.has(tool.name);
+                        const triggerState = tool.trigger_status[toolTrigger];
+                        return (
+                          <li
+                            key={`${toolTrigger}-${category}-${tool.name}`}
+                            className="rounded border border-transparent px-2 py-1 hover:border-[var(--border)]"
+                          >
+                            <label className="flex min-h-[44px] cursor-pointer items-start justify-between gap-2 text-xs">
+                              <div className="min-w-0 space-y-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="ui-mono truncate text-[var(--text)]">
+                                    {tool.name}
+                                  </span>
+                                  <Badge
+                                    tone={triggerState.enabled ? "success" : "warn"}
+                                    className="text-[10px]"
+                                  >
+                                    {triggerState.enabled ? "Enabled" : "Blocked"}
+                                  </Badge>
+                                </div>
+                                <div className="line-clamp-2 text-[var(--muted)]">
+                                  {tool.description}
+                                </div>
+                                <div className="text-[11px] text-[var(--muted-soft)]">
+                                  {triggerState.reason}
+                                </div>
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={explicit}
+                                disabled={toolsSaving}
+                                onChange={() => {
+                                  void toggleToolSelection(tool.name);
+                                }}
+                                aria-label={`Toggle ${tool.name} in ${toolTrigger} explicit allowlist`}
+                              />
+                            </label>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </details>
+                ))}
+              </div>
+            )}
+            <p className="ui-helper mt-2" aria-live="polite">
+              {toolsStatus ||
+                "Tip: use search + category filters, then toggle allowlist checkboxes for this trigger."}
+            </p>
           </div>
         </div>
 

@@ -316,6 +316,30 @@ export type AgentRuntimeDiff = {
   changed: Record<string, { from: unknown; to: unknown }>;
 };
 
+export type ToolSelectionTrigger = "chat" | "heartbeat" | "cron";
+
+export type AgentToolTriggerStatus = {
+  enabled: boolean;
+  explicitly_enabled: boolean;
+  allowed_by_policy: boolean;
+  reason: string;
+};
+
+export type AgentToolItem = {
+  name: string;
+  description: string;
+  permission_level: string;
+  trigger_status: Record<ToolSelectionTrigger, AgentToolTriggerStatus>;
+};
+
+export type AgentToolCatalog = {
+  agent_id: string;
+  triggers: ToolSelectionTrigger[];
+  enabled_tools: Record<ToolSelectionTrigger, string[]>;
+  explicit_enabled_tools?: Record<ToolSelectionTrigger, string[]>;
+  tools: AgentToolItem[];
+};
+
 export type TracingConfig = {
   provider: "langsmith";
   config_key: "OBS_TRACING_ENABLED";
@@ -442,6 +466,31 @@ export async function getAgentRuntimeDiff(
 ): Promise<AgentRuntimeDiff> {
   const payload = await requestJson<{ data: AgentRuntimeDiff }>(
     `${agentBase(agentId)}/runtime-diff?baseline=${encodeURIComponent(baseline)}`,
+  );
+  return payload.data;
+}
+
+export async function getAgentTools(
+  agentId = "default",
+): Promise<AgentToolCatalog> {
+  const payload = await requestJson<{ data: AgentToolCatalog }>(
+    `${agentBase(agentId)}/tools`,
+  );
+  return payload.data;
+}
+
+export async function setAgentToolSelection(
+  trigger: ToolSelectionTrigger,
+  enabledTools: string[],
+  agentId = "default",
+): Promise<AgentToolCatalog> {
+  const payload = await requestJson<{ data: AgentToolCatalog }>(
+    `${agentBase(agentId)}/tools/selection`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trigger, enabled_tools: enabledTools }),
+    },
   );
   return payload.data;
 }

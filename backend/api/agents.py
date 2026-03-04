@@ -4,14 +4,19 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
 from api.errors import ApiError
-from config import runtime_from_payload, runtime_to_payload, save_runtime_config_to_path
+from config import (
+    runtime_from_payload,
+    runtime_to_payload,
+    save_runtime_config_to_path,
+)
 from graph.agent import AgentManager
+from tools import build_tool_catalog, get_all_declared_tools
 
 router = APIRouter(tags=["agents"])
 
@@ -36,6 +41,11 @@ class BulkRuntimePatchRequest(AgentIdsRequest):
     mode: str = Field(default="merge", max_length=20)
 
 
+class AgentToolSelectionRequest(BaseModel):
+    trigger: Literal["chat", "heartbeat", "cron"]
+    enabled_tools: list[str] = Field(default_factory=list, max_length=200)
+
+
 def set_agent_manager(agent_manager: AgentManager) -> None:
     global _agent_manager
     _agent_manager = agent_manager
@@ -53,6 +63,16 @@ def _require_agent_manager() -> AgentManager:
 
 def _normalize_agent_id(value: str) -> str:
     return value.strip()
+
+
+def _normalize_tool_names(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for item in values:
+        name = str(item).strip()
+        if not name or name in normalized:
+            continue
+        normalized.append(name)
+    return normalized
 
 
 def _existing_agents(manager: AgentManager) -> dict[str, dict[str, Any]]:
@@ -79,6 +99,29 @@ def _templates_dir(manager: AgentManager) -> Path:
     path = _base_dir(manager) / "agent_templates"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _require_known_runtime(manager: AgentManager, agent_id: str):
+    normalized = _normalize_agent_id(agent_id)
+    known = _existing_agents(manager)
+    if normalized not in known:
+        raise ApiError(status_code=404, code="not_found", message="Agent not found")
+    try:
+        return manager.get_runtime(normalized)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+
+
+def _agent_tools_payload(manager: AgentManager, agent_id: str) -> dict[str, Any]:
+    runtime = _require_known_runtime(manager, agent_id)
+    catalog = build_tool_catalog(
+        runtime.root_dir,
+        runtime.runtime_config,
+        config_base_dir=_base_dir(manager),
+    )
+    return {"agent_id": runtime.agent_id, **catalog}
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -434,3 +477,48 @@ async def get_agent_runtime_diff(
             "changed": changed,
         }
     }
+
+
+@router.get("/agents/{agent_id}/tools")
+async def get_agent_tools(agent_id: str) -> dict[str, Any]:
+    manager = _require_agent_manager()
+    return {"data": _agent_tools_payload(manager, agent_id)}
+
+
+@router.put("/agents/{agent_id}/tools/selection")
+async def update_agent_tool_selection(
+    agent_id: str, request: AgentToolSelectionRequest
+) -> dict[str, Any]:
+    manager = _require_agent_manager()
+    runtime = _require_known_runtime(manager, agent_id)
+
+    normalized_enabled = _normalize_tool_names(request.enabled_tools)
+    declared = get_all_declared_tools(
+        runtime.root_dir,
+        runtime.runtime_config,
+        config_base_dir=_base_dir(manager),
+    )
+    declared_names = {tool.name for tool in declared}
+    unknown_tools = sorted(
+        tool_name for tool_name in normalized_enabled if tool_name not in declared_names
+    )
+    if unknown_tools:
+        raise ApiError(
+            status_code=422,
+            code="validation_error",
+            message="Unknown tool names in enabled_tools",
+            details={"unknown_tools": unknown_tools},
+        )
+
+    if request.trigger == "chat":
+        runtime.runtime_config.chat_enabled_tools = normalized_enabled
+    elif request.trigger == "heartbeat":
+        runtime.runtime_config.autonomous_tools.heartbeat_enabled_tools = (
+            normalized_enabled
+        )
+    else:
+        runtime.runtime_config.autonomous_tools.cron_enabled_tools = normalized_enabled
+
+    config_path = manager.get_agent_config_path(runtime.agent_id)
+    save_runtime_config_to_path(config_path, runtime.runtime_config)
+    return {"data": _agent_tools_payload(manager, runtime.agent_id)}

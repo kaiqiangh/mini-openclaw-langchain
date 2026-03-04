@@ -87,3 +87,78 @@ def test_bulk_runtime_patch_rejects_invalid_mode(client):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_agent_tools_catalog_and_selection_update(client):
+    listed = client.get("/api/v1/agents/default/tools")
+    assert listed.status_code == 200
+    payload = listed.json()["data"]
+    assert payload["agent_id"] == "default"
+    assert payload["triggers"] == ["chat", "heartbeat", "cron"]
+    assert sorted(payload["enabled_tools"].keys()) == [
+        "chat",
+        "cron",
+        "heartbeat",
+    ]
+    by_name = {item["name"]: item for item in payload["tools"]}
+    assert "terminal" in by_name
+    assert "read_files" in by_name
+    assert by_name["terminal"]["trigger_status"]["chat"]["enabled"] is False
+
+    updated = client.put(
+        "/api/v1/agents/default/tools/selection",
+        json={"trigger": "chat", "enabled_tools": ["terminal", "read_files"]},
+    )
+    assert updated.status_code == 200
+    updated_payload = updated.json()["data"]
+    assert "terminal" in updated_payload["enabled_tools"]["chat"]
+    assert "read_files" in updated_payload["enabled_tools"]["chat"]
+    updated_tools = {item["name"]: item for item in updated_payload["tools"]}
+    assert updated_tools["terminal"]["trigger_status"]["chat"]["enabled"] is True
+    assert (
+        updated_tools["terminal"]["trigger_status"]["chat"]["explicitly_enabled"]
+        is True
+    )
+
+    runtime = client.get("/api/v1/agents/default/config/runtime")
+    assert runtime.status_code == 200
+    assert runtime.json()["data"]["config"]["chat_enabled_tools"] == [
+        "terminal",
+        "read_files",
+    ]
+
+    cron_reset = client.put(
+        "/api/v1/agents/default/tools/selection",
+        json={"trigger": "cron", "enabled_tools": []},
+    )
+    assert cron_reset.status_code == 200
+    cron_enabled = cron_reset.json()["data"]["enabled_tools"]["cron"]
+    assert cron_enabled == []
+    cron_tools = {
+        item["name"]: item["trigger_status"]["cron"]["enabled"]
+        for item in cron_reset.json()["data"]["tools"]
+    }
+    assert cron_tools["read_files"] is False
+
+
+def test_agent_tools_selection_rejects_unknown_tools(client):
+    response = client.put(
+        "/api/v1/agents/default/tools/selection",
+        json={"trigger": "chat", "enabled_tools": ["terminal", "does_not_exist"]},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert response.json()["error"]["details"]["unknown_tools"] == ["does_not_exist"]
+
+
+def test_agent_tools_endpoints_return_not_found_for_unknown_agent(client):
+    listed = client.get("/api/v1/agents/missing/tools")
+    assert listed.status_code == 404
+    assert listed.json()["error"]["code"] == "not_found"
+
+    updated = client.put(
+        "/api/v1/agents/missing/tools/selection",
+        json={"trigger": "chat", "enabled_tools": []},
+    )
+    assert updated.status_code == 404
+    assert updated.json()["error"]["code"] == "not_found"

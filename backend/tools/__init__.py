@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from config import DEFAULT_CRON_ENABLED_TOOLS, RuntimeConfig
+from config import RuntimeConfig
 from storage.run_store import AuditStore
 
 from .agents_list_tool import AgentsListTool
@@ -27,6 +28,8 @@ from .skills_scanner import scan_skills
 from .terminal_tool import TerminalTool
 from .web_search_tool import WebSearchTool
 
+TRIGGER_TYPES: tuple[str, ...] = ("chat", "heartbeat", "cron")
+
 
 def get_explicit_enabled_tools(runtime: RuntimeConfig, trigger_type: str) -> list[str]:
     if trigger_type == "chat":
@@ -34,28 +37,24 @@ def get_explicit_enabled_tools(runtime: RuntimeConfig, trigger_type: str) -> lis
     if trigger_type == "heartbeat":
         return list(runtime.autonomous_tools.heartbeat_enabled_tools)
     if trigger_type == "cron":
-        configured = [
+        return [
             str(name).strip()
             for name in runtime.autonomous_tools.cron_enabled_tools
             if str(name).strip()
         ]
-        if configured:
-            return configured
-        return list(DEFAULT_CRON_ENABLED_TOOLS)
     return []
 
 
-def get_all_tools(
+def _build_declared_tools(
     base_dir: Path,
     runtime: RuntimeConfig,
-    trigger_type: str = "chat",
     config_base_dir: Path | None = None,
-):
+) -> list[MiniTool]:
     terminal_mode = runtime.tool_execution.terminal.sandbox_mode
     terminal_mode_value = (
         terminal_mode.value if hasattr(terminal_mode, "value") else str(terminal_mode)
     )
-    all_tools: list[MiniTool] = [
+    return [
         TerminalTool(
             root_dir=base_dir,
             timeout_seconds=runtime.tool_timeouts.terminal_seconds,
@@ -116,6 +115,83 @@ def get_all_tools(
         ),
     ]
 
+
+def get_all_declared_tools(
+    base_dir: Path,
+    runtime: RuntimeConfig,
+    config_base_dir: Path | None = None,
+) -> list[MiniTool]:
+    return _build_declared_tools(
+        base_dir,
+        runtime,
+        config_base_dir=config_base_dir,
+    )
+
+
+def build_tool_catalog(
+    base_dir: Path,
+    runtime: RuntimeConfig,
+    config_base_dir: Path | None = None,
+) -> dict[str, Any]:
+    policy = ToolPolicyEngine()
+    trigger_explicit_tools = {
+        trigger: get_explicit_enabled_tools(runtime, trigger) for trigger in TRIGGER_TYPES
+    }
+    trigger_enabled_sets = {
+        trigger: set(enabled_tools)
+        for trigger, enabled_tools in trigger_explicit_tools.items()
+    }
+    trigger_effective_tools = {trigger: [] for trigger in TRIGGER_TYPES}
+    all_tools = _build_declared_tools(
+        base_dir,
+        runtime,
+        config_base_dir=config_base_dir,
+    )
+    rows: list[dict[str, Any]] = []
+    for tool in all_tools:
+        trigger_status: dict[str, Any] = {}
+        for trigger, enabled_tools in trigger_explicit_tools.items():
+            decision = policy.is_allowed(
+                tool_name=tool.name,
+                permission_level=tool.permission_level,
+                trigger_type=trigger,
+                explicit_enabled_tools=enabled_tools,
+            )
+            if decision.allowed:
+                trigger_effective_tools[trigger].append(tool.name)
+            trigger_status[trigger] = {
+                "enabled": bool(decision.allowed),
+                "explicitly_enabled": tool.name in trigger_enabled_sets[trigger],
+                "allowed_by_policy": bool(decision.allowed),
+                "reason": decision.reason,
+            }
+        rows.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "permission_level": tool.permission_level.name,
+                "trigger_status": trigger_status,
+            }
+        )
+    return {
+        "triggers": list(TRIGGER_TYPES),
+        "enabled_tools": trigger_effective_tools,
+        "explicit_enabled_tools": trigger_explicit_tools,
+        "tools": rows,
+    }
+
+
+def get_all_tools(
+    base_dir: Path,
+    runtime: RuntimeConfig,
+    trigger_type: str = "chat",
+    config_base_dir: Path | None = None,
+):
+    all_tools = _build_declared_tools(
+        base_dir,
+        runtime,
+        config_base_dir=config_base_dir,
+    )
     policy = ToolPolicyEngine()
     explicit_enabled_tools = get_explicit_enabled_tools(runtime, trigger_type)
     enabled: list[MiniTool] = []
@@ -145,6 +221,8 @@ def get_tool_runner(
 
 
 __all__ = [
+    "build_tool_catalog",
+    "get_all_declared_tools",
     "get_all_tools",
     "get_tool_runner",
     "scan_skills",
