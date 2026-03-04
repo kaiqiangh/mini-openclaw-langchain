@@ -5,15 +5,24 @@ from pathlib import Path
 from config import DEFAULT_CRON_ENABLED_TOOLS, RuntimeConfig
 from storage.run_store import AuditStore
 
+from .agents_list_tool import AgentsListTool
 from .apply_patch_tool import ApplyPatchTool
 from .base import MiniTool
 from .fetch_url_tool import FetchUrlTool
 from .policy import ToolPolicyEngine
 from .python_repl_tool import PythonReplTool
-from .read_file_tool import ReadFileTool
+from .read_pdf_tool import ReadPdfTool
 from .read_files_tool import ReadFilesTool
 from .runner import ToolRunner
+from .scheduler_tools import (
+    SchedulerCronJobsTool,
+    SchedulerCronRunsTool,
+    SchedulerHeartbeatRunsTool,
+    SchedulerHeartbeatStatusTool,
+)
 from .search_knowledge_tool import SearchKnowledgeTool
+from .session_history_tool import SessionHistoryTool
+from .sessions_list_tool import SessionsListTool
 from .skills_scanner import scan_skills
 from .terminal_tool import TerminalTool
 from .web_search_tool import WebSearchTool
@@ -61,22 +70,6 @@ def get_all_tools(
             max_args=runtime.tool_execution.terminal.max_args,
             max_arg_length=runtime.tool_execution.terminal.max_arg_length,
         ),
-        TerminalTool(
-            root_dir=base_dir,
-            timeout_seconds=runtime.tool_timeouts.terminal_seconds,
-            output_char_limit=runtime.tool_output_limits.terminal_chars,
-            sandbox_mode=terminal_mode_value,
-            require_sandbox=runtime.tool_execution.terminal.require_sandbox,
-            allowed_command_prefixes=tuple(
-                runtime.tool_execution.terminal.allowed_command_prefixes
-            ),
-            allow_network=runtime.tool_execution.terminal.allow_network,
-            allow_shell_syntax=runtime.tool_execution.terminal.allow_shell_syntax,
-            max_args=runtime.tool_execution.terminal.max_args,
-            max_arg_length=runtime.tool_execution.terminal.max_arg_length,
-            name="exec",
-            description="Execute allowlisted commands in a constrained process sandbox",
-        ),
         PythonReplTool(
             timeout_seconds=runtime.tool_timeouts.python_repl_seconds,
             output_char_limit=runtime.tool_output_limits.terminal_chars,
@@ -89,27 +82,11 @@ def get_all_tools(
             max_redirects=runtime.tool_network.max_redirects,
             max_content_bytes=runtime.tool_network.max_content_bytes,
         ),
-        FetchUrlTool(
-            timeout_seconds=runtime.tool_timeouts.fetch_url_seconds,
-            output_char_limit=runtime.tool_output_limits.fetch_url_chars,
-            allowed_schemes=tuple(runtime.tool_network.allow_http_schemes),
-            block_private_networks=runtime.tool_network.block_private_networks,
-            max_redirects=runtime.tool_network.max_redirects,
-            max_content_bytes=runtime.tool_network.max_content_bytes,
-            name="web_fetch",
-            description="Fetch remote URL and extract content",
-        ),
-        ReadFileTool(
-            root_dir=base_dir,
-            max_chars_default=runtime.tool_output_limits.read_file_chars,
-        ),
-        ReadFileTool(
-            root_dir=base_dir,
-            max_chars_default=runtime.tool_output_limits.read_file_chars,
-            name="read",
-            description="Read workspace file content safely",
-        ),
         ReadFilesTool(
+            root_dir=base_dir,
+            max_chars_default=runtime.tool_output_limits.read_file_chars,
+        ),
+        ReadPdfTool(
             root_dir=base_dir,
             max_chars_default=runtime.tool_output_limits.read_file_chars,
         ),
@@ -121,6 +98,17 @@ def get_all_tools(
             lexical_weight=runtime.retrieval.knowledge.lexical_weight,
             chunk_size=runtime.retrieval.knowledge.chunk_size,
             chunk_overlap=runtime.retrieval.knowledge.chunk_overlap,
+        ),
+        SessionsListTool(runtime_root=base_dir, config_base_dir=config_base_dir),
+        SessionHistoryTool(runtime_root=base_dir, config_base_dir=config_base_dir),
+        AgentsListTool(runtime_root=base_dir, config_base_dir=config_base_dir),
+        SchedulerCronJobsTool(runtime_root=base_dir, config_base_dir=config_base_dir),
+        SchedulerCronRunsTool(runtime_root=base_dir, config_base_dir=config_base_dir),
+        SchedulerHeartbeatStatusTool(
+            runtime_root=base_dir, config_base_dir=config_base_dir
+        ),
+        SchedulerHeartbeatRunsTool(
+            runtime_root=base_dir, config_base_dir=config_base_dir
         ),
         WebSearchTool(timeout_seconds=runtime.tool_timeouts.fetch_url_seconds),
         ApplyPatchTool(

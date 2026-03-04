@@ -32,22 +32,29 @@ class ReadFilesTool:
     max_paths: int = 32
 
     name: str = "read_files"
-    description: str = "Read multiple workspace files safely"
+    description: str = "Read one or many workspace files safely"
     permission_level: PermissionLevel = PermissionLevel.L0_READ
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
         started = time.monotonic()
+        raw_path = args.get("path")
         raw_paths = args.get("paths")
-        if not isinstance(raw_paths, list) or not raw_paths:
+        resolved_paths: list[Any] = []
+        if isinstance(raw_path, str) and raw_path.strip():
+            resolved_paths.append(raw_path.strip())
+        if isinstance(raw_paths, list):
+            resolved_paths.extend(raw_paths)
+
+        if not resolved_paths:
             return ToolResult.failure(
                 tool_name=self.name,
                 code="E_INVALID_ARGS",
-                message="Missing required 'paths' list argument",
+                message="Provide either 'path' (string) or 'paths' (non-empty list)",
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        if len(raw_paths) > self.max_paths:
+        if len(resolved_paths) > self.max_paths:
             return ToolResult.failure(
                 tool_name=self.name,
                 code="E_INVALID_ARGS",
@@ -61,7 +68,7 @@ class ReadFilesTool:
         max_chars = max(1, max_chars)
 
         results: list[dict[str, Any]] = []
-        for raw_path in raw_paths:
+        for raw_path in resolved_paths:
             path = str(raw_path)
             try:
                 resolved = resolve_workspace_path(self.root_dir, path)

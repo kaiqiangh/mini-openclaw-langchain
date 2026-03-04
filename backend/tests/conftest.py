@@ -224,9 +224,9 @@ class FakeAgentManager:
         yield {"type": "token", "data": {"content": f"[{session_id}]A"}}
         yield {
             "type": "tool_start",
-            "data": {"tool": "read_file", "input": {"path": "memory/MEMORY.md"}},
+            "data": {"tool": "read_files", "input": {"path": "memory/MEMORY.md"}},
         }
-        yield {"type": "tool_end", "data": {"tool": "read_file", "output": "ok"}}
+        yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
         yield {"type": "new_response", "data": {}}
         yield {
             "type": "reasoning",

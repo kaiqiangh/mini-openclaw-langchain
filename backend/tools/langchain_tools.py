@@ -5,7 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .base import MiniTool, ToolContext
 from .runner import ToolRunner
@@ -32,21 +32,33 @@ class FetchUrlArgs(BaseModel):
     )
 
 
-class ReadFileArgs(BaseModel):
-    path: str = Field(description="Workspace-relative file path")
+class ReadFilesArgs(BaseModel):
+    path: str | None = Field(
+        default=None, description="Optional workspace-relative single file path"
+    )
+    paths: list[str] | None = Field(
+        default=None, description="Optional workspace-relative file paths"
+    )
     start_line: int | None = Field(
         default=None, description="Optional 1-based start line"
     )
     end_line: int | None = Field(default=None, description="Optional 1-based end line")
     max_chars: int | None = Field(default=None, description="Optional max char limit")
 
+    @model_validator(mode="after")
+    def _validate_path_shape(self) -> "ReadFilesArgs":
+        has_single = isinstance(self.path, str) and bool(self.path.strip())
+        has_many = bool(self.paths)
+        if not has_single and not has_many:
+            raise ValueError("Provide either path or paths")
+        return self
 
-class ReadFilesArgs(BaseModel):
-    paths: list[str] = Field(description="Workspace-relative file paths")
-    start_line: int | None = Field(
-        default=None, description="Optional 1-based start line"
+
+class ReadPdfArgs(BaseModel):
+    path: str = Field(description="Workspace-relative .pdf file path")
+    pages: list[int] | None = Field(
+        default=None, description="Optional 1-based page numbers"
     )
-    end_line: int | None = Field(default=None, description="Optional 1-based end line")
     max_chars: int | None = Field(default=None, description="Optional max char limit")
 
 
@@ -72,6 +84,43 @@ class WebSearchArgs(BaseModel):
     )
 
 
+class SessionsListArgs(BaseModel):
+    agent_id: str | None = Field(default=None, description="Optional agent id")
+    scope: str | None = Field(
+        default=None, description="Optional one of active, archived, all"
+    )
+    limit: int | None = Field(default=None, ge=1, le=1000, description="Max results")
+
+
+class SessionHistoryArgs(BaseModel):
+    session_id: str = Field(description="Session id to inspect")
+    agent_id: str | None = Field(default=None, description="Optional agent id")
+    archived: bool | None = Field(
+        default=None, description="Read from archived sessions if true"
+    )
+    include_live: bool | None = Field(
+        default=None, description="Include live streaming assistant response if present"
+    )
+    max_messages: int | None = Field(
+        default=None, ge=1, le=5000, description="Max messages to return"
+    )
+
+
+class AgentsListArgs(BaseModel):
+    include_stats: bool | None = Field(
+        default=None, description="Reserved for future output tuning"
+    )
+
+
+class SchedulerAgentArgs(BaseModel):
+    agent_id: str | None = Field(default=None, description="Optional agent id")
+
+
+class SchedulerRunsArgs(BaseModel):
+    agent_id: str | None = Field(default=None, description="Optional agent id")
+    limit: int | None = Field(default=None, ge=1, le=5000, description="Max rows")
+
+
 class ApplyPatchArgs(BaseModel):
     input: str = Field(description="Unified diff patch content")
 
@@ -86,11 +135,10 @@ def _register_terminal_tool(
     structured: list[StructuredTool],
     runner: ToolRunner,
     context: ToolContext,
-    tool_name: str,
 ) -> None:
-    if tool_name not in by_name:
+    if "terminal" not in by_name:
         return
-    tool = by_name[tool_name]
+    tool = by_name["terminal"]
 
     def run_terminal(
         command: str, timeout: int | None = None, _tool: MiniTool = tool
@@ -103,7 +151,7 @@ def _register_terminal_tool(
 
     structured.append(
         StructuredTool.from_function(
-            name=tool_name,
+            name="terminal",
             description=tool.description,
             func=run_terminal,
             args_schema=TerminalArgs,
@@ -142,11 +190,10 @@ def _register_fetch_tool(
     structured: list[StructuredTool],
     runner: ToolRunner,
     context: ToolContext,
-    tool_name: str,
 ) -> None:
-    if tool_name not in by_name:
+    if "fetch_url" not in by_name:
         return
-    tool = by_name[tool_name]
+    tool = by_name["fetch_url"]
 
     def run_fetch_url(
         url: str,
@@ -164,49 +211,10 @@ def _register_fetch_tool(
 
     structured.append(
         StructuredTool.from_function(
-            name=tool_name,
+            name="fetch_url",
             description=tool.description,
             func=run_fetch_url,
             args_schema=FetchUrlArgs,
-        )
-    )
-
-
-def _register_read_file_tool(
-    *,
-    by_name: dict[str, MiniTool],
-    structured: list[StructuredTool],
-    runner: ToolRunner,
-    context: ToolContext,
-    tool_name: str,
-) -> None:
-    if tool_name not in by_name:
-        return
-    tool = by_name[tool_name]
-
-    def run_read_file(
-        path: str,
-        start_line: int | None = None,
-        end_line: int | None = None,
-        max_chars: int | None = None,
-        _tool: MiniTool = tool,
-    ) -> str:
-        args: dict[str, Any] = {"path": path}
-        if start_line is not None:
-            args["start_line"] = start_line
-        if end_line is not None:
-            args["end_line"] = end_line
-        if max_chars is not None:
-            args["max_chars"] = max_chars
-        result = runner.run_tool(_tool, args=args, context=context)
-        return _result_to_json(result)
-
-    structured.append(
-        StructuredTool.from_function(
-            name=tool_name,
-            description=tool.description,
-            func=run_read_file,
-            args_schema=ReadFileArgs,
         )
     )
 
@@ -223,13 +231,18 @@ def _register_read_files_tool(
     tool = by_name["read_files"]
 
     def run_read_files(
-        paths: list[str],
+        path: str | None = None,
+        paths: list[str] | None = None,
         start_line: int | None = None,
         end_line: int | None = None,
         max_chars: int | None = None,
         _tool: MiniTool = tool,
     ) -> str:
-        args: dict[str, Any] = {"paths": paths}
+        args: dict[str, Any] = {}
+        if path is not None:
+            args["path"] = path
+        if paths is not None:
+            args["paths"] = paths
         if start_line is not None:
             args["start_line"] = start_line
         if end_line is not None:
@@ -245,6 +258,41 @@ def _register_read_files_tool(
             description=tool.description,
             func=run_read_files,
             args_schema=ReadFilesArgs,
+        )
+    )
+
+
+def _register_read_pdf_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "read_pdf" not in by_name:
+        return
+    tool = by_name["read_pdf"]
+
+    def run_read_pdf(
+        path: str,
+        pages: list[int] | None = None,
+        max_chars: int | None = None,
+        _tool: MiniTool = tool,
+    ) -> str:
+        args: dict[str, Any] = {"path": path}
+        if pages is not None:
+            args["pages"] = pages
+        if max_chars is not None:
+            args["max_chars"] = max_chars
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="read_pdf",
+            description=tool.description,
+            func=run_read_pdf,
+            args_schema=ReadPdfArgs,
         )
     )
 
@@ -322,6 +370,242 @@ def _register_web_search_tool(
     )
 
 
+def _register_sessions_list_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "sessions_list" not in by_name:
+        return
+    tool = by_name["sessions_list"]
+
+    def run_sessions_list(
+        agent_id: str | None = None,
+        scope: str | None = None,
+        limit: int | None = None,
+        _tool: MiniTool = tool,
+    ) -> str:
+        args: dict[str, Any] = {}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        if scope is not None:
+            args["scope"] = scope
+        if limit is not None:
+            args["limit"] = limit
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="sessions_list",
+            description=tool.description,
+            func=run_sessions_list,
+            args_schema=SessionsListArgs,
+        )
+    )
+
+
+def _register_session_history_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "session_history" not in by_name:
+        return
+    tool = by_name["session_history"]
+
+    def run_session_history(
+        session_id: str,
+        agent_id: str | None = None,
+        archived: bool | None = None,
+        include_live: bool | None = None,
+        max_messages: int | None = None,
+        _tool: MiniTool = tool,
+    ) -> str:
+        args: dict[str, Any] = {"session_id": session_id}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        if archived is not None:
+            args["archived"] = archived
+        if include_live is not None:
+            args["include_live"] = include_live
+        if max_messages is not None:
+            args["max_messages"] = max_messages
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="session_history",
+            description=tool.description,
+            func=run_session_history,
+            args_schema=SessionHistoryArgs,
+        )
+    )
+
+
+def _register_agents_list_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "agents_list" not in by_name:
+        return
+    tool = by_name["agents_list"]
+
+    def run_agents_list(
+        include_stats: bool | None = None, _tool: MiniTool = tool
+    ) -> str:
+        args: dict[str, Any] = {}
+        if include_stats is not None:
+            args["include_stats"] = include_stats
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="agents_list",
+            description=tool.description,
+            func=run_agents_list,
+            args_schema=AgentsListArgs,
+        )
+    )
+
+
+def _register_scheduler_cron_jobs_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "scheduler_cron_jobs" not in by_name:
+        return
+    tool = by_name["scheduler_cron_jobs"]
+
+    def run_scheduler_cron_jobs(
+        agent_id: str | None = None, _tool: MiniTool = tool
+    ) -> str:
+        args: dict[str, Any] = {}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="scheduler_cron_jobs",
+            description=tool.description,
+            func=run_scheduler_cron_jobs,
+            args_schema=SchedulerAgentArgs,
+        )
+    )
+
+
+def _register_scheduler_cron_runs_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "scheduler_cron_runs" not in by_name:
+        return
+    tool = by_name["scheduler_cron_runs"]
+
+    def run_scheduler_cron_runs(
+        agent_id: str | None = None,
+        limit: int | None = None,
+        _tool: MiniTool = tool,
+    ) -> str:
+        args: dict[str, Any] = {}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        if limit is not None:
+            args["limit"] = limit
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="scheduler_cron_runs",
+            description=tool.description,
+            func=run_scheduler_cron_runs,
+            args_schema=SchedulerRunsArgs,
+        )
+    )
+
+
+def _register_scheduler_heartbeat_status_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "scheduler_heartbeat_status" not in by_name:
+        return
+    tool = by_name["scheduler_heartbeat_status"]
+
+    def run_scheduler_heartbeat_status(
+        agent_id: str | None = None, _tool: MiniTool = tool
+    ) -> str:
+        args: dict[str, Any] = {}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="scheduler_heartbeat_status",
+            description=tool.description,
+            func=run_scheduler_heartbeat_status,
+            args_schema=SchedulerAgentArgs,
+        )
+    )
+
+
+def _register_scheduler_heartbeat_runs_tool(
+    *,
+    by_name: dict[str, MiniTool],
+    structured: list[StructuredTool],
+    runner: ToolRunner,
+    context: ToolContext,
+) -> None:
+    if "scheduler_heartbeat_runs" not in by_name:
+        return
+    tool = by_name["scheduler_heartbeat_runs"]
+
+    def run_scheduler_heartbeat_runs(
+        agent_id: str | None = None,
+        limit: int | None = None,
+        _tool: MiniTool = tool,
+    ) -> str:
+        args: dict[str, Any] = {}
+        if agent_id is not None:
+            args["agent_id"] = agent_id
+        if limit is not None:
+            args["limit"] = limit
+        result = runner.run_tool(_tool, args=args, context=context)
+        return _result_to_json(result)
+
+    structured.append(
+        StructuredTool.from_function(
+            name="scheduler_heartbeat_runs",
+            description=tool.description,
+            func=run_scheduler_heartbeat_runs,
+            args_schema=SchedulerRunsArgs,
+        )
+    )
+
+
 def _register_apply_patch_tool(
     *,
     by_name: dict[str, MiniTool],
@@ -357,57 +641,45 @@ def build_langchain_tools(
     structured: list[StructuredTool] = []
 
     _register_terminal_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="terminal",
-    )
-    _register_terminal_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="exec",
+        by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_python_tool(
         by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_fetch_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="fetch_url",
-    )
-    _register_fetch_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="web_fetch",
-    )
-    _register_read_file_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="read_file",
-    )
-    _register_read_file_tool(
-        by_name=by_name,
-        structured=structured,
-        runner=runner,
-        context=context,
-        tool_name="read",
+        by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_read_files_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_read_pdf_tool(
         by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_search_knowledge_tool(
         by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_web_search_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_sessions_list_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_session_history_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_agents_list_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_scheduler_cron_jobs_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_scheduler_cron_runs_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_scheduler_heartbeat_status_tool(
+        by_name=by_name, structured=structured, runner=runner, context=context
+    )
+    _register_scheduler_heartbeat_runs_tool(
         by_name=by_name, structured=structured, runner=runner, context=context
     )
     _register_apply_patch_tool(

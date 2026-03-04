@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -17,14 +18,82 @@ from tools.langchain_tools import build_langchain_tools
 from tools.web_search_tool import WebSearchTool
 
 
+def _write_session(path: Path, title: str, messages: list[dict[str, Any]]) -> None:
+    now = time.time()
+    payload = {
+        "title": title,
+        "created_at": now,
+        "updated_at": now,
+        "compressed_context": "",
+        "messages": messages,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def _seed_workspace(root: Path) -> None:
-    (root / "memory").mkdir(parents=True, exist_ok=True)
-    (root / "knowledge").mkdir(parents=True, exist_ok=True)
-    (root / "storage").mkdir(parents=True, exist_ok=True)
+    for rel in [
+        "workspace",
+        "memory",
+        "knowledge",
+        "storage",
+        "sessions",
+        "sessions/archived_sessions",
+        "workspaces/elon/workspace",
+        "workspaces/elon/sessions",
+        "workspaces/elon/sessions/archived_sessions",
+    ]:
+        (root / rel).mkdir(parents=True, exist_ok=True)
+
     (root / "memory" / "MEMORY.md").write_text("memory alpha line\n", encoding="utf-8")
-    (root / "knowledge" / "note.md").write_text(
-        "knowledge alpha beta\n", encoding="utf-8"
+    (root / "knowledge" / "note.md").write_text("knowledge alpha beta\n", encoding="utf-8")
+    (root / "workspace" / "HEARTBEAT.md").write_text("ping heartbeat", encoding="utf-8")
+    (root / "config.json").write_text("{}\n", encoding="utf-8")
+
+    _write_session(
+        root / "sessions" / "sess-alpha.json",
+        "Alpha Session",
+        [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ],
     )
+    _write_session(
+        root / "workspaces" / "elon" / "sessions" / "sess-elon.json",
+        "Elon Session",
+        [{"role": "user", "content": "status?"}],
+    )
+
+    (root / "storage" / "cron_jobs.json").write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "job-1",
+                        "name": "sample",
+                        "schedule_type": "every",
+                        "schedule": "60",
+                        "prompt": "ping",
+                        "enabled": True,
+                        "next_run_ts": time.time(),
+                        "created_at": time.time(),
+                        "updated_at": time.time(),
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "storage" / "cron_runs.jsonl").write_text(
+        json.dumps({"job_id": "job-1", "status": "ok", "duration_ms": 23}) + "\n",
+        encoding="utf-8",
+    )
+    (root / "storage" / "heartbeat_runs.jsonl").write_text(
+        json.dumps({"status": "ok", "duration_ms": 12}) + "\n",
+        encoding="utf-8",
+    )
+
+    (root / "sample.pdf").write_bytes(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
 
 
 class _InvokableTool(Protocol):
@@ -42,7 +111,7 @@ def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniToo
             terminal_chars=5000, fetch_url_chars=5000, read_file_chars=10000
         ),
     )
-    runtime.chat_enabled_tools = ["terminal", "exec"]
+    runtime.chat_enabled_tools = ["terminal"]
     runtime.tool_execution.terminal.sandbox_mode = "unsafe_none"
     runtime.tool_execution.terminal.require_sandbox = False
     runtime.tool_execution.terminal.allowed_command_prefixes = [
@@ -84,15 +153,19 @@ def test_langchain_wrapper_binding_regression(tmp_path, monkeypatch):
 
     invocations = {
         "terminal": {"command": "echo test"},
-        "exec": {"command": "echo test"},
         "python_repl": {"code": "print(1)"},
         "fetch_url": {"url": "https://example.com"},
-        "web_fetch": {"url": "https://example.com"},
-        "read_file": {"path": "memory/MEMORY.md"},
-        "read": {"path": "memory/MEMORY.md"},
-        "read_files": {"paths": ["memory/MEMORY.md"]},
+        "read_files": {"path": "memory/MEMORY.md"},
+        "read_pdf": {"path": "sample.pdf"},
         "search_knowledge_base": {"query": "alpha"},
         "web_search": {"query": "alpha"},
+        "sessions_list": {"scope": "all"},
+        "session_history": {"session_id": "sess-alpha"},
+        "agents_list": {},
+        "scheduler_cron_jobs": {},
+        "scheduler_cron_runs": {},
+        "scheduler_heartbeat_status": {},
+        "scheduler_heartbeat_runs": {},
         "apply_patch": {"input": "--- x\n+++ x\n@@ -0,0 +1 @@\n+x\n"},
     }
 
@@ -101,92 +174,97 @@ def test_langchain_wrapper_binding_regression(tmp_path, monkeypatch):
         assert result["meta"]["tool_name"] == name
 
 
+def test_removed_aliases_are_not_registered(tmp_path):
+    _seed_workspace(tmp_path)
+    tool_map, _ = _build_tool_map(tmp_path)
+    assert "exec" not in tool_map
+    assert "web_fetch" not in tool_map
+    assert "read_file" not in tool_map
+    assert "read" not in tool_map
+
+
 def test_langchain_integration_calls_correct_tools(tmp_path):
     _seed_workspace(tmp_path)
     tool_map, _ = _build_tool_map(tmp_path)
 
-    read_result = _parse_result(tool_map["read_file"].invoke({"path": "memory/MEMORY.md"}))  # type: ignore[call-arg]
+    read_result = _parse_result(tool_map["read_files"].invoke({"path": "memory/MEMORY.md"}))  # type: ignore[call-arg]
     terminal_result = _parse_result(tool_map["terminal"].invoke({"command": "echo hi"}))  # type: ignore[call-arg]
     search_result = _parse_result(tool_map["search_knowledge_base"].invoke({"query": "alpha"}))  # type: ignore[call-arg]
 
     assert read_result["ok"] is True
-    assert read_result["meta"]["tool_name"] == "read_file"
+    assert read_result["meta"]["tool_name"] == "read_files"
     assert terminal_result["ok"] is True
     assert terminal_result["meta"]["tool_name"] == "terminal"
     assert search_result["meta"]["tool_name"] == "search_knowledge_base"
 
 
-def test_alias_parity_exec_read_and_web_fetch(tmp_path, monkeypatch):
+def test_read_files_single_and_multi_path_modes(tmp_path):
     _seed_workspace(tmp_path)
     tool_map, _ = _build_tool_map(tmp_path)
 
-    class _FakeResponse:
-        status = 200
-        headers = {"Content-Type": "text/html; charset=utf-8"}
-
-        def __init__(self) -> None:
-            self._sent = False
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            _ = exc_type, exc, tb
-            return None
-
-        def read(self, n=0) -> bytes:  # noqa: ARG002
-            if self._sent:
-                return b""
-            self._sent = True
-            return b"<html><body><h1>Title</h1><p>Hello</p></body></html>"
-
-        def geturl(self) -> str:
-            return "https://example.com"
-
-    import tools.fetch_url_tool as fetch_module
-
-    class _FakeOpener:
-        def open(self, request, timeout=0):  # noqa: D401
-            _ = request, timeout
-            return _FakeResponse()
-
-    monkeypatch.setattr(fetch_module, "build_opener", lambda *args, **kwargs: _FakeOpener())  # type: ignore[no-untyped-call]
-
-    command = "python3 -c \"print('a:b')\""
-    terminal_result = _parse_result(tool_map["terminal"].invoke({"command": command}))  # type: ignore[call-arg]
-    exec_result = _parse_result(tool_map["exec"].invoke({"command": command}))  # type: ignore[call-arg]
-    assert terminal_result["ok"] is True
-    assert exec_result["ok"] is True
-    assert "a:b" in terminal_result["data"]["combined"]
-    assert terminal_result["data"]["combined"] == exec_result["data"]["combined"]
-
-    read_file_result = _parse_result(tool_map["read_file"].invoke({"path": "memory/MEMORY.md"}))  # type: ignore[call-arg]
-    read_result = _parse_result(tool_map["read"].invoke({"path": "memory/MEMORY.md"}))  # type: ignore[call-arg]
-    assert read_file_result["data"]["content"] == read_result["data"]["content"]
-
-    fetch_result = _parse_result(tool_map["fetch_url"].invoke({"url": "https://example.com"}))  # type: ignore[call-arg]
-    web_fetch_result = _parse_result(tool_map["web_fetch"].invoke({"url": "https://example.com"}))  # type: ignore[call-arg]
-    assert fetch_result["data"]["content"] == web_fetch_result["data"]["content"]
-    assert fetch_result["data"]["extract_mode"] == "markdown"
-    assert web_fetch_result["data"]["extract_mode"] == "markdown"
-
-
-def test_read_files_partial_failure(tmp_path):
-    _seed_workspace(tmp_path)
-    tool_map, _ = _build_tool_map(tmp_path)
-
-    result = _parse_result(
-        tool_map["read_files"].invoke({"paths": ["memory/MEMORY.md", "../etc/passwd"]})  # type: ignore[call-arg]
+    single = _parse_result(
+        tool_map["read_files"].invoke({"path": "memory/MEMORY.md"})  # type: ignore[call-arg]
     )
-    assert result["ok"] is True
-    assert result["data"]["partial"] is True
-    rows = result["data"]["results"]
+    assert single["ok"] is True
+    assert single["data"]["results"][0]["ok"] is True
+
+    multi = _parse_result(
+        tool_map["read_files"].invoke(  # type: ignore[call-arg]
+            {"paths": ["memory/MEMORY.md", "../etc/passwd"]}
+        )
+    )
+    assert multi["ok"] is True
+    assert multi["data"]["partial"] is True
+    rows = multi["data"]["results"]
     assert rows[0]["ok"] is True
     assert rows[1]["ok"] is False
     assert rows[1]["error"]["code"] == "E_INVALID_PATH"
 
 
-def test_web_fetch_extract_mode_matrix(tmp_path, monkeypatch):
+def test_management_tools_return_workspace_state(tmp_path):
+    _seed_workspace(tmp_path)
+    tool_map, _ = _build_tool_map(tmp_path)
+
+    sessions = _parse_result(
+        tool_map["sessions_list"].invoke({"scope": "all"})  # type: ignore[call-arg]
+    )
+    assert sessions["ok"] is True
+    assert sessions["data"]["count"] >= 1
+
+    history = _parse_result(
+        tool_map["session_history"].invoke({"session_id": "sess-alpha"})  # type: ignore[call-arg]
+    )
+    assert history["ok"] is True
+    assert history["data"]["message_count"] >= 1
+
+    agents = _parse_result(tool_map["agents_list"].invoke({}))  # type: ignore[call-arg]
+    assert agents["ok"] is True
+    assert agents["data"]["count"] >= 1
+
+    cron_jobs = _parse_result(
+        tool_map["scheduler_cron_jobs"].invoke({})  # type: ignore[call-arg]
+    )
+    assert cron_jobs["ok"] is True
+    assert cron_jobs["data"]["count"] >= 1
+
+    cron_runs = _parse_result(
+        tool_map["scheduler_cron_runs"].invoke({"limit": 10})  # type: ignore[call-arg]
+    )
+    assert cron_runs["ok"] is True
+
+    heartbeat_status = _parse_result(
+        tool_map["scheduler_heartbeat_status"].invoke({})  # type: ignore[call-arg]
+    )
+    assert heartbeat_status["ok"] is True
+    assert "config" in heartbeat_status["data"]
+
+    heartbeat_runs = _parse_result(
+        tool_map["scheduler_heartbeat_runs"].invoke({"limit": 10})  # type: ignore[call-arg]
+    )
+    assert heartbeat_runs["ok"] is True
+
+
+def test_fetch_url_extract_mode_matrix(tmp_path, monkeypatch):
     _seed_workspace(tmp_path)
     context = ToolContext(workspace_root=tmp_path, trigger_type="chat")
     tool = FetchUrlTool(timeout_seconds=2, output_char_limit=200)

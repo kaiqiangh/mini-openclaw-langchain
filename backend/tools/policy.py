@@ -25,7 +25,7 @@ DEFAULT_MAX_LEVEL_BY_TRIGGER: dict[str, PermissionLevel] = {
 }
 
 AUTONOMOUS_TRIGGERS = {"heartbeat", "cron"}
-CHAT_HIGH_RISK_TOOLS = {"terminal", "exec"}
+CHAT_HIGH_RISK_TOOLS = {"terminal"}
 
 
 class ToolPolicyEngine:

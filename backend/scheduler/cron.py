@@ -24,7 +24,7 @@ CRON_EXECUTION_SUFFIX = """
 [Scheduled Execution Rules]
 - Execute the user job prompt directly.
 - If the task needs current external data (prices, markets, weather, news, status), use available tools first.
-- Prefer `web_search`, then `web_fetch`/`fetch_url` to verify key facts from sources.
+- Prefer `web_search`, then `fetch_url` to verify key facts from sources.
 - For external facts, include source URLs and retrieval timestamp in your final answer.
 - If a required tool fails, state that explicitly and continue with the best verified fallback.
 """.strip()

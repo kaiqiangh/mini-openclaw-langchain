@@ -112,7 +112,7 @@ def test_cron_run_uses_tool_aware_prompt(client, api_app):
     run_now = client.post(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}/run")
     assert run_now.status_code == 200
     assert "web_search" in captured["message"]
-    assert "web_fetch" in captured["message"]
+    assert "fetch_url" in captured["message"]
 
 
 def test_scheduler_metrics_endpoints(client):

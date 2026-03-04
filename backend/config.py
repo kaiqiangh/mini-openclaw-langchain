@@ -139,12 +139,17 @@ DEFAULT_CHAT_ENABLED_TOOLS: tuple[str, ...] = ()
 DEFAULT_HEARTBEAT_ENABLED_TOOLS: tuple[str, ...] = ()
 DEFAULT_CRON_ENABLED_TOOLS: tuple[str, ...] = (
     "web_search",
-    "web_fetch",
     "fetch_url",
-    "read",
-    "read_file",
     "read_files",
+    "read_pdf",
     "search_knowledge_base",
+    "sessions_list",
+    "session_history",
+    "agents_list",
+    "scheduler_cron_jobs",
+    "scheduler_cron_runs",
+    "scheduler_heartbeat_status",
+    "scheduler_heartbeat_runs",
 )
 
 

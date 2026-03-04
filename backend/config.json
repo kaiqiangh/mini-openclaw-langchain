@@ -67,12 +67,17 @@
     "heartbeat_enabled_tools": [],
     "cron_enabled_tools": [
       "web_search",
-      "web_fetch",
       "fetch_url",
-      "read",
-      "read_file",
       "read_files",
-      "search_knowledge_base"
+      "read_pdf",
+      "search_knowledge_base",
+      "sessions_list",
+      "session_history",
+      "agents_list",
+      "scheduler_cron_jobs",
+      "scheduler_cron_runs",
+      "scheduler_heartbeat_status",
+      "scheduler_heartbeat_runs"
     ]
   },
   "scheduler": {
