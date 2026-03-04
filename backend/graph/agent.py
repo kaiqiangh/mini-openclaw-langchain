@@ -204,6 +204,17 @@ class AgentManager:
 
         return model
 
+    @staticmethod
+    def _is_max_steps_error(exc: Exception) -> bool:
+        text = str(exc).strip().lower()
+        if not text:
+            return False
+        return (
+            "recursion limit" in text
+            or "max steps" in text
+            or "max_steps" in text
+        )
+
     def _require_initialized(self) -> tuple[Path, Path]:
         if self.base_dir is None or self.workspaces_dir is None:
             raise RuntimeError("AgentManager is not initialized")
@@ -1321,10 +1332,16 @@ class AgentManager:
                 if attempt < effective_runtime.agent_runtime.max_retries:
                     await asyncio.sleep(0.5 * (2**attempt))
                     continue
+                error_code = (
+                    "max_steps_reached"
+                    if self._is_max_steps_error(exc)
+                    else "stream_failed"
+                )
                 yield {
                     "type": "error",
                     "data": {
                         "error": str(exc),
+                        "code": error_code,
                         "run_id": run_id,
                         "attempt": attempt + 1,
                     },

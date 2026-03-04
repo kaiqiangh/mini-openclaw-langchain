@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str = Field(min_length=1)
     stream: bool = True
+    resume_same_turn: bool = False
 
 
 @dataclass
@@ -31,6 +32,7 @@ class _StreamRunState:
     session_id: str
     message: str
     is_first_turn: bool
+    resume_same_turn: bool = False
     subscribers: set[asyncio.Queue[dict[str, str] | None]] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     task: asyncio.Task[None] | None = None
@@ -208,16 +210,18 @@ async def _run_stream_task(
 
     try:
         # Persist user input immediately so generation can continue independently of client SSE.
-        session_manager.save_message(state.session_id, "user", state.message)
-        if runtime.audit_store is not None:
-            runtime.audit_store.append_message_link(
-                run_id=None,
-                session_id=state.session_id,
-                role="user",
-                segment_index=0,
-                content=state.message,
-                details={"source": "chat_persist"},
-            )
+        # Resume mode reuses an already-persisted turn and must not duplicate the user message.
+        if not state.resume_same_turn:
+            session_manager.save_message(state.session_id, "user", state.message)
+            if runtime.audit_store is not None:
+                runtime.audit_store.append_message_link(
+                    run_id=None,
+                    session_id=state.session_id,
+                    role="user",
+                    segment_index=0,
+                    content=state.message,
+                    details={"source": "chat_persist"},
+                )
 
         async for event in agent.astream(
             message=state.message,
@@ -341,6 +345,13 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
     session = session_manager.load_session(request.session_id)
     is_first_turn = len(session.get("messages", [])) == 0
     history = session_manager.load_session_for_agent(request.session_id)
+    if request.resume_same_turn and history:
+        last = history[-1]
+        if (
+            str(last.get("role", "")).strip() == "user"
+            and str(last.get("content", "")).strip() == request.message.strip()
+        ):
+            history = history[:-1]
 
     if not request.stream:
         result = await agent.run_once(
@@ -393,6 +404,7 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
                 session_id=request.session_id,
                 message=request.message,
                 is_first_turn=is_first_turn,
+                resume_same_turn=bool(request.resume_same_turn),
                 lock_owner=lock_owner,
             )
             _active_runs[key] = state
