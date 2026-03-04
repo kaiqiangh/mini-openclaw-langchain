@@ -25,6 +25,143 @@ flowchart TB
   API --> SCH["CronScheduler + HeartbeatScheduler"]
 ```
 
+## Agent Loop Architecture
+
+The backend keeps one public orchestrator (`AgentManager`) and now separates
+loop concerns into dedicated graph modules:
+
+- `graph/retrieval_orchestrator.py`
+- `graph/tool_orchestrator.py`
+- `graph/usage_orchestrator.py`
+- `graph/stream_orchestrator.py`
+- `graph/agent_loop_types.py`
+
+This separation is structural only; request/response and stream behavior are unchanged.
+
+### Loop Module Responsibilities
+
+| Module                      | Responsibility                                                                          | Side Effects                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `retrieval_orchestrator.py` | Decide whether RAG is active and build retrieval envelope (`results`, `rag_context`).   | None (pure orchestration around `MemoryIndexer`).               |
+| `tool_orchestrator.py`      | Build policy-filtered LangChain tools and create loop agent (`create_agent`).           | Creates tool runner and may switch to tool-loop model override. |
+| `stream_orchestrator.py`    | Token/reasoning extraction and incremental token diff logic for stream updates.         | None (pure content parsing helpers).                            |
+| `usage_orchestrator.py`     | Normalize usage payloads, dedupe by source, compute signatures, and persist usage rows. | Writes to `UsageStore` when usage is finalized.                 |
+| `agent_loop_types.py`       | Typed state containers for streaming and retrieval stages.                              | None.                                                           |
+
+### Run-Once Loop (`AgentManager.run_once`)
+
+1. **Resolve runtime and model profile**
+
+- Load agent-effective runtime config (global + workspace config).
+- Resolve active LLM profile and instantiate/reuse `ChatOpenAI`.
+
+2. **Build retrieval envelope**
+
+- `RetrievalOrchestrator.build_envelope(...)` checks `runtime.rag_mode`.
+- If enabled, run memory retrieval through `MemoryIndexer.retrieve(...)`.
+- Build transient request context in this exact format:
+  - `"[Memory Retrieval Results]\n- (score) text ..."`
+
+3. **Build prompt + message list**
+
+- `PromptBuilder` assembles system prompt from workspace files.
+- Conversation history is converted into LangChain messages.
+- Retrieval context (if any) is appended as a system message.
+
+4. **Build tool-enabled agent**
+
+- `ToolOrchestrator.build_agent(...)` wires:
+  - available mini tools
+  - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
+  - tool runner with retry-guard
+  - LangChain structured tools
+- Tool-loop model override logic is preserved (`TOOL_LOOP_MODEL*`).
+
+5. **Execute agent**
+
+- Invoke with recursion limit and callbacks.
+- Callback stack includes internal audit + usage capture + optional tracing callbacks.
+
+6. **Aggregate and persist usage**
+
+- `UsageOrchestrator` normalizes callback usage payloads, dedupes repeated message IDs,
+  computes prices, and writes `UsageStore` records.
+- Response payload is unchanged (`text` or `structured_response` + `messages` + `usage`).
+
+### Streaming Loop (`AgentManager.astream`)
+
+The stream path follows the same build stages and then emits SSE-aligned events:
+
+- `run_start`
+- `agent_update`
+- `retrieval` (when RAG is enabled)
+- `tool_start`
+- `tool_end`
+- `reasoning`
+- `token`
+- `new_response`
+- `usage`
+- `done`
+- `error`
+
+`stream_orchestrator` utilities preserve token extraction, incremental diffing, and
+reasoning extraction logic so event ordering/content remains stable.
+
+`StreamLoopState` keeps stream-only mutable state isolated from orchestration steps:
+
+- `pending_new_response`: flips true when a tool result finishes and a new model segment should begin.
+- `final_tokens`: linear token buffer used to assemble final `done.content`.
+- `fallback_final_text`: model-update fallback when message token stream is absent.
+- `token_source`: tracks `messages` vs `updates` for deterministic stream metadata.
+- `latest_model_snapshot`: previous update snapshot for incremental token diff.
+- `emitted_reasoning`: dedupe set for reasoning snippets.
+- `emitted_agent_update`: ensures at least one model progress event is emitted.
+
+### Tool Calling Flow
+
+1. Agent chooses tool call in the model node.
+2. Tool call is routed through `ToolRunner`.
+3. Policy checks and retry-guard are enforced before execution.
+4. Tool outputs are emitted into stream events and fed back into the agent loop.
+5. Audit callbacks capture tool start/end and associate them with `run_id`/`session_id`.
+
+### Memory, Embeddings, and Retrieval Flow
+
+`MemoryIndexer` handles retrieval for `memory/MEMORY.md`:
+
+1. Resolve retrieval runtime settings (`top_k`, chunking, blend weights).
+2. Resolve storage engine:
+
+- SQLite (default) with FTS prefilter and vector similarity.
+- JSON fallback maintained for compatibility/migration safety.
+
+3. Generate query embedding (if embedding credentials/provider are available).
+4. Retrieve chunks and blend lexical + semantic scores.
+5. Return ranked retrieval rows consumed by the agent loop.
+
+Embedding behavior:
+
+- Provider/model come from runtime/global config and environment keys.
+- If embedding calls fail, query embedding becomes empty and retrieval continues with
+  lexical scoring (no agent-loop crash).
+
+### Observability and Accounting
+
+- `AuditCallbackHandler`: run/step/tool/message-link audit files.
+- `UsageCaptureCallbackHandler`: captures per-call model usage payloads.
+- `UsageOrchestrator`: dedupe + normalize + compute cost + persist usage row.
+- Optional external tracing callbacks are attached when tracing is enabled.
+
+### Behavior-Parity Guarantee for This Refactor
+
+This architecture cleanup does not change:
+
+- API contracts or route shapes.
+- Chat/session persistence behavior.
+- SSE event names/order semantics.
+- Tool gating and policy enforcement points.
+- Usage normalization and pricing semantics.
+
 ## Runtime Config Matrix
 
 | Path                                          | Purpose                                     |
