@@ -45,45 +45,61 @@ jobs:
 
       - name: Validate PowerShell CLI smoke checks
         if: matrix.os == 'windows-latest'
-        shell: pwsh
+        shell: pwsh -NoLogo -NoProfile -File {0}
         run: |
-          & pwsh -NoLogo -NoProfile -File .\oml.ps1 help *> oml-help.out
-          if ($LASTEXITCODE -ne 0) {
-            throw "help command failed"
-          }
-          $help = Get-Content .\oml-help.out -Raw
-          if ($help -notmatch 'Usage:' -or $help -notmatch 'oml\.ps1') {
-            throw "help output missing usage"
-          }
-          if ($help -notmatch 'start \[all\|backend\|frontend\]') {
-            throw "help output missing start command"
+          $ErrorActionPreference = 'Stop'
+
+          function Invoke-Oml {
+            param(
+              [Parameter(Mandatory = $true)][string]$OutFile,
+              [Parameter(ValueFromRemainingArguments = $true)][string[]]$Args
+            )
+
+            & pwsh -NoLogo -NoProfile -File .\oml.ps1 @Args *> $OutFile
+            $code = $LASTEXITCODE
+            $text = Get-Content $OutFile -Raw
+            return [pscustomobject]@{
+              Code = $code
+              Text = $text
+              OutFile = $OutFile
+              Args = $Args
+            }
           }
 
-          & pwsh -NoLogo -NoProfile -File .\oml.ps1 version *> oml-version.out
-          if ($LASTEXITCODE -ne 0) {
-            throw "version command failed"
+          $r = Invoke-Oml -OutFile 'oml-help.out' help
+          if ($r.Code -ne 0) {
+            throw "help command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
           }
-          $version = Get-Content .\oml-version.out -Raw
-          if ($version -notmatch 'oml:') {
-            throw "version output missing oml version"
+          if ($r.Text -notmatch 'Usage:' -or $r.Text -notmatch 'oml\.ps1') {
+            throw "help output missing usage`n$($r.Text)"
           }
-          if ($version -notmatch 'backend_api:') {
-            throw "version output missing backend version"
-          }
-          if ($version -notmatch 'frontend:') {
-            throw "version output missing frontend version"
+          if ($r.Text -notmatch 'start \[all\|backend\|frontend\]') {
+            throw "help output missing start command`n$($r.Text)"
           }
 
-          & pwsh -NoLogo -NoProfile -File .\oml.ps1 ports *> oml-ports.out
-          if ($LASTEXITCODE -ne 0) {
-            throw "ports command failed"
+          $r = Invoke-Oml -OutFile 'oml-version.out' version
+          if ($r.Code -ne 0) {
+            throw "version command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
+          }
+          if ($r.Text -notmatch 'oml:') {
+            throw "version output missing oml version`n$($r.Text)"
+          }
+          if ($r.Text -notmatch 'backend_api:') {
+            throw "version output missing backend version`n$($r.Text)"
+          }
+          if ($r.Text -notmatch 'frontend:') {
+            throw "version output missing frontend version`n$($r.Text)"
           }
 
-          & pwsh -NoLogo -NoProfile -File .\oml.ps1 does-not-exist *> oml-invalid.out
-          if ($LASTEXITCODE -eq 0) {
-            throw "invalid command unexpectedly succeeded"
+          $r = Invoke-Oml -OutFile 'oml-ports.out' ports
+          if ($r.Code -ne 0) {
+            throw "ports command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
           }
-          $invalid = Get-Content .\oml-invalid.out -Raw
-          if ($invalid -notmatch 'Unknown command') {
-            throw "invalid command output missing expected message"
+
+          $r = Invoke-Oml -OutFile 'oml-invalid.out' does-not-exist
+          if ($r.Code -eq 0) {
+            throw "invalid command unexpectedly succeeded`n$($r.Text)"
+          }
+          if ($r.Text -notmatch 'Unknown command') {
+            throw "invalid command output missing expected message`n$($r.Text)"
           }
