@@ -48,6 +48,18 @@ jobs:
         shell: pwsh -NoLogo -NoProfile -File {0}
         run: |
           $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          function Assert-ParseOk([string]$Path) {
+            $resolved = (Resolve-Path $Path).Path
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($resolved, [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $details = ($errors | ForEach-Object { "$($_.Extent.File):$($_.Extent.StartLineNumber):$($_.Message)" }) -join "`n"
+              throw "parse check failed for $resolved`n$details"
+            }
+          }
 
           function Invoke-Oml {
             param(
@@ -55,9 +67,11 @@ jobs:
               [Parameter(ValueFromRemainingArguments = $true)][string[]]$Args
             )
 
-            & pwsh -NoLogo -NoProfile -File .\oml.ps1 @Args *> $OutFile
+            $allOutput = & pwsh -NoLogo -NoProfile -File .\oml.ps1 @Args 2>&1
             $code = $LASTEXITCODE
-            $text = Get-Content $OutFile -Raw
+            $text = if ($null -eq $allOutput) { '' } else { ($allOutput | Out-String).TrimEnd() }
+            Set-Content -Path $OutFile -Value $text
+
             return [pscustomobject]@{
               Code = $code
               Text = $text
@@ -65,6 +79,9 @@ jobs:
               Args = $Args
             }
           }
+
+          Assert-ParseOk '.\oml.ps1'
+          Assert-ParseOk '.\cli\oml\cli.ps1'
 
           $r = Invoke-Oml -OutFile 'oml-help.out' help
           if ($r.Code -ne 0) {
