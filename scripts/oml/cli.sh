@@ -11,11 +11,13 @@ RUN_DIR="$STATE_DIR/run"
 LOG_DIR="$STATE_DIR/log"
 CONFIG_ENV="$STATE_DIR/config.env"
 
-OML_BACKEND_HOST=""
-OML_BACKEND_PORT=""
-OML_FRONTEND_HOST=""
-OML_FRONTEND_PORT=""
-OML_HEALTH_TIMEOUT_SECONDS=""
+OML_BACKEND_HOST="${OML_BACKEND_HOST-}"
+OML_BACKEND_PORT="${OML_BACKEND_PORT-}"
+OML_FRONTEND_HOST="${OML_FRONTEND_HOST-}"
+OML_FRONTEND_PORT="${OML_FRONTEND_PORT-}"
+OML_HEALTH_TIMEOUT_SECONDS="${OML_HEALTH_TIMEOUT_SECONDS-}"
+OML_ENABLE_FRONTEND_PROXY="${OML_ENABLE_FRONTEND_PROXY-}"
+OML_FRONTEND_PROXY_URL="${OML_FRONTEND_PROXY_URL-}"
 
 info() {
   printf '[oml] %s\n' "$*"
@@ -38,18 +40,44 @@ is_integer() {
   [[ "$1" =~ ^[0-9]+$ ]]
 }
 
+normalize_proxy_mode() {
+  local raw="${1:-}"
+  local normalized
+  normalized="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    1|true|yes|on)
+      printf '%s' "true"
+      ;;
+    0|false|no|off)
+      printf '%s' "false"
+      ;;
+    inherit)
+      printf '%s' "inherit"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 load_config_env() {
   local env_backend_host="${OML_BACKEND_HOST-}"
   local env_backend_port="${OML_BACKEND_PORT-}"
   local env_frontend_host="${OML_FRONTEND_HOST-}"
   local env_frontend_port="${OML_FRONTEND_PORT-}"
   local env_health_timeout="${OML_HEALTH_TIMEOUT_SECONDS-}"
+  local env_enable_frontend_proxy="${OML_ENABLE_FRONTEND_PROXY-}"
+  local env_frontend_proxy_url="${OML_FRONTEND_PROXY_URL-}"
+  local env_backend_cmd="${OML_BACKEND_CMD-}"
+  local env_frontend_cmd="${OML_FRONTEND_CMD-}"
 
   OML_BACKEND_HOST="127.0.0.1"
   OML_BACKEND_PORT="8000"
   OML_FRONTEND_HOST="127.0.0.1"
   OML_FRONTEND_PORT="3000"
   OML_HEALTH_TIMEOUT_SECONDS="30"
+  OML_ENABLE_FRONTEND_PROXY="true"
+  OML_FRONTEND_PROXY_URL=""
 
   if [ -f "$CONFIG_ENV" ]; then
     # shellcheck disable=SC1090
@@ -71,6 +99,18 @@ load_config_env() {
   if [ -n "$env_health_timeout" ]; then
     OML_HEALTH_TIMEOUT_SECONDS="$env_health_timeout"
   fi
+  if [ -n "$env_enable_frontend_proxy" ]; then
+    OML_ENABLE_FRONTEND_PROXY="$env_enable_frontend_proxy"
+  fi
+  if [ -n "$env_frontend_proxy_url" ]; then
+    OML_FRONTEND_PROXY_URL="$env_frontend_proxy_url"
+  fi
+  if [ -n "$env_backend_cmd" ]; then
+    OML_BACKEND_CMD="$env_backend_cmd"
+  fi
+  if [ -n "$env_frontend_cmd" ]; then
+    OML_FRONTEND_CMD="$env_frontend_cmd"
+  fi
 
   if ! is_integer "$OML_BACKEND_PORT"; then
     error "OML_BACKEND_PORT must be an integer"
@@ -85,7 +125,16 @@ load_config_env() {
     exit 1
   fi
 
-  export OML_BACKEND_HOST OML_BACKEND_PORT OML_FRONTEND_HOST OML_FRONTEND_PORT OML_HEALTH_TIMEOUT_SECONDS
+  if ! OML_ENABLE_FRONTEND_PROXY="$(normalize_proxy_mode "$OML_ENABLE_FRONTEND_PROXY")"; then
+    error "OML_ENABLE_FRONTEND_PROXY must be true, false, or inherit"
+    exit 1
+  fi
+
+  if [ -z "$OML_FRONTEND_PROXY_URL" ]; then
+    OML_FRONTEND_PROXY_URL="http://$OML_FRONTEND_HOST:$OML_FRONTEND_PORT"
+  fi
+
+  export OML_BACKEND_HOST OML_BACKEND_PORT OML_FRONTEND_HOST OML_FRONTEND_PORT OML_HEALTH_TIMEOUT_SECONDS OML_ENABLE_FRONTEND_PROXY OML_FRONTEND_PROXY_URL
 }
 
 pid_file_for() {
@@ -250,11 +299,25 @@ assert_target() {
 }
 
 backend_command() {
+  local proxy_prefix=""
   if [ -n "${OML_BACKEND_CMD:-}" ]; then
     printf '%s' "$OML_BACKEND_CMD"
     return
   fi
-  printf '%s' "cd '$REPO_ROOT/backend' && APP_ENABLE_FRONTEND_PROXY='true' APP_FRONTEND_PROXY_URL='http://$OML_FRONTEND_HOST:$OML_FRONTEND_PORT' exec uv run --python .venv/bin/python uvicorn app:app --host '$OML_BACKEND_HOST' --port '$OML_BACKEND_PORT'"
+
+  case "$OML_ENABLE_FRONTEND_PROXY" in
+    true)
+      proxy_prefix="APP_ENABLE_FRONTEND_PROXY='true' APP_FRONTEND_PROXY_URL='$OML_FRONTEND_PROXY_URL' "
+      ;;
+    false)
+      proxy_prefix="APP_ENABLE_FRONTEND_PROXY='false' "
+      ;;
+    inherit)
+      proxy_prefix=""
+      ;;
+  esac
+
+  printf '%s' "cd '$REPO_ROOT/backend' && ${proxy_prefix}exec uv run --python .venv/bin/python uvicorn app:app --host '$OML_BACKEND_HOST' --port '$OML_BACKEND_PORT'"
 }
 
 frontend_command() {
@@ -383,6 +446,11 @@ Runtime state:
   .oml/run/*.pid               Managed process IDs
   .oml/log/*.log               Service logs
   .oml/config.env              Optional overrides
+
+Proxy defaults:
+  OML_ENABLE_FRONTEND_PROXY=true
+  OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
+  OML_ENABLE_FRONTEND_PROXY=inherit lets backend/.env control APP_ENABLE_FRONTEND_PROXY
 
 Examples:
   ./oml start
@@ -618,8 +686,16 @@ cmd_logs() {
 }
 
 cmd_ports() {
-  printf 'backend_url: http://%s:%s/api/v1/health\n' "$OML_BACKEND_HOST" "$OML_BACKEND_PORT"
-  printf 'frontend_url: http://%s:%s\n' "$OML_FRONTEND_HOST" "$OML_FRONTEND_PORT"
+  local manual_dev_proxy_target="${NEXT_DEV_API_PROXY_URL:-http://127.0.0.1:8000}"
+  printf 'backend_health_url: http://%s:%s/api/v1/health\n' "$OML_BACKEND_HOST" "$OML_BACKEND_PORT"
+  printf 'frontend_dev_url: http://%s:%s\n' "$OML_FRONTEND_HOST" "$OML_FRONTEND_PORT"
+  printf 'manual_dev_api_proxy_url: %s/api/v1\n' "${manual_dev_proxy_target%/}"
+  printf 'backend_frontend_proxy_mode: %s\n' "$OML_ENABLE_FRONTEND_PROXY"
+  if [ "$OML_ENABLE_FRONTEND_PROXY" = "inherit" ]; then
+    printf 'backend_frontend_proxy_url: inherited from backend env\n'
+    return
+  fi
+  printf 'backend_frontend_proxy_url: %s\n' "$OML_FRONTEND_PROXY_URL"
 }
 
 cmd_update() {
@@ -678,6 +754,12 @@ cmd_doctor() {
   else
     printf '  [fail] backend/.env missing\n'
     critical=1
+  fi
+
+  if [ "$OML_ENABLE_FRONTEND_PROXY" = "inherit" ]; then
+    printf '  [ok]   frontend proxy mode inherited from backend env\n'
+  else
+    printf '  [ok]   frontend proxy mode %s (%s)\n' "$OML_ENABLE_FRONTEND_PROXY" "$OML_FRONTEND_PROXY_URL"
   fi
 
   if is_service_running backend; then
