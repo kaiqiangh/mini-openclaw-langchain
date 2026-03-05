@@ -96,7 +96,7 @@
     "enabled": true,
     "poll_interval_seconds": 20,
     "timezone": "UTC",
-    "max_failures": 8,
+    "max_failures": 2,
     "retry_base_seconds": 30,
     "retry_max_seconds": 3600,
     "failure_retention": 200
