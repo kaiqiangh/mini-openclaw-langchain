@@ -5,8 +5,8 @@ on:
     paths:
       - 'oml'
       - 'oml.ps1'
-      - 'scripts/oml/**'
-      - 'scripts/tests/**'
+      - 'cli/oml/**'
+      - 'cli/tests/**'
       - 'README.md'
       - '.github/workflows/cli-smoke.yml'
   push:
@@ -15,8 +15,8 @@ on:
     paths:
       - 'oml'
       - 'oml.ps1'
-      - 'scripts/oml/**'
-      - 'scripts/tests/**'
+      - 'cli/oml/**'
+      - 'cli/tests/**'
       - 'README.md'
       - '.github/workflows/cli-smoke.yml'
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
 
       - name: Validate POSIX CLI smoke checks
         if: matrix.os != 'windows-latest'
-        run: bash scripts/tests/cli/test_oml_smoke.sh
+        run: bash cli/tests/cli/test_oml_smoke.sh
 
       - name: Validate PowerShell CLI smoke checks
         if: matrix.os == 'windows-latest'

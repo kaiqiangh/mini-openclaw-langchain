@@ -39,7 +39,7 @@ if ! grep -q "Unknown command" /tmp/oml-invalid.out; then
 fi
 
 set +e
-PATH="/usr/bin:/bin" bash "$ROOT_DIR/scripts/oml/cli.sh" doctor >/tmp/oml-doctor-missing-bin.out 2>&1
+PATH="/usr/bin:/bin" bash "$ROOT_DIR/cli/oml/cli.sh" doctor >/tmp/oml-doctor-missing-bin.out 2>&1
 missing_rc=$?
 set -e
 if [ "$missing_rc" -ne 6 ]; then
