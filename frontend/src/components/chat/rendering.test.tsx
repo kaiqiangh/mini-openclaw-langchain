@@ -60,6 +60,7 @@ describe("chat rendering components", () => {
       <ChatMessage
         role="assistant"
         content={markdown}
+        timestampMs={Date.UTC(2026, 2, 5, 12, 34, 56)}
         toolCalls={[]}
         retrievals={[]}
         debugEvents={[]}
@@ -70,6 +71,7 @@ describe("chat rendering components", () => {
     const link = screen.getByRole("link", { name: "Link" });
     expect(link).toHaveAttribute("href", "https://example.com");
     expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
+    expect(screen.getByText(/2026/)).toBeInTheDocument();
     expect(container.querySelector("script")).toBeNull();
   });
 });

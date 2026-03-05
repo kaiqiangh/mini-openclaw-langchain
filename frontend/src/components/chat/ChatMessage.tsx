@@ -26,10 +26,27 @@ const DebugTrace = dynamic(
 type Props = {
   role: "user" | "assistant";
   content: string;
+  timestampMs: number | null;
   toolCalls: ChatToolCall[];
   retrievals: RetrievalItem[];
   debugEvents: ChatDebugEvent[];
 };
+
+const chatTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+function formatTimestamp(timestampMs: number | null): string {
+  if (typeof timestampMs !== "number" || !Number.isFinite(timestampMs)) {
+    return "";
+  }
+  return chatTimestampFormatter.format(new Date(timestampMs));
+}
 
 function CodeBlock({
   inline = false,
@@ -141,10 +158,13 @@ function MarkdownBody({ content }: { content: string }) {
 function ChatMessageComponent({
   role,
   content,
+  timestampMs,
   toolCalls,
   retrievals,
   debugEvents,
 }: Props) {
+  const timestampLabel = formatTimestamp(timestampMs);
+
   return (
     <article
       className={`mb-3 rounded-md border p-3 text-sm sm:p-4 ${
@@ -158,6 +178,14 @@ function ChatMessageComponent({
         <span className="ui-helper ui-mono">
           {role === "assistant" ? "agent-response" : "operator-input"}
         </span>
+        {timestampLabel ? (
+          <time
+            className="ml-auto text-xs text-[var(--muted)]"
+            dateTime={new Date(timestampMs ?? 0).toISOString()}
+          >
+            {timestampLabel}
+          </time>
+        ) : null}
       </div>
       <div className="break-words leading-6 text-[var(--text)]">
         {role === "assistant" ? (

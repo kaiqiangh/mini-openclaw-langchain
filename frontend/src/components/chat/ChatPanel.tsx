@@ -42,6 +42,7 @@ export function ChatPanel() {
           key={msg.id}
           role={msg.role}
           content={msg.content}
+          timestampMs={msg.timestampMs}
           toolCalls={msg.toolCalls}
           retrievals={msg.retrievals}
           debugEvents={msg.debugEvents}

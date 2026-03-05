@@ -168,7 +168,11 @@ class SessionManager:
     ) -> None:
         with self._lock:
             session = self.load_session(session_id)
-            entry: dict[str, Any] = {"role": role, "content": content}
+            entry: dict[str, Any] = {
+                "role": role,
+                "content": content,
+                "timestamp_ms": int(self._now() * 1000),
+            }
             if tool_calls:
                 entry["tool_calls"] = tool_calls
             session.setdefault("messages", []).append(entry)
@@ -184,9 +188,17 @@ class SessionManager:
     ) -> None:
         with self._lock:
             session = self.load_session(session_id)
+            existing = session.get("live_response")
+            existing_ts = 0
+            if isinstance(existing, dict):
+                try:
+                    existing_ts = int(existing.get("timestamp_ms", 0))
+                except Exception:
+                    existing_ts = 0
             payload: dict[str, Any] = {
                 "run_id": run_id,
                 "content": content,
+                "timestamp_ms": existing_ts or int(self._now() * 1000),
                 "updated_at": self._now(),
             }
             if tool_calls:
@@ -223,6 +235,9 @@ class SessionManager:
             "content": content,
             "streaming": True,
         }
+        timestamp_ms = live.get("timestamp_ms")
+        if timestamp_ms is not None:
+            entry["timestamp_ms"] = timestamp_ms
         if isinstance(tool_calls, list) and tool_calls:
             entry["tool_calls"] = tool_calls
         run_id = str(live.get("run_id", "")).strip()

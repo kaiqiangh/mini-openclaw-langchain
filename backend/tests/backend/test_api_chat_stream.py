@@ -50,6 +50,7 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
     assert history[0]["role"] == "user"
     assert history[1]["role"] == "assistant"
     assert history[2]["role"] == "assistant"
+    assert all(int(message["timestamp_ms"]) > 0 for message in history)
 
     # Ensure structured message linkage audit records are persisted.
     links_file = api_app["base_dir"] / "storage" / "audit" / "message_links.jsonl"
@@ -145,6 +146,7 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
     assert user_messages[1]["content"] == "hello"
     assert assistant_messages[0]["content"] == "prior-answer"
     assert assistant_messages[1]["content"] == "continued"
+    assert all(int(message["timestamp_ms"]) > 0 for message in history)
 
     assert len(captured_histories) == 2
     first_call, second_call = captured_histories

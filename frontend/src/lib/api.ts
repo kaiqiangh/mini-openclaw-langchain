@@ -46,6 +46,7 @@ export type ChatHistoryResponse = {
   messages: Array<{
     role: "user" | "assistant";
     content: string;
+    timestamp_ms?: number;
     tool_calls?: Array<{ tool: string; input?: unknown; output?: unknown }>;
     streaming?: boolean;
     run_id?: string;

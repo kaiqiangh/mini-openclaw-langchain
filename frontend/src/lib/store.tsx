@@ -59,6 +59,7 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  timestampMs: number | null;
   toolCalls: ChatToolCall[];
   retrievals: RetrievalItem[];
   debugEvents: ChatDebugEvent[];
@@ -126,11 +127,49 @@ function readStoredCurrentAgentId(): string {
   return stored.trim() || "default";
 }
 
-function createAssistantMessage(): ChatMessage {
+function normalizeTimestampMs(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function mapHistoryMessage(
+  sessionId: string,
+  msg: {
+    role: "user" | "assistant";
+    content: string;
+    timestamp_ms?: number;
+    tool_calls?: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    streaming?: boolean;
+    run_id?: string;
+  },
+  idx: number,
+): ChatMessage {
+  const base: ChatMessage = {
+    id: `${sessionId}-${idx}`,
+    role: msg.role,
+    content: msg.content,
+    timestampMs: normalizeTimestampMs(msg.timestamp_ms),
+    toolCalls: msg.tool_calls ?? [],
+    retrievals: [],
+    debugEvents: [],
+  };
+  if (!msg.streaming) {
+    return base;
+  }
+  return appendDebugEvent(base, "streaming_recovery", {
+    run_id: msg.run_id ?? "",
+  });
+}
+
+function createAssistantMessage(timestampMs: number | null = Date.now()): ChatMessage {
   return {
     id: genId("assistant"),
     role: "assistant",
     content: "",
+    timestampMs,
     toolCalls: [],
     retrievals: [],
     debugEvents: [],
@@ -221,22 +260,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loadSession = useCallback(
     async (sessionId: string, archived = false, agentId: string) => {
       const history = await getSessionHistory(sessionId, archived, agentId);
-      const mapped: ChatMessage[] = history.messages.map((msg, idx) => {
-        const base: ChatMessage = {
-          id: `${sessionId}-${idx}`,
-          role: msg.role,
-          content: msg.content,
-          toolCalls: msg.tool_calls ?? [],
-          retrievals: [],
-          debugEvents: [],
-        };
-        if (!msg.streaming) {
-          return base;
-        }
-        return appendDebugEvent(base, "streaming_recovery", {
-          run_id: msg.run_id ?? "",
-        });
-      });
+      const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
+        mapHistoryMessage(sessionId, msg, idx),
+      );
       const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
       setMessages(mapped);
       setCurrentSessionId(sessionId);
@@ -524,6 +550,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             id: genId("user"),
             role: "user",
             content: trimmed,
+            timestampMs: Date.now(),
             toolCalls: [],
             retrievals: [],
             debugEvents: [],
@@ -715,12 +742,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               currentAgentId,
             );
             const mapped: ChatMessage[] = refreshed.messages.map((msg, idx) => ({
-              id: `${activeSessionId}-${idx}`,
-              role: msg.role,
-              content: msg.content,
-              toolCalls: msg.tool_calls ?? [],
-              retrievals: [],
-              debugEvents: [],
+              ...mapHistoryMessage(activeSessionId, msg, idx),
             }));
             setMessages(mapped);
             const hasStreaming = refreshed.messages.some((item) =>
@@ -807,22 +829,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
         if (cancelled) return;
 
-        const mapped: ChatMessage[] = history.messages.map((msg, idx) => {
-          const base: ChatMessage = {
-            id: `${currentSessionId}-${idx}`,
-            role: msg.role,
-            content: msg.content,
-            toolCalls: msg.tool_calls ?? [],
-            retrievals: [],
-            debugEvents: [],
-          };
-          if (!msg.streaming) {
-            return base;
-          }
-          return appendDebugEvent(base, "streaming_recovery", {
-            run_id: msg.run_id ?? "",
-          });
-        });
+        const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
+          mapHistoryMessage(currentSessionId, msg, idx),
+        );
         const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
         setMessages(mapped);
         setIsStreaming(hasStreaming);
