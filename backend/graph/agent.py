@@ -36,6 +36,7 @@ from graph.usage_orchestrator import UsageOrchestrator
 from observability.tracing import build_optional_callbacks
 from storage.run_store import AuditStore
 from storage.usage_store import UsageStore
+from tools.skills_scanner import ensure_skills_snapshot
 from usage.pricing import calculate_cost_breakdown, infer_provider
 
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -353,19 +354,7 @@ class AgentManager:
             default_text="# MEMORY\n\n- Keep this file concise.\n",
         )
 
-    def _sync_skills_snapshot(self, workspace_root: Path) -> None:
-        if self.base_dir is None:
-            return
-        source = self.base_dir / "SKILLS_SNAPSHOT.md"
-        target = workspace_root / "SKILLS_SNAPSHOT.md"
-        if source.exists():
-            target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-        elif not target.exists():
-            target.write_text(
-                "<available_skills>\n</available_skills>\n", encoding="utf-8"
-            )
-
-    def _sync_skills_directory(self, workspace_root: Path) -> None:
+    def _seed_workspace_skills(self, workspace_root: Path) -> None:
         if self.base_dir is None:
             return
         source = self.base_dir / "skills"
@@ -380,6 +369,7 @@ class AgentManager:
             raise RuntimeError("Workspace template directory is unavailable")
         root = self._workspace_root(agent_id)
         template = self.workspace_template_dir
+        created_workspace = not root.exists()
 
         root.mkdir(parents=True, exist_ok=True)
 
@@ -416,8 +406,9 @@ class AgentManager:
                 shutil.copytree(legacy_knowledge, default_knowledge, dirs_exist_ok=True)
 
         self._migrate_legacy_root_memory(root)
-        self._sync_skills_directory(root)
-        self._sync_skills_snapshot(root)
+        if created_workspace:
+            self._seed_workspace_skills(root)
+            ensure_skills_snapshot(root)
         if self.base_dir is not None:
             self._copy_text_if_missing(
                 self.base_dir / "config.json", root / "config.json", default_text="{}\n"
@@ -841,6 +832,7 @@ class AgentManager:
         if self.config is None:
             raise RuntimeError("AgentManager is not initialized")
         runtime = self.get_runtime(agent_id)
+        ensure_skills_snapshot(runtime.root_dir)
         pack = self.prompt_builder.build_system_prompt(
             base_dir=runtime.root_dir,
             runtime=runtime.runtime_config,

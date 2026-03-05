@@ -7,8 +7,8 @@ import {
   getAgentRuntimeDiff,
   getAgentTemplate,
   listAgentTemplates,
+  listAgentSkills,
   getRuntimeConfig,
-  listSkills,
   listWorkspaceFiles,
   setRuntimeConfig,
 } from "@/lib/api";
@@ -174,11 +174,11 @@ export function InspectorPanel() {
 
     async function loadSkillFiles() {
       try {
-        const skills = await listSkills();
+        const skills = await listAgentSkills(currentAgentId);
         if (cancelled) return;
 
         const next = skills
-          .map((item) => item.location.replace(/^\.\/backend\//, ""))
+          .map((item) => item.location.replace(/^\.\//, ""))
           .filter(
             (path) => path.startsWith("skills/") && path.endsWith("/SKILL.md"),
           );
@@ -197,7 +197,7 @@ export function InspectorPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentAgentId]);
 
   useEffect(() => {
     let cancelled = false;

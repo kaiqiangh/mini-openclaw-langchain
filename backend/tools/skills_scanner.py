@@ -62,9 +62,12 @@ def scan_skills(base_dir: Path) -> list[SkillMeta]:
         rel_path = f"./skills/{skill_file.parent.name}/SKILL.md"
         found.append(SkillMeta(name=name, description=description, location=rel_path))
 
-    snapshot_path = base_dir / "SKILLS_SNAPSHOT.md"
+    return found
+
+
+def render_skills_snapshot(skills: Iterable[SkillMeta]) -> str:
     lines = ["<available_skills>"]
-    for item in found:
+    for item in skills:
         lines.extend(
             [
                 "  <skill>",
@@ -75,6 +78,19 @@ def scan_skills(base_dir: Path) -> list[SkillMeta]:
             ]
         )
     lines.append("</available_skills>")
-    snapshot_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines) + "\n"
 
-    return found
+
+def ensure_skills_snapshot(base_dir: Path) -> list[SkillMeta]:
+    skills = scan_skills(base_dir)
+    snapshot_path = base_dir / "SKILLS_SNAPSHOT.md"
+    content = render_skills_snapshot(skills)
+
+    existing = ""
+    if snapshot_path.exists() and snapshot_path.is_file():
+        existing = snapshot_path.read_text(encoding="utf-8")
+
+    if existing != content:
+        snapshot_path.write_text(content, encoding="utf-8")
+
+    return skills

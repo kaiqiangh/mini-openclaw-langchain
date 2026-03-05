@@ -36,7 +36,6 @@ from control import LocalCoordinator, build_local_coordinator
 from graph.agent import AgentManager
 from scheduler.cron import CronScheduler
 from scheduler.heartbeat import HeartbeatScheduler
-from tools.skills_scanner import scan_skills
 from utils.redaction import redact_text
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -270,7 +269,6 @@ async def _proxy_to_frontend(request: Request) -> Response:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global heartbeat_scheduler, cron_scheduler
-    scan_skills(BASE_DIR)
     config_api.apply_persisted_tracing_state(BASE_DIR)
     loaded = load_config(BASE_DIR)
     missing_secrets = validate_required_secrets(loaded)

@@ -93,7 +93,7 @@ async def file_tokens(
     agent_id: str,
     request: FileTokenRequest,
 ) -> dict[str, Any]:
-    base_dir, agent_manager = _require_deps()
+    _, agent_manager = _require_deps()
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
@@ -103,9 +103,8 @@ async def file_tokens(
 
     items: list[dict[str, Any]] = []
     for rel_path in request.paths:
-        root_dir = base_dir if rel_path.startswith("skills/") else runtime.root_dir
         try:
-            abs_path = resolve_workspace_path(root_dir, rel_path)
+            abs_path = resolve_workspace_path(runtime.root_dir, rel_path)
         except InvalidPathError:
             items.append({"path": rel_path, "tokens": 0, "error": "invalid_path"})
             continue

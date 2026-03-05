@@ -674,6 +674,15 @@ export async function listSkills(): Promise<SkillMeta[]> {
   return payload.data;
 }
 
+export async function listAgentSkills(
+  agentId = "default",
+): Promise<SkillMeta[]> {
+  const payload = await requestJson<{ data: SkillMeta[] }>(
+    `${agentBase(agentId)}/skills`,
+  );
+  return payload.data;
+}
+
 export async function listWorkspaceFiles(
   agentId = "default",
 ): Promise<WorkspaceFileIndex> {

@@ -24,7 +24,7 @@ from .scheduler_tools import (
 from .search_knowledge_tool import SearchKnowledgeTool
 from .session_history_tool import SessionHistoryTool
 from .sessions_list_tool import SessionsListTool
-from .skills_scanner import scan_skills
+from .skills_scanner import ensure_skills_snapshot, scan_skills
 from .terminal_tool import TerminalTool
 from .web_search_tool import WebSearchTool
 
@@ -242,6 +242,7 @@ def get_tool_runner(
 
 __all__ = [
     "build_tool_catalog",
+    "ensure_skills_snapshot",
     "get_all_declared_tools",
     "get_all_tools",
     "get_explicit_blocked_tools",

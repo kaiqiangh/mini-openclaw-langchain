@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from api.errors import ApiError
 from graph.agent import AgentManager
 from tools.path_guard import InvalidPathError, resolve_workspace_path
-from tools.skills_scanner import scan_skills
+from tools.skills_scanner import ensure_skills_snapshot, scan_skills
 
 router = APIRouter(tags=["files"])
 
@@ -44,7 +44,7 @@ def _require_deps() -> tuple[Path, AgentManager]:
     return _BASE_DIR, _AGENT_MANAGER
 
 
-def _resolve_allowed_path(base_dir: Path, workspace_root: Path, rel_path: str) -> Path:
+def _resolve_allowed_path(workspace_root: Path, rel_path: str) -> Path:
     rel_path = rel_path.strip()
     if rel_path in _ALLOWED_ROOT_FILES:
         target = workspace_root / rel_path
@@ -58,9 +58,8 @@ def _resolve_allowed_path(base_dir: Path, workspace_root: Path, rel_path: str) -
             details={"path": rel_path},
         )
 
-    path_root = base_dir if rel_path.startswith("skills/") else workspace_root
     try:
-        return resolve_workspace_path(path_root, rel_path)
+        return resolve_workspace_path(workspace_root, rel_path)
     except InvalidPathError as exc:
         raise ApiError(
             status_code=403,
@@ -92,19 +91,30 @@ def _list_workspace_files(workspace_root: Path) -> list[str]:
     return sorted(set(rows))
 
 
+def _serialize_skills(base_dir: Path) -> list[dict[str, str]]:
+    return [
+        {
+            "name": item.name,
+            "description": item.description,
+            "location": item.location,
+        }
+        for item in scan_skills(base_dir)
+    ]
+
+
 @router.get("/agents/{agent_id}/files")
 async def read_file(
     agent_id: str,
     path: str = Query(..., min_length=1),
 ) -> dict[str, Any]:
-    base_dir, agent_manager = _require_deps()
+    _, agent_manager = _require_deps()
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-    target = _resolve_allowed_path(base_dir, runtime.root_dir, path)
+    target = _resolve_allowed_path(runtime.root_dir, path)
 
     if not target.exists() or not target.is_file():
         raise ApiError(
@@ -123,14 +133,14 @@ async def save_file(
     agent_id: str,
     request: SaveFileRequest,
 ) -> dict[str, Any]:
-    base_dir, agent_manager = _require_deps()
+    _, agent_manager = _require_deps()
     try:
         runtime = agent_manager.get_runtime(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-    target = _resolve_allowed_path(base_dir, runtime.root_dir, request.path)
+    target = _resolve_allowed_path(runtime.root_dir, request.path)
 
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_suffix(target.suffix + ".tmp")
@@ -141,6 +151,8 @@ async def save_file(
         runtime.memory_indexer.rebuild_index(
             settings=runtime.runtime_config.retrieval.memory
         )
+    elif request.path.startswith("skills/"):
+        ensure_skills_snapshot(runtime.root_dir)
 
     return {"data": {"path": request.path, "saved": True}}
 
@@ -148,16 +160,32 @@ async def save_file(
 @router.get("/skills")
 async def list_skills() -> dict[str, Any]:
     base_dir, _ = _require_deps()
-    skills = scan_skills(base_dir)
-    items = [
-        {
-            "name": item.name,
-            "description": item.description,
-            "location": item.location,
-        }
-        for item in skills
-    ]
-    return {"data": items}
+    return {"data": _serialize_skills(base_dir)}
+
+
+@router.get("/agents/{agent_id}/skills")
+async def list_agent_skills(
+    agent_id: str,
+) -> dict[str, Any]:
+    _, agent_manager = _require_deps()
+    try:
+        runtime = agent_manager.get_runtime(agent_id)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+
+    skills = ensure_skills_snapshot(runtime.root_dir)
+    return {
+        "data": [
+            {
+                "name": item.name,
+                "description": item.description,
+                "location": item.location,
+            }
+            for item in skills
+        ]
+    }
 
 
 @router.get("/agents/{agent_id}/files/index")

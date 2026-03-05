@@ -84,3 +84,35 @@ def test_workspace_seed_copies_default_config_once(tmp_path: Path):
     )
     manager._ensure_workspace("alpha")
     assert '"max_steps": 5' in (alpha_root / "config.json").read_text(encoding="utf-8")
+
+
+def test_workspace_skills_are_seeded_only_when_workspace_is_created(tmp_path: Path):
+    base_dir = tmp_path
+    workspaces_dir = base_dir / "workspaces"
+    template_dir = base_dir / "workspace-template"
+    agent_id = "alpha"
+
+    (template_dir / "workspace").mkdir(parents=True, exist_ok=True)
+    (template_dir / "memory").mkdir(parents=True, exist_ok=True)
+    (template_dir / "knowledge").mkdir(parents=True, exist_ok=True)
+    (base_dir / "skills" / "get_weather").mkdir(parents=True, exist_ok=True)
+    (base_dir / "skills" / "get_weather" / "SKILL.md").write_text(
+        "weather-skill", encoding="utf-8"
+    )
+
+    manager = AgentManager()
+    manager.base_dir = base_dir
+    manager.workspaces_dir = workspaces_dir
+    manager.workspace_template_dir = template_dir
+
+    alpha_root = manager._ensure_workspace(agent_id)
+    assert (alpha_root / "skills" / "get_weather" / "SKILL.md").exists()
+
+    (base_dir / "skills" / "finance").mkdir(parents=True, exist_ok=True)
+    (base_dir / "skills" / "finance" / "SKILL.md").write_text(
+        "finance-skill", encoding="utf-8"
+    )
+
+    manager._ensure_workspace(agent_id)
+
+    assert not (alpha_root / "skills" / "finance" / "SKILL.md").exists()
