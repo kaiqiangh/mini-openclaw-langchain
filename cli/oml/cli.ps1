@@ -383,7 +383,7 @@ function Stop-ServiceInternal([string]$Service) {
   }
 
   if (-not (Test-PidMatchesService $pidValue $Service)) {
-    throw "Refusing to stop $Service: pid $pidValue does not match expected signature."
+    throw "Refusing to stop ${Service}: pid $pidValue does not match expected signature."
   }
 
   try {
