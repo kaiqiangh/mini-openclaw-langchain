@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from api import scheduler_api
+
 
 def test_scheduler_cron_lifecycle(client):
     created = client.post(
@@ -158,3 +160,20 @@ def test_scheduler_metrics_endpoints(client):
     assert trend_data["window"] == "24h"
     assert trend_data["bucket"] == "15m"
     assert isinstance(trend_data["points"], list)
+
+
+def test_non_default_agent_schedulers_are_started(api_app):
+    agent_manager = api_app["agent_manager"]
+
+    async def run_assertions() -> None:
+        agent_manager.create_agent("crypto")
+        scheduler_api.start_agent_schedulers("crypto")
+
+        cron_scheduler = scheduler_api._CRON_SCHEDULERS.get("crypto")
+        assert cron_scheduler is not None
+        assert cron_scheduler.agent_id == "crypto"
+        assert cron_scheduler._task is not None
+
+        await scheduler_api.stop_agent_schedulers("crypto")
+
+    asyncio.run(run_assertions())

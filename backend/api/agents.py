@@ -243,6 +243,9 @@ async def create_agent(req: CreateAgentRequest, response: Response) -> dict[str,
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
+    from api import scheduler_api
+
+    scheduler_api.start_agent_schedulers(req.agent_id)
     response.headers["Location"] = f"/api/v1/agents/{req.agent_id}"
     return {"data": created}
 
@@ -258,6 +261,9 @@ async def delete_agent(agent_id: str) -> Response:
         ) from exc
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
+    from api import scheduler_api
+
+    await scheduler_api.stop_agent_schedulers(agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

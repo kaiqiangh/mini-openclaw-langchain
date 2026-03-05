@@ -316,18 +316,18 @@ async def lifespan(_: FastAPI):
         default_heartbeat_scheduler=heartbeat_scheduler,
         default_cron_scheduler=cron_scheduler,
     )
-    heartbeat_scheduler.start()
-    cron_scheduler.start()
+    for row in agent_manager.list_agents():
+        agent_id = str(row.get("agent_id", "")).strip()
+        if not agent_id:
+            continue
+        scheduler_api.start_agent_schedulers(agent_id)
 
     try:
         yield
     finally:
-        if heartbeat_scheduler is not None:
-            await heartbeat_scheduler.stop()
-            heartbeat_scheduler = None
-        if cron_scheduler is not None:
-            await cron_scheduler.stop()
-            cron_scheduler = None
+        await scheduler_api.stop_all_schedulers()
+        heartbeat_scheduler = None
+        cron_scheduler = None
 
 
 app = FastAPI(title="Mini-OpenClaw API", version="0.1.0", lifespan=lifespan)

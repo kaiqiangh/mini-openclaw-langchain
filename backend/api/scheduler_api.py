@@ -21,6 +21,8 @@ _BASE_DIR: Path | None = None
 _AGENT_MANAGER: AgentManager | None = None
 _DEFAULT_HEARTBEAT_SCHEDULER: HeartbeatScheduler | None = None
 _DEFAULT_CRON_SCHEDULER: CronScheduler | None = None
+_HEARTBEAT_SCHEDULERS: dict[str, HeartbeatScheduler] = {}
+_CRON_SCHEDULERS: dict[str, CronScheduler] = {}
 _WINDOW_TO_MS = {
     "1h": 60 * 60 * 1000,
     "4h": 4 * 60 * 60 * 1000,
@@ -70,10 +72,17 @@ def set_dependencies(
     default_cron_scheduler: CronScheduler | None = None,
 ) -> None:
     global _BASE_DIR, _AGENT_MANAGER, _DEFAULT_HEARTBEAT_SCHEDULER, _DEFAULT_CRON_SCHEDULER
+    global _HEARTBEAT_SCHEDULERS, _CRON_SCHEDULERS
     _BASE_DIR = base_dir
     _AGENT_MANAGER = agent_manager
     _DEFAULT_HEARTBEAT_SCHEDULER = default_heartbeat_scheduler
     _DEFAULT_CRON_SCHEDULER = default_cron_scheduler
+    _HEARTBEAT_SCHEDULERS = {}
+    _CRON_SCHEDULERS = {}
+    if default_heartbeat_scheduler is not None:
+        _HEARTBEAT_SCHEDULERS["default"] = default_heartbeat_scheduler
+    if default_cron_scheduler is not None:
+        _CRON_SCHEDULERS["default"] = default_cron_scheduler
 
 
 def _require_manager() -> AgentManager:
@@ -86,7 +95,7 @@ def _require_manager() -> AgentManager:
     return _AGENT_MANAGER
 
 
-def _runtime(agent_id: str):
+def _runtime(agent_id: str, *, require_api_enabled: bool = True):
     manager = _require_manager()
     try:
         runtime = manager.get_runtime(agent_id)
@@ -94,7 +103,7 @@ def _runtime(agent_id: str):
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-    if not runtime.runtime_config.scheduler.api_enabled:
+    if require_api_enabled and not runtime.runtime_config.scheduler.api_enabled:
         raise ApiError(
             status_code=403,
             code="scheduler_api_disabled",
@@ -103,32 +112,103 @@ def _runtime(agent_id: str):
     return manager, runtime
 
 
-def _cron_scheduler(agent_id: str) -> CronScheduler:
-    manager, runtime = _runtime(agent_id)
-    if agent_id == "default" and _DEFAULT_CRON_SCHEDULER is not None:
-        _DEFAULT_CRON_SCHEDULER.config = runtime.runtime_config.cron
-        return _DEFAULT_CRON_SCHEDULER
-    return CronScheduler(
-        base_dir=runtime.root_dir,
-        config=runtime.runtime_config.cron,
-        agent_manager=manager,
-        session_manager=runtime.session_manager,
-        agent_id=runtime.agent_id,
-    )
+def _sync_heartbeat_scheduler(
+    scheduler: HeartbeatScheduler, *, manager: AgentManager, runtime: Any
+) -> HeartbeatScheduler:
+    scheduler.base_dir = runtime.root_dir
+    scheduler.config = runtime.runtime_config.heartbeat
+    scheduler.agent_manager = manager
+    scheduler.session_manager = runtime.session_manager
+    scheduler.agent_id = runtime.agent_id
+    scheduler.audit_file = runtime.root_dir / "storage" / "heartbeat_runs.jsonl"
+    scheduler.prompt_file = runtime.root_dir / "workspace" / "HEARTBEAT.md"
+    return scheduler
 
 
-def _heartbeat_scheduler(agent_id: str) -> HeartbeatScheduler:
-    manager, runtime = _runtime(agent_id)
-    if agent_id == "default" and _DEFAULT_HEARTBEAT_SCHEDULER is not None:
-        _DEFAULT_HEARTBEAT_SCHEDULER.config = runtime.runtime_config.heartbeat
-        return _DEFAULT_HEARTBEAT_SCHEDULER
-    return HeartbeatScheduler(
-        base_dir=runtime.root_dir,
-        config=runtime.runtime_config.heartbeat,
-        agent_manager=manager,
-        session_manager=runtime.session_manager,
-        agent_id=runtime.agent_id,
-    )
+def _sync_cron_scheduler(
+    scheduler: CronScheduler, *, manager: AgentManager, runtime: Any
+) -> CronScheduler:
+    scheduler.base_dir = runtime.root_dir
+    scheduler.config = runtime.runtime_config.cron
+    scheduler.agent_manager = manager
+    scheduler.session_manager = runtime.session_manager
+    scheduler.agent_id = runtime.agent_id
+    scheduler.jobs_file = runtime.root_dir / "storage" / "cron_jobs.json"
+    scheduler.runs_file = runtime.root_dir / "storage" / "cron_runs.jsonl"
+    scheduler.failures_file = runtime.root_dir / "storage" / "cron_failures.jsonl"
+    return scheduler
+
+
+def _heartbeat_scheduler(
+    agent_id: str, *, require_api_enabled: bool = True
+) -> HeartbeatScheduler:
+    manager, runtime = _runtime(agent_id, require_api_enabled=require_api_enabled)
+    scheduler = _HEARTBEAT_SCHEDULERS.get(runtime.agent_id)
+    if scheduler is None:
+        if runtime.agent_id == "default" and _DEFAULT_HEARTBEAT_SCHEDULER is not None:
+            scheduler = _DEFAULT_HEARTBEAT_SCHEDULER
+        else:
+            scheduler = HeartbeatScheduler(
+                base_dir=runtime.root_dir,
+                config=runtime.runtime_config.heartbeat,
+                agent_manager=manager,
+                session_manager=runtime.session_manager,
+                agent_id=runtime.agent_id,
+            )
+        _HEARTBEAT_SCHEDULERS[runtime.agent_id] = scheduler
+    return _sync_heartbeat_scheduler(scheduler, manager=manager, runtime=runtime)
+
+
+def _cron_scheduler(
+    agent_id: str, *, require_api_enabled: bool = True
+) -> CronScheduler:
+    manager, runtime = _runtime(agent_id, require_api_enabled=require_api_enabled)
+    scheduler = _CRON_SCHEDULERS.get(runtime.agent_id)
+    if scheduler is None:
+        if runtime.agent_id == "default" and _DEFAULT_CRON_SCHEDULER is not None:
+            scheduler = _DEFAULT_CRON_SCHEDULER
+        else:
+            scheduler = CronScheduler(
+                base_dir=runtime.root_dir,
+                config=runtime.runtime_config.cron,
+                agent_manager=manager,
+                session_manager=runtime.session_manager,
+                agent_id=runtime.agent_id,
+            )
+        _CRON_SCHEDULERS[runtime.agent_id] = scheduler
+    return _sync_cron_scheduler(scheduler, manager=manager, runtime=runtime)
+
+
+def start_agent_schedulers(agent_id: str) -> None:
+    heartbeat = _heartbeat_scheduler(agent_id, require_api_enabled=False)
+    cron = _cron_scheduler(agent_id, require_api_enabled=False)
+    heartbeat.start()
+    cron.start()
+
+
+async def stop_agent_schedulers(agent_id: str) -> None:
+    heartbeat = _HEARTBEAT_SCHEDULERS.pop(agent_id, None)
+    cron = _CRON_SCHEDULERS.pop(agent_id, None)
+    if heartbeat is not None:
+        await heartbeat.stop()
+    if cron is not None:
+        await cron.stop()
+    if agent_id == "default":
+        if _DEFAULT_HEARTBEAT_SCHEDULER is not None:
+            _HEARTBEAT_SCHEDULERS["default"] = _DEFAULT_HEARTBEAT_SCHEDULER
+        if _DEFAULT_CRON_SCHEDULER is not None:
+            _CRON_SCHEDULERS["default"] = _DEFAULT_CRON_SCHEDULER
+
+
+async def stop_all_schedulers() -> None:
+    heartbeat_items = list(_HEARTBEAT_SCHEDULERS.items())
+    cron_items = list(_CRON_SCHEDULERS.items())
+    _HEARTBEAT_SCHEDULERS.clear()
+    _CRON_SCHEDULERS.clear()
+    for _, scheduler in heartbeat_items:
+        await scheduler.stop()
+    for _, scheduler in cron_items:
+        await scheduler.stop()
 
 
 def _serialize_cron_job(job: CronJob) -> dict[str, Any]:
@@ -436,8 +516,14 @@ async def update_heartbeat_config(
     save_runtime_config_to_path(config_path, runtime_config)
 
     refreshed = manager.get_runtime(agent_id)
-    if agent_id == "default" and _DEFAULT_HEARTBEAT_SCHEDULER is not None:
-        _DEFAULT_HEARTBEAT_SCHEDULER.config = refreshed.runtime_config.heartbeat
+    heartbeat_scheduler = _heartbeat_scheduler(
+        agent_id, require_api_enabled=False
+    )
+    heartbeat_scheduler.config = refreshed.runtime_config.heartbeat
+    if refreshed.runtime_config.heartbeat.enabled:
+        heartbeat_scheduler.start()
+    else:
+        await heartbeat_scheduler.stop()
 
     return {
         "data": {
