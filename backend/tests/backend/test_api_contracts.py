@@ -192,3 +192,29 @@ def test_agents_endpoint_and_session_isolation(client):
     ]
     assert "memory/MEMORY.md" in default_files
     assert "memory/MEMORY.md" in other_files
+
+
+def test_cron_sessions_use_job_name_in_session_lists(client):
+    created_job = client.post(
+        "/api/v1/agents/default/scheduler/cron/jobs",
+        json={
+            "name": "crypto-daily-brief",
+            "schedule_type": "every",
+            "schedule": "60",
+            "prompt": "summarize market action",
+            "enabled": True,
+        },
+    )
+    assert created_job.status_code == 201
+    job_id = created_job.json()["data"]["job"]["id"]
+
+    run_now = client.post(f"/api/v1/agents/default/scheduler/cron/jobs/{job_id}/run")
+    assert run_now.status_code == 200
+
+    listed = client.get("/api/v1/agents/default/sessions")
+    assert listed.status_code == 200
+    sessions = listed.json()["data"]
+    cron_session = next(
+        item for item in sessions if item["session_id"] == f"__cron__:{job_id}"
+    )
+    assert cron_session["title"] == "crypto-daily-brief"

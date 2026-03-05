@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
+from scheduler.cron import CronScheduler
 
 router = APIRouter(tags=["sessions"])
 
@@ -49,13 +50,56 @@ def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManage
     return manager, session_manager
 
 
+def _cron_session_titles(agent_manager: AgentManager, agent_id: str) -> dict[str, str]:
+    runtime = agent_manager.get_runtime(agent_id)
+    scheduler = CronScheduler(
+        base_dir=runtime.root_dir,
+        config=runtime.runtime_config.cron,
+        agent_manager=agent_manager,
+        session_manager=runtime.session_manager,
+        agent_id=runtime.agent_id,
+    )
+    return {
+        job.id: job.name.strip()
+        for job in scheduler.list_jobs()
+        if job.id and job.name.strip()
+    }
+
+
+def _display_session_title(
+    session_id: str,
+    title: str,
+    *,
+    cron_titles: dict[str, str],
+) -> str:
+    normalized = title.strip()
+    if normalized and normalized != "New Session":
+        return normalized
+    if session_id.startswith("__cron__:"):
+        job_id = session_id.split(":", 1)[1].strip()
+        cron_title = cron_titles.get(job_id, "").strip()
+        if cron_title:
+            return cron_title
+    return normalized or "New Session"
+
+
 @router.get("/agents/{agent_id}/sessions")
 async def list_sessions(
     agent_id: str,
     scope: str = Query(default="active", pattern="^(active|archived|all)$"),
 ) -> dict[str, Any]:
-    _, manager = _resolve_session_manager(agent_id)
-    return {"data": manager.list_sessions(scope=scope)}
+    agent_manager, session_manager = _resolve_session_manager(agent_id)
+    cron_titles = _cron_session_titles(agent_manager, agent_id)
+    sessions = []
+    for item in session_manager.list_sessions(scope=scope):
+        row = dict(item)
+        row["title"] = _display_session_title(
+            str(row.get("session_id", "")),
+            str(row.get("title", "")),
+            cron_titles=cron_titles,
+        )
+        sessions.append(row)
+    return {"data": sessions}
 
 
 @router.post("/agents/{agent_id}/sessions", status_code=status.HTTP_201_CREATED)
