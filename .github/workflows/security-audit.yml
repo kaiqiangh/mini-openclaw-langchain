@@ -27,6 +27,13 @@ jobs:
   backend-pip-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        requirements:
+          - backend/requirements.txt
+          - backend/requirements-dev.txt
+          - backend/requirements-pdf.txt
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,7 +44,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pip-audit
       - name: Run pip-audit
-        run: pip-audit -r backend/requirements.txt
+        run: pip-audit -r ${{ matrix.requirements }}
 
   frontend-npm-audit:
     runs-on: ubuntu-latest
