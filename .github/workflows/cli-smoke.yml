@@ -4,9 +4,9 @@ on:
   pull_request:
     paths:
       - 'oml'
+      - 'oml.ps1'
       - 'scripts/oml/**'
-      - 'tests/cli/**'
-      - 'docs/cli/**'
+      - 'scripts/tests/**'
       - 'README.md'
       - '.github/workflows/cli-smoke.yml'
   push:
@@ -14,20 +14,65 @@ on:
       - main
     paths:
       - 'oml'
+      - 'oml.ps1'
       - 'scripts/oml/**'
-      - 'tests/cli/**'
-      - 'docs/cli/**'
+      - 'scripts/tests/**'
       - 'README.md'
       - '.github/workflows/cli-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: cli-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   cli-smoke:
-    runs-on: ubuntu-latest
+    name: CLI Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate CLI smoke checks
-        run: bash tests/cli/test_oml_smoke.sh
+      - name: Validate POSIX CLI smoke checks
+        if: matrix.os != 'windows-latest'
+        run: bash scripts/tests/cli/test_oml_smoke.sh
+
+      - name: Validate PowerShell CLI smoke checks
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $help = & pwsh -NoLogo -NoProfile -File .\oml.ps1 help 2>&1 | Out-String
+          if ($help -notmatch 'Usage: \.\\oml\.ps1 <command>') {
+            throw "help output missing usage"
+          }
+          if ($help -notmatch 'start \[all\|backend\|frontend\]') {
+            throw "help output missing start command"
+          }
+
+          $version = & pwsh -NoLogo -NoProfile -File .\oml.ps1 version 2>&1 | Out-String
+          if ($version -notmatch 'oml:') {
+            throw "version output missing oml version"
+          }
+          if ($version -notmatch 'backend_api:') {
+            throw "version output missing backend version"
+          }
+          if ($version -notmatch 'frontend:') {
+            throw "version output missing frontend version"
+          }
+
+          & pwsh -NoLogo -NoProfile -File .\oml.ps1 ports
+
+          & pwsh -NoLogo -NoProfile -File .\oml.ps1 does-not-exist *> oml-invalid.out
+          if ($LASTEXITCODE -eq 0) {
+            throw "invalid command unexpectedly succeeded"
+          }
+          $invalid = Get-Content .\oml-invalid.out -Raw
+          if ($invalid -notmatch 'Unknown command') {
+            throw "invalid command output missing expected message"
+          }
