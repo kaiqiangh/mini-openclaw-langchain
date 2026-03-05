@@ -47,7 +47,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $help = & pwsh -NoLogo -NoProfile -File .\oml.ps1 help 2>&1 | Out-String
+          $help = & pwsh -NoLogo -NoProfile -File .\oml.ps1 help *>&1 | Out-String
           if ($help -notmatch 'Usage: \.\\oml\.ps1 <command>') {
             throw "help output missing usage"
           }
@@ -55,7 +55,7 @@ jobs:
             throw "help output missing start command"
           }
 
-          $version = & pwsh -NoLogo -NoProfile -File .\oml.ps1 version 2>&1 | Out-String
+          $version = & pwsh -NoLogo -NoProfile -File .\oml.ps1 version *>&1 | Out-String
           if ($version -notmatch 'oml:') {
             throw "version output missing oml version"
           }

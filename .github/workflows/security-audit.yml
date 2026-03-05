@@ -25,15 +25,19 @@ concurrency:
 
 jobs:
   backend-pip-audit:
+    name: Python audit (${{ matrix.label }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        requirements:
-          - backend/requirements.txt
-          - backend/requirements-dev.txt
-          - backend/requirements-pdf.txt
+        include:
+          - label: backend-runtime
+            requirements: backend/requirements.txt
+          - label: backend-dev
+            requirements: backend/requirements-dev.txt
+          - label: backend-pdf-optional
+            requirements: backend/requirements-pdf.txt
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
