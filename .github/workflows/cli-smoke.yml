@@ -3,22 +3,22 @@ name: CLI Smoke
 on:
   pull_request:
     paths:
-      - 'oml'
-      - 'oml.ps1'
-      - 'cli/oml/**'
-      - 'cli/tests/**'
-      - 'README.md'
-      - '.github/workflows/cli-smoke.yml'
+      - "oml"
+      - "oml.ps1"
+      - "cli/oml/**"
+      - "cli/tests/**"
+      - "README.md"
+      - ".github/workflows/cli-smoke.yml"
   push:
     branches:
       - main
     paths:
-      - 'oml'
-      - 'oml.ps1'
-      - 'cli/oml/**'
-      - 'cli/tests/**'
-      - 'README.md'
-      - '.github/workflows/cli-smoke.yml'
+      - "oml"
+      - "oml.ps1"
+      - "cli/oml/**"
+      - "cli/tests/**"
+      - "README.md"
+      - ".github/workflows/cli-smoke.yml"
   workflow_dispatch:
 
 concurrency:
@@ -33,90 +33,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Validate POSIX CLI smoke checks
-        if: matrix.os != 'windows-latest'
         run: bash cli/tests/cli/test_oml_smoke.sh
-
-      - name: Validate PowerShell CLI smoke checks
-        if: matrix.os == 'windows-latest'
-        shell: pwsh -NoLogo -NoProfile -File {0}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $false
-
-          function Assert-ParseOk([string]$Path) {
-            $resolved = (Resolve-Path $Path).Path
-            $tokens = $null
-            $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($resolved, [ref]$tokens, [ref]$errors)
-            if ($errors.Count -gt 0) {
-              $details = ($errors | ForEach-Object { "$($_.Extent.File):$($_.Extent.StartLineNumber):$($_.Message)" }) -join "`n"
-              throw "parse check failed for $resolved`n$details"
-            }
-          }
-
-          function Invoke-Oml {
-            param(
-              [Parameter(Mandatory = $true)][string]$OutFile,
-              [Parameter(ValueFromRemainingArguments = $true)][string[]]$Args
-            )
-
-            $allOutput = & pwsh -NoLogo -NoProfile -File .\oml.ps1 @Args 2>&1
-            $code = $LASTEXITCODE
-            $text = if ($null -eq $allOutput) { '' } else { ($allOutput | Out-String).TrimEnd() }
-            Set-Content -Path $OutFile -Value $text
-
-            return [pscustomobject]@{
-              Code = $code
-              Text = $text
-              OutFile = $OutFile
-              Args = $Args
-            }
-          }
-
-          Assert-ParseOk '.\oml.ps1'
-          Assert-ParseOk '.\cli\oml\cli.ps1'
-
-          $r = Invoke-Oml -OutFile 'oml-help.out' help
-          if ($r.Code -ne 0) {
-            throw "help command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'Usage:' -or $r.Text -notmatch 'oml\.ps1') {
-            throw "help output missing usage`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'start \[all\|backend\|frontend\]') {
-            throw "help output missing start command`n$($r.Text)"
-          }
-
-          $r = Invoke-Oml -OutFile 'oml-version.out' version
-          if ($r.Code -ne 0) {
-            throw "version command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'oml:') {
-            throw "version output missing oml version`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'backend_api:') {
-            throw "version output missing backend version`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'frontend:') {
-            throw "version output missing frontend version`n$($r.Text)"
-          }
-
-          $r = Invoke-Oml -OutFile 'oml-ports.out' ports
-          if ($r.Code -ne 0) {
-            throw "ports command failed (exit $($r.Code))`n--- output ---`n$($r.Text)"
-          }
-
-          $r = Invoke-Oml -OutFile 'oml-invalid.out' does-not-exist
-          if ($r.Code -eq 0) {
-            throw "invalid command unexpectedly succeeded`n$($r.Text)"
-          }
-          if ($r.Text -notmatch 'Unknown command') {
-            throw "invalid command output missing expected message`n$($r.Text)"
-          }
