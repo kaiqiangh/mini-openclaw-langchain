@@ -47,15 +47,23 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $help = & pwsh -NoLogo -NoProfile -File .\oml.ps1 help *>&1 | Out-String
-          if ($help -notmatch 'Usage: \.\\oml\.ps1 <command>') {
+          & pwsh -NoLogo -NoProfile -File .\oml.ps1 help *> oml-help.out
+          if ($LASTEXITCODE -ne 0) {
+            throw "help command failed"
+          }
+          $help = Get-Content .\oml-help.out -Raw
+          if ($help -notmatch 'Usage:' -or $help -notmatch 'oml\.ps1') {
             throw "help output missing usage"
           }
           if ($help -notmatch 'start \[all\|backend\|frontend\]') {
             throw "help output missing start command"
           }
 
-          $version = & pwsh -NoLogo -NoProfile -File .\oml.ps1 version *>&1 | Out-String
+          & pwsh -NoLogo -NoProfile -File .\oml.ps1 version *> oml-version.out
+          if ($LASTEXITCODE -ne 0) {
+            throw "version command failed"
+          }
+          $version = Get-Content .\oml-version.out -Raw
           if ($version -notmatch 'oml:') {
             throw "version output missing oml version"
           }
@@ -66,7 +74,10 @@ jobs:
             throw "version output missing frontend version"
           }
 
-          & pwsh -NoLogo -NoProfile -File .\oml.ps1 ports
+          & pwsh -NoLogo -NoProfile -File .\oml.ps1 ports *> oml-ports.out
+          if ($LASTEXITCODE -ne 0) {
+            throw "ports command failed"
+          }
 
           & pwsh -NoLogo -NoProfile -File .\oml.ps1 does-not-exist *> oml-invalid.out
           if ($LASTEXITCODE -eq 0) {
