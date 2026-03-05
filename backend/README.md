@@ -258,6 +258,28 @@ This architecture cleanup does not change:
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
+
+## Local Runtime and Proxy Modes
+
+Two local development modes are supported:
+
+1. `./oml start`
+   - backend binds `127.0.0.1:8000`
+   - frontend binds `127.0.0.1:3000`
+   - bash and PowerShell CLIs default `OML_ENABLE_FRONTEND_PROXY=true`, so backend serves the app at `http://127.0.0.1:8000`
+
+2. Manual split-server development
+   - backend started directly on `127.0.0.1:8000`
+   - frontend started with `npm run dev` on `127.0.0.1:3000`
+   - Next dev rewrites `/api/v1/*` to `http://127.0.0.1:8000/api/v1/*`
+
+Backend proxy env behavior:
+
+- `APP_ENABLE_FRONTEND_PROXY` and `APP_FRONTEND_PROXY_URL` remain backend-owned runtime envs
+- `./oml` controls them through:
+  - `OML_ENABLE_FRONTEND_PROXY=true|false|inherit`
+  - `OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000`
+- `OML_ENABLE_FRONTEND_PROXY=inherit` is the mode that lets backend process env or `backend/.env` decide proxy behavior
   - trusted hosts
   - CORS restrictions
   - rate limiting

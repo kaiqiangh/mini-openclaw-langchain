@@ -102,6 +102,13 @@ Optional (recommended for local auth): set `NEXT_PUBLIC_APP_ADMIN_TOKEN` in `fro
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) when using `./oml start` (backend single-origin proxy enabled).
 Direct frontend dev server remains available at [http://localhost:3000](http://localhost:3000).
 
+Manual split-server development is also supported without changing frontend code:
+
+- backend: `uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000`
+- frontend: `npm run dev`
+- Next.js rewrites `/api/v1/*` to `http://127.0.0.1:8000/api/v1/*` by default
+- Optional override for non-default manual backend target: `NEXT_DEV_API_PROXY_URL`
+
 ## Repo-local CLI (`./oml`)
 
 `oml` is a repo-local command (`./oml`) for running and operating Mini-OpenClaw locally without requiring global installation. It manages both backend and frontend execution, handles logs and PIDs, and runs health checks.
@@ -123,7 +130,7 @@ Direct frontend dev server remains available at [http://localhost:3000](http://l
 ./oml stop
 ```
 
-When started via `./oml start`, the backend runs with the frontend proxy enabled, allowing you to access the app directly at [http://127.0.0.1:8000](http://127.0.0.1:8000).
+When started via `./oml start`, the CLI defaults `OML_ENABLE_FRONTEND_PROXY=true`, so the backend serves the app directly at [http://127.0.0.1:8000](http://127.0.0.1:8000). Set `OML_ENABLE_FRONTEND_PROXY=inherit` if you want backend process env or `backend/.env` to control proxy behavior instead.
 
 ### Core Commands
 
@@ -149,7 +156,17 @@ OML_BACKEND_PORT=8000
 OML_FRONTEND_HOST=127.0.0.1
 OML_FRONTEND_PORT=3000
 OML_HEALTH_TIMEOUT_SECONDS=30
+OML_ENABLE_FRONTEND_PROXY=true
+OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
 ```
+
+Proxy modes:
+
+- `true`: CLI exports backend proxy envs explicitly
+- `false`: CLI disables backend proxy explicitly
+- `inherit`: CLI does not export backend proxy envs; backend process env and `backend/.env` decide
+
+Windows-native CLI is available as `.\oml.ps1` with the same command surface as `./oml`.
 
 ### Exit Codes
 

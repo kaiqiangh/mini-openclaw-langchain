@@ -50,7 +50,10 @@ Behavior:
 - writes PID files to `.oml/run/*.pid`
 - writes logs to `.oml/log/*.log`
 - health-checks services before returning success
-- backend starts with frontend proxy enabled (`APP_ENABLE_FRONTEND_PROXY=true`) so the browser can use `http://127.0.0.1:8000`
+- backend proxy mode is controlled by CLI config:
+  - default: `OML_ENABLE_FRONTEND_PROXY=true`
+  - override URL: `OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000`
+  - backend `.env` can control proxy values only when `OML_ENABLE_FRONTEND_PROXY=inherit`
 
 ### `./oml stop [all|backend|frontend]`
 
@@ -129,9 +132,43 @@ OML_BACKEND_PORT=8000
 OML_FRONTEND_HOST=127.0.0.1
 OML_FRONTEND_PORT=3000
 OML_HEALTH_TIMEOUT_SECONDS=30
+OML_ENABLE_FRONTEND_PROXY=true
+OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
 ```
 
 Environment variables override values from `.oml/config.env`.
+
+Proxy modes:
+
+- `true`: CLI exports `APP_ENABLE_FRONTEND_PROXY=true` and `APP_FRONTEND_PROXY_URL=<resolved url>`
+- `false`: CLI exports `APP_ENABLE_FRONTEND_PROXY=false`
+- `inherit`: CLI does not export either backend proxy variable; backend process env and `backend/.env` decide
+
+## Manual Development
+
+Manual split-server development is also supported:
+
+```bash
+cd backend
+uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000
+
+cd frontend
+npm run dev
+```
+
+In manual mode, Next.js rewrites `/api/v1/*` to `http://127.0.0.1:8000/api/v1/*` by default.
+If your backend runs elsewhere, set `NEXT_DEV_API_PROXY_URL` before `npm run dev`.
+
+## Windows PowerShell
+
+Windows users can run the native PowerShell entrypoint:
+
+```powershell
+.\oml.ps1 help
+.\oml.ps1 start
+.\oml.ps1 status
+.\oml.ps1 stop
+```
 
 ## Exit Codes
 

@@ -81,7 +81,17 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000).
 
 API client default is relative (`/api/v1/*`), so no hardcoded backend host/port is required.
-Optional override: `NEXT_PUBLIC_API_BASE_URL`.
+
+Manual development modes:
+
+- `./oml start`: browser origin is `http://127.0.0.1:8000`; backend proxies frontend pages and API stays same-origin.
+- `npm run dev` with backend on `127.0.0.1:8000`: Next.js rewrites `/api/v1/*` to the backend automatically.
+
+Optional frontend envs:
+
+- `NEXT_DEV_API_PROXY_URL`: overrides the manual-dev rewrite target (default `http://127.0.0.1:8000`)
+- `NEXT_PUBLIC_API_BASE_URL`: advanced absolute API override
+- `NEXT_PUBLIC_APP_ADMIN_TOKEN`: optional default bearer token for local auth
 
 ## Test + Build Flow
 
