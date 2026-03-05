@@ -19,7 +19,7 @@ $script:LogDir = Join-Path $script:StateDir "log"
 $script:ConfigEnv = Join-Path $script:StateDir "config.env"
 
 function Write-Info([string]$Message) {
-  Write-Host "[oml] $Message"
+  Write-Output "[oml] $Message"
 }
 
 function Write-WarnCli([string]$Message) {
@@ -418,7 +418,7 @@ function Show-LogsForService([string]$Service, [int]$Lines, [bool]$Follow) {
     return
   }
 
-  Write-Host "== $Service ($logFile) =="
+  Write-Output "== $Service ($logFile) =="
   Get-Content -Path $logFile -Tail $Lines
 }
 
@@ -454,7 +454,7 @@ Examples:
   .\oml.ps1 restart backend
   .\oml.ps1 logs backend --follow
   .\oml.ps1 update
-"@ | Write-Host
+"@ | Write-Output
 }
 
 function Invoke-CmdVersion {
@@ -481,10 +481,10 @@ function Invoke-CmdVersion {
   } catch {
   }
 
-  Write-Host "oml: $($script:OML_CLI_VERSION)"
-  Write-Host "backend_api: $backendVersion"
-  Write-Host "frontend: $frontendVersion"
-  Write-Host "git_sha: $gitSha"
+  Write-Output "oml: $($script:OML_CLI_VERSION)"
+  Write-Output "backend_api: $backendVersion"
+  Write-Output "frontend: $frontendVersion"
+  Write-Output "git_sha: $gitSha"
 }
 
 function Invoke-CmdStart([string]$Target = "all") {
@@ -567,16 +567,16 @@ function Write-ServiceStatus([string]$Service) {
   if (Test-ServiceRunning $Service) {
     $pidValue = Read-Pid $Service
     $health = if (Check-ServiceHealth $Service) { "ok" } else { "degraded" }
-    Write-Host ("{0,-8} running  pid={1}  health={2}  url={3}" -f $Service, $pidValue, $health, $url)
+    Write-Output ("{0,-8} running  pid={1}  health={2}  url={3}" -f $Service, $pidValue, $health, $url)
     return
   }
 
   if (Test-PortInUse ([int]$port)) {
-    Write-Host ("{0,-8} stopped  port={1} in use by another process" -f $Service, $port)
+    Write-Output ("{0,-8} stopped  port={1} in use by another process" -f $Service, $port)
     return
   }
 
-  Write-Host ("{0,-8} stopped  url={1}" -f $Service, $url)
+  Write-Output ("{0,-8} stopped  url={1}" -f $Service, $url)
 }
 
 function Invoke-CmdStatus {
@@ -631,7 +631,7 @@ function Invoke-CmdLogs([string[]]$ArgsList) {
     }
 
     Show-LogsForService "backend" $lines $false
-    Write-Host ""
+    Write-Output ""
     Show-LogsForService "frontend" $lines $false
     return
   }
@@ -640,14 +640,14 @@ function Invoke-CmdLogs([string[]]$ArgsList) {
 }
 
 function Invoke-CmdPorts {
-  Write-Host "backend_health_url: http://$($script:OML_BACKEND_HOST):$($script:OML_BACKEND_PORT)/api/v1/health"
-  Write-Host "frontend_dev_url: http://$($script:OML_FRONTEND_HOST):$($script:OML_FRONTEND_PORT)"
-  Write-Host "manual_dev_api_proxy_url: $((Resolve-ConfigValue (Get-ConfigFileValues) "NEXT_DEV_API_PROXY_URL" "http://127.0.0.1:8000"))/api/v1"
-  Write-Host "backend_frontend_proxy_mode: $($script:OML_ENABLE_FRONTEND_PROXY)"
+  Write-Output "backend_health_url: http://$($script:OML_BACKEND_HOST):$($script:OML_BACKEND_PORT)/api/v1/health"
+  Write-Output "frontend_dev_url: http://$($script:OML_FRONTEND_HOST):$($script:OML_FRONTEND_PORT)"
+  Write-Output "manual_dev_api_proxy_url: $((Resolve-ConfigValue (Get-ConfigFileValues) "NEXT_DEV_API_PROXY_URL" "http://127.0.0.1:8000"))/api/v1"
+  Write-Output "backend_frontend_proxy_mode: $($script:OML_ENABLE_FRONTEND_PROXY)"
   if ($script:OML_ENABLE_FRONTEND_PROXY -eq "inherit") {
-    Write-Host "backend_frontend_proxy_url: inherited from backend env"
+    Write-Output "backend_frontend_proxy_url: inherited from backend env"
   } else {
-    Write-Host "backend_frontend_proxy_url: $($script:OML_FRONTEND_PROXY_URL)"
+    Write-Output "backend_frontend_proxy_url: $($script:OML_FRONTEND_PROXY_URL)"
   }
 }
 
@@ -694,74 +694,74 @@ function Invoke-CmdUpdate {
 
 function Invoke-CmdDoctor {
   $critical = $false
-  Write-Host "Doctor checks:"
+  Write-Output "Doctor checks:"
 
   foreach ($binary in @("node", "npm", "git")) {
     if (Get-Command $binary -ErrorAction SilentlyContinue) {
-      Write-Host "  [ok]   binary $binary"
+      Write-Output "  [ok]   binary $binary"
     } else {
-      Write-Host "  [fail] binary $binary missing"
+      Write-Output "  [fail] binary $binary missing"
       $critical = $true
     }
   }
 
   if (Get-Command "uv" -ErrorAction SilentlyContinue) {
-    Write-Host "  [ok]   binary uv"
+    Write-Output "  [ok]   binary uv"
   } else {
-    Write-Host "  [warn] binary uv missing (required for update)"
+    Write-Output "  [warn] binary uv missing (required for update)"
   }
 
   $backendPython = Get-BackendPythonPath
   if (Test-Path $backendPython) {
-    Write-Host "  [ok]   backend virtualenv interpreter present"
+    Write-Output "  [ok]   backend virtualenv interpreter present"
   } else {
-    Write-Host "  [warn] backend virtualenv interpreter missing ($backendPython)"
+    Write-Output "  [warn] backend virtualenv interpreter missing ($backendPython)"
   }
 
   if (Test-Path (Join-Path (Join-Path $script:RepoRoot "backend") ".env")) {
-    Write-Host "  [ok]   backend/.env present"
+    Write-Output "  [ok]   backend/.env present"
   } else {
-    Write-Host "  [fail] backend/.env missing"
+    Write-Output "  [fail] backend/.env missing"
     $critical = $true
   }
 
   if ($script:OML_ENABLE_FRONTEND_PROXY -eq "inherit") {
-    Write-Host "  [ok]   frontend proxy mode inherited from backend env"
+    Write-Output "  [ok]   frontend proxy mode inherited from backend env"
   } else {
-    Write-Host "  [ok]   frontend proxy mode $($script:OML_ENABLE_FRONTEND_PROXY) ($($script:OML_FRONTEND_PROXY_URL))"
+    Write-Output "  [ok]   frontend proxy mode $($script:OML_ENABLE_FRONTEND_PROXY) ($($script:OML_FRONTEND_PROXY_URL))"
   }
 
   if (Test-ServiceRunning "backend") {
     $backendPid = Read-Pid "backend"
     if (Check-ServiceHealth "backend") {
-      Write-Host "  [ok]   backend running (pid=$backendPid) and healthy"
+      Write-Output "  [ok]   backend running (pid=$backendPid) and healthy"
     } else {
-      Write-Host "  [warn] backend running (pid=$backendPid) but health check failed"
+      Write-Output "  [warn] backend running (pid=$backendPid) but health check failed"
     }
   } else {
     $backendOwner = Get-PortOwnerPid ([int]$script:OML_BACKEND_PORT)
     if ($null -ne $backendOwner) {
-      Write-Host "  [fail] backend port $($script:OML_BACKEND_PORT) in use by pid $backendOwner"
+      Write-Output "  [fail] backend port $($script:OML_BACKEND_PORT) in use by pid $backendOwner"
       $critical = $true
     } else {
-      Write-Host "  [ok]   backend port $($script:OML_BACKEND_PORT) available"
+      Write-Output "  [ok]   backend port $($script:OML_BACKEND_PORT) available"
     }
   }
 
   if (Test-ServiceRunning "frontend") {
     $frontendPid = Read-Pid "frontend"
     if (Check-ServiceHealth "frontend") {
-      Write-Host "  [ok]   frontend running (pid=$frontendPid) and reachable"
+      Write-Output "  [ok]   frontend running (pid=$frontendPid) and reachable"
     } else {
-      Write-Host "  [warn] frontend running (pid=$frontendPid) but HTTP check failed"
+      Write-Output "  [warn] frontend running (pid=$frontendPid) but HTTP check failed"
     }
   } else {
     $frontendOwner = Get-PortOwnerPid ([int]$script:OML_FRONTEND_PORT)
     if ($null -ne $frontendOwner) {
-      Write-Host "  [fail] frontend port $($script:OML_FRONTEND_PORT) in use by pid $frontendOwner"
+      Write-Output "  [fail] frontend port $($script:OML_FRONTEND_PORT) in use by pid $frontendOwner"
       $critical = $true
     } else {
-      Write-Host "  [ok]   frontend port $($script:OML_FRONTEND_PORT) available"
+      Write-Output "  [ok]   frontend port $($script:OML_FRONTEND_PORT) available"
     }
   }
 
