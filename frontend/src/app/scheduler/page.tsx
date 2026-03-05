@@ -130,9 +130,8 @@ function describeSchedule(type: ScheduleType, value: string): string {
 }
 
 export default function SchedulerPage() {
-  const { currentAgentId } = useAppStore();
+  const { currentAgentId, setCurrentAgent } = useAppStore();
   const [agents, setAgents] = useState<string[]>(["default"]);
-  const [agentId, setAgentId] = useState<string>(currentAgentId || "default");
   const [metricsWindow, setMetricsWindow] = useState<SchedulerMetricsWindow>("24h");
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [runs, setRuns] = useState<Array<Record<string, unknown>>>([]);
@@ -163,6 +162,7 @@ export default function SchedulerPage() {
   const [sections, setSections] = useState<Record<SchedulerSectionKey, boolean>>(
     DEFAULT_SCHEDULER_SECTIONS,
   );
+  const agentId = currentAgentId;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -249,17 +249,12 @@ export default function SchedulerPage() {
         const ids = rows.map((item) => item.agent_id);
         const safeIds = ids.length > 0 ? ids : ["default"];
         setAgents(safeIds);
-
-        const preferred = [currentAgentId, agentId, "default", safeIds[0]];
-        const selected =
-          preferred.find(
-            (candidate) => Boolean(candidate) && safeIds.includes(String(candidate)),
-          ) ?? safeIds[0];
-        setAgentId(selected);
+        if (!safeIds.includes(currentAgentId)) {
+          void setCurrentAgent(safeIds[0] ?? "default");
+        }
       } catch {
         if (!cancelled) {
           setAgents(["default"]);
-          setAgentId(currentAgentId || "default");
         }
       }
     }
@@ -267,7 +262,7 @@ export default function SchedulerPage() {
     return () => {
       cancelled = true;
     };
-  }, [currentAgentId]);
+  }, [currentAgentId, setCurrentAgent]);
 
   useEffect(() => {
     void refreshAll(agentId, metricsWindow);
@@ -368,7 +363,9 @@ export default function SchedulerPage() {
                 aria-label="Scheduler agent switch"
                 className="ui-mono min-h-[36px] w-[160px] text-sm"
                 value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
+                onChange={(event) => {
+                  void setCurrentAgent(event.target.value);
+                }}
               >
                 {agents.map((id) => (
                   <option key={`header-${id}`} value={id}>
@@ -448,21 +445,23 @@ export default function SchedulerPage() {
           </div>
           {sections.composer ? (
             <div className="grid gap-3 p-4 md:grid-cols-5">
-            <label className="min-w-0">
-              <span className="ui-label">Agent</span>
-              <Select
-                className="mt-1 ui-mono text-sm"
-                value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
-              >
-                {agents.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className="min-w-0">
+              <label className="min-w-0">
+                <span className="ui-label">Agent</span>
+                <Select
+                  className="mt-1 ui-mono text-sm"
+                  value={agentId}
+                  onChange={(event) => {
+                    void setCurrentAgent(event.target.value);
+                  }}
+                >
+                  {agents.map((id) => (
+                    <option key={id} value={id}>
+                      {id}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="min-w-0">
               <span className="ui-label">Schedule Type</span>
               <Select
                 className="mt-1 ui-mono text-sm"

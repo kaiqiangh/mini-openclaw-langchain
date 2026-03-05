@@ -156,6 +156,11 @@ function AgentProbe() {
 }
 
 describe("store editor save flow", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.clearAllMocks();
+  });
+
   it("loads file, edits content, and saves through API", async () => {
     render(
       <AppProvider>
@@ -197,6 +202,32 @@ describe("store editor save flow", () => {
     );
 
     fireEvent.click(screen.getByText("switch-agent"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent")).toHaveTextContent("elon"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("session-count")).toHaveTextContent("1"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("file-content")).toHaveTextContent(
+        "content:elon:memory/MEMORY.md",
+      ),
+    );
+  });
+
+  it("restores the previously selected agent from local storage", async () => {
+    window.localStorage.setItem("mini-openclaw:current-agent:v1", "elon");
+
+    render(
+      <AppProvider>
+        <AgentProbe />
+      </AppProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("booting")).not.toBeInTheDocument(),
+    );
 
     await waitFor(() =>
       expect(screen.getByTestId("agent")).toHaveTextContent("elon"),

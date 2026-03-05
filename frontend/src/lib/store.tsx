@@ -112,9 +112,18 @@ type AppState = {
 };
 
 const AppContext = createContext<AppState | null>(null);
+const CURRENT_AGENT_STORAGE_KEY = "mini-openclaw:current-agent:v1";
 
 function genId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readStoredCurrentAgentId(): string {
+  if (typeof window === "undefined") {
+    return "default";
+  }
+  const stored = window.localStorage.getItem(CURRENT_AGENT_STORAGE_KEY) ?? "";
+  return stored.trim() || "default";
 }
 
 function createAssistantMessage(): ChatMessage {
@@ -169,7 +178,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [ragEnabled, setRagEnabledState] = useState(false);
   const [agents, setAgents] = useState<AgentMeta[]>([]);
-  const [currentAgentId, setCurrentAgentId] = useState("default");
+  const [currentAgentId, setCurrentAgentId] = useState(readStoredCurrentAgentId);
   const [sessionsScope, setSessionsScopeState] = useState<
     "active" | "archived"
   >("active");
@@ -186,6 +195,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     useState<MaxStepsPromptState | null>(null);
   const agentSwitchEpochRef = useRef(0);
   const streamConnectionRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(CURRENT_AGENT_STORAGE_KEY, currentAgentId);
+  }, [currentAgentId]);
 
   const refreshAgents = useCallback(async () => {
     const next = await getAgents();
@@ -853,6 +867,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
 
         const selected =
+          effectiveAgents.find((item) => item.agent_id === currentAgentId)
+            ?.agent_id ??
           effectiveAgents.find((item) => item.agent_id === "default")
             ?.agent_id ??
           effectiveAgents[0]?.agent_id ??

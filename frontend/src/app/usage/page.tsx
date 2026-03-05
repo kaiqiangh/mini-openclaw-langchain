@@ -19,6 +19,7 @@ import {
   UsageRecord,
   UsageSummary,
 } from "@/lib/api";
+import { useAppStore } from "@/lib/store";
 
 const TIMEFRAME_OPTIONS = [
   { label: "Last 1 hour", value: 1 },
@@ -153,8 +154,8 @@ function toCsv(records: UsageRecord[]): string {
 }
 
 export default function UsagePage() {
+  const { currentAgentId, setCurrentAgent } = useAppStore();
   const [agents, setAgents] = useState<string[]>(["default"]);
-  const [agentId, setAgentId] = useState<string>("default");
   const [sinceHours, setSinceHours] = useState<number>(24);
   const [provider, setProvider] = useState<string>("");
   const [model, setModel] = useState<string>("");
@@ -168,6 +169,7 @@ export default function UsagePage() {
     "comfortable",
   );
   const [selectedRun, setSelectedRun] = useState<UsageRecord | null>(null);
+  const agentId = currentAgentId;
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -201,9 +203,10 @@ export default function UsagePage() {
         const rows = await getAgents();
         if (cancelled) return;
         const ids = rows.map((item) => item.agent_id);
-        setAgents(ids.length > 0 ? ids : ["default"]);
-        if (ids.length > 0 && !ids.includes(agentId)) {
-          setAgentId(ids[0]);
+        const safeIds = ids.length > 0 ? ids : ["default"];
+        setAgents(safeIds);
+        if (!safeIds.includes(currentAgentId)) {
+          void setCurrentAgent(safeIds[0] ?? "default");
         }
       } catch {
         if (!cancelled) {
@@ -215,7 +218,7 @@ export default function UsagePage() {
     return () => {
       cancelled = true;
     };
-  }, [agentId]);
+  }, [currentAgentId, setCurrentAgent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -376,7 +379,9 @@ export default function UsagePage() {
                 name="agent-filter"
                 className="mt-1 ui-mono text-sm"
                 value={agentId}
-                onChange={(event) => setAgentId(event.target.value)}
+                onChange={(event) => {
+                  void setCurrentAgent(event.target.value);
+                }}
               >
                 {agents.map((item) => (
                   <option key={item} value={item}>
