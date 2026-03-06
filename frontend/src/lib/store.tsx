@@ -164,7 +164,9 @@ function mapHistoryMessage(
   });
 }
 
-function createAssistantMessage(timestampMs: number | null = Date.now()): ChatMessage {
+function createAssistantMessage(
+  timestampMs: number | null = Date.now(),
+): ChatMessage {
   return {
     id: genId("assistant"),
     role: "assistant",
@@ -205,11 +207,13 @@ function isMaxStepsError(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") return false;
   const code = String((payload as { code?: unknown }).code ?? "").toLowerCase();
   if (code === "max_steps_reached") return true;
-  const error = String((payload as { error?: unknown }).error ?? "").toLowerCase();
+  const error = String(
+    (payload as { error?: unknown }).error ?? "",
+  ).toLowerCase();
   return (
-    error.includes("recursion limit")
-    || error.includes("max steps")
-    || error.includes("max_steps")
+    error.includes("recursion limit") ||
+    error.includes("max steps") ||
+    error.includes("max_steps")
   );
 }
 
@@ -217,7 +221,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [ragEnabled, setRagEnabledState] = useState(false);
   const [agents, setAgents] = useState<AgentMeta[]>([]);
-  const [currentAgentId, setCurrentAgentId] = useState(readStoredCurrentAgentId);
+  const [currentAgentId, setCurrentAgentId] = useState(
+    readStoredCurrentAgentId,
+  );
   const [sessionsScope, setSessionsScopeState] = useState<
     "active" | "archived"
   >("active");
@@ -263,7 +269,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
         mapHistoryMessage(sessionId, msg, idx),
       );
-      const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
+      const hasStreaming = history.messages.some((msg) =>
+        Boolean(msg.streaming),
+      );
       setMessages(mapped);
       setCurrentSessionId(sessionId);
       setIsStreaming(hasStreaming);
@@ -736,14 +744,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         streamConnectionRef.current = false;
         try {
           if (activeSessionId) {
+            const finalSessionId = activeSessionId;
             const refreshed = await getSessionHistory(
-              activeSessionId,
+              finalSessionId,
               false,
               currentAgentId,
             );
-            const mapped: ChatMessage[] = refreshed.messages.map((msg, idx) => ({
-              ...mapHistoryMessage(activeSessionId, msg, idx),
-            }));
+            const mapped: ChatMessage[] = refreshed.messages.map(
+              (msg, idx) => ({
+                ...mapHistoryMessage(finalSessionId, msg, idx),
+              }),
+            );
             setMessages(mapped);
             const hasStreaming = refreshed.messages.some((item) =>
               Boolean(item.streaming),
@@ -832,7 +843,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
           mapHistoryMessage(currentSessionId, msg, idx),
         );
-        const hasStreaming = history.messages.some((msg) => Boolean(msg.streaming));
+        const hasStreaming = history.messages.some((msg) =>
+          Boolean(msg.streaming),
+        );
         setMessages(mapped);
         setIsStreaming(hasStreaming);
         if (!hasStreaming) {
