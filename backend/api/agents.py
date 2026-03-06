@@ -270,6 +270,8 @@ async def delete_agent(agent_id: str) -> Response:
 @router.post("/agents/bulk-delete")
 async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
     manager = _require_agent_manager()
+    from api import scheduler_api
+
     results: list[dict[str, Any]] = []
     deleted_count = 0
     for raw in request.agent_ids:
@@ -289,6 +291,7 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
         if not deleted:
             results.append({"agent_id": agent_id, "deleted": False, "error": "not_found"})
             continue
+        await scheduler_api.stop_agent_schedulers(agent_id)
         deleted_count += 1
         results.append({"agent_id": agent_id, "deleted": True})
     return {

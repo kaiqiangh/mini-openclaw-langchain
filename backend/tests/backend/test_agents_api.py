@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import json
 
+from api import scheduler_api
 
-def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
+
+def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app, monkeypatch):
+    stopped_agents: list[str] = []
+
+    async def fake_stop_agent_schedulers(agent_id: str) -> None:
+        stopped_agents.append(agent_id)
+
+    monkeypatch.setattr(
+        scheduler_api,
+        "stop_agent_schedulers",
+        fake_stop_agent_schedulers,
+    )
+
     created_alpha = client.post("/api/v1/agents", json={"agent_id": "alpha"})
     created_beta = client.post("/api/v1/agents", json={"agent_id": "beta"})
     assert created_alpha.status_code == 201
@@ -89,6 +102,7 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
         item["agent_id"] == "default" and item["deleted"] is False
         for item in deleted_data["results"]
     )
+    assert stopped_agents == ["alpha", "beta"]
 
 
 def test_bulk_runtime_patch_rejects_invalid_mode(client):
