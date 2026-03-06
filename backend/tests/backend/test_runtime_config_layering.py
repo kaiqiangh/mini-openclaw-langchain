@@ -6,6 +6,7 @@ from pathlib import Path
 
 from config import (
     LlmRuntimeConfig,
+    LlmRoutePatch,
     RetrievalConfig,
     RuntimeConfig,
     TerminalSandboxMode,
@@ -76,17 +77,27 @@ def test_merge_runtime_configs_uses_override_delta():
     base = RuntimeConfig(
         rag_mode=True,
         llm_runtime=LlmRuntimeConfig(temperature=0.15, timeout_seconds=120),
+        llm=LlmRoutePatch(
+            default="openai",
+            fallbacks=["deepseek"],
+            tool_loop_model="gpt-4.1-mini",
+            tool_loop_model_overrides={"gpt-5-mini": "gpt-4.1-mini"},
+        ),
         retrieval=RetrievalConfig(),
     )
-    override = RuntimeConfig(
-        llm_runtime=LlmRuntimeConfig(temperature=0.5, timeout_seconds=60)
-    )
+    override = RuntimeConfig(llm_runtime=LlmRuntimeConfig(temperature=0.5))
 
     merged = merge_runtime_configs(base, override)
     assert merged.rag_mode is True
     assert merged.llm_runtime.temperature == 0.5
     # Because override timeout matches baseline default, base timeout should be retained.
     assert merged.llm_runtime.timeout_seconds == 120
+    assert merged.llm.default == "openai"
+    assert merged.llm.fallbacks == ["deepseek"]
+    assert merged.llm.tool_loop_model == "gpt-4.1-mini"
+    assert merged.llm.tool_loop_model_overrides == {
+        "gpt-5-mini": "gpt-4.1-mini"
+    }
 
 
 def test_agent_runtime_auto_reload_on_agent_config_change(tmp_path: Path):
@@ -145,6 +156,12 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
     runtime = RuntimeConfig()
     runtime.chat_enabled_tools = ["terminal"]
     runtime.chat_blocked_tools = ["read_files"]
+    runtime.llm = LlmRoutePatch(
+        default="azure_foundry",
+        fallbacks=[],
+        tool_loop_model="gpt-4.1-mini",
+        tool_loop_model_overrides={"gpt-5-mini": "gpt-4.1-mini"},
+    )
     runtime.tool_execution.terminal.sandbox_mode = TerminalSandboxMode.UNSAFE_NONE
     runtime.tool_execution.terminal.require_sandbox = False
     runtime.tool_execution.terminal.allowed_command_prefixes = ["echo", "python3 -c"]
@@ -158,6 +175,12 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
 
     assert loaded.chat_enabled_tools == ["terminal"]
     assert loaded.chat_blocked_tools == ["read_files"]
+    assert loaded.llm.default == "azure_foundry"
+    assert loaded.llm.fallbacks == []
+    assert loaded.llm.tool_loop_model == "gpt-4.1-mini"
+    assert loaded.llm.tool_loop_model_overrides == {
+        "gpt-5-mini": "gpt-4.1-mini"
+    }
     assert loaded.tool_execution.terminal.sandbox_mode == TerminalSandboxMode.UNSAFE_NONE
     assert loaded.tool_execution.terminal.require_sandbox is False
     assert loaded.tool_execution.terminal.allowed_command_prefixes == [
@@ -168,3 +191,20 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
     assert loaded.tool_execution.terminal.allow_shell_syntax is True
     assert loaded.tool_execution.terminal.max_args == 12
     assert loaded.tool_execution.terminal.max_arg_length == 64
+
+
+def test_runtime_from_payload_rejects_legacy_llm_profile():
+    payload = {
+        "llm_runtime": {
+            "temperature": 0.2,
+            "timeout_seconds": 60,
+            "profile": "openai",
+        }
+    }
+
+    try:
+        runtime_from_payload(payload)
+    except ValueError as exc:
+        assert "llm_runtime.profile" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("legacy llm_runtime.profile should be rejected")

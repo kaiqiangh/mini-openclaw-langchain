@@ -226,43 +226,69 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     assert usage_state["total_tokens"] == 220
 
 
-def test_tool_loop_model_keeps_configured_model_when_no_override(monkeypatch):
-    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
-    monkeypatch.delenv("TOOL_LOOP_MODEL_OVERRIDES", raising=False)
+def test_tool_loop_model_keeps_configured_model_when_no_override():
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
+        provider_id="deepseek",
+        base_url="https://api.deepseek.com",
     )
     assert selected == "deepseek-reasoner"
 
 
-def test_tool_loop_model_respects_global_override(monkeypatch):
-    monkeypatch.setenv("TOOL_LOOP_MODEL", "deepseek-chat")
+def test_tool_loop_model_respects_llm_route_override():
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
+        provider_id="deepseek",
+        base_url="https://api.deepseek.com",
+        tool_loop_model="deepseek-chat",
     )
     assert selected == "deepseek-chat"
 
 
-def test_tool_loop_model_respects_per_model_override_json(monkeypatch):
-    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
-    monkeypatch.setenv(
-        "TOOL_LOOP_MODEL_OVERRIDES",
-        '{"deepseek-reasoner": "deepseek-chat", "o3": "gpt-4.1-mini"}',
-    )
+def test_tool_loop_model_respects_llm_route_override_map():
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
+        provider_id="deepseek",
+        base_url="https://api.deepseek.com",
+        tool_loop_model_overrides={
+            "deepseek-reasoner": "deepseek-chat",
+            "o3": "gpt-4.1-mini",
+        },
     )
     assert selected == "deepseek-chat"
 
 
-def test_tool_loop_model_respects_per_model_override_key_value(monkeypatch):
-    monkeypatch.delenv("TOOL_LOOP_MODEL", raising=False)
-    monkeypatch.setenv("TOOL_LOOP_MODEL_OVERRIDES", "deepseek-reasoner=deepseek-v3.1")
+def test_tool_loop_model_respects_llm_route_override_map_exact_key():
     selected = AgentManager._resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
+        provider_id="deepseek",
+        base_url="https://api.deepseek.com",
+        tool_loop_model_overrides={"deepseek-reasoner": "deepseek-v3.1"},
     )
     assert selected == "deepseek-v3.1"
+
+
+def test_tool_loop_model_ignores_cross_provider_llm_route_override():
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="gpt-4o-mini",
+        has_tools=True,
+        provider_id="openai",
+        base_url="https://api.openai.com/v1",
+        tool_loop_model="deepseek-chat",
+    )
+    assert selected == "gpt-4o-mini"
+
+
+def test_tool_loop_model_ignores_cross_provider_llm_route_map_override():
+    selected = AgentManager._resolve_tool_loop_model(
+        configured_model="gpt-4o-mini",
+        has_tools=True,
+        provider_id="openai",
+        base_url="https://api.openai.com/v1",
+        tool_loop_model_overrides={"gpt-4o-mini": "deepseek-chat"},
+    )
+    assert selected == "gpt-4o-mini"
