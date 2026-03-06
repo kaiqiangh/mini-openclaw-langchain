@@ -45,6 +45,52 @@ class SessionManager:
             "messages": [],
         }
 
+    def _write_json_file(self, path: Path, payload: Any) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f"{path.suffix}.tmp")
+        tmp.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+
+    def _read_session_payload(
+        self, path: Path, *, session_id: str, archived: bool
+    ) -> dict[str, Any]:
+        if not path.exists():
+            label = "Archived session" if archived else "Session"
+            raise FileNotFoundError(f"{label} not found: {session_id}")
+
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, list):
+            payload = self._default_payload()
+            payload["messages"] = raw
+            self._write_json_file(path, payload)
+            return payload
+        return raw
+
+    def create_session(
+        self,
+        session_id: str,
+        *,
+        title: str = "New Session",
+        archived: bool = False,
+    ) -> dict[str, Any]:
+        with self._lock:
+            payload = self._default_payload(title.strip() or "New Session")
+            path = self._session_path(session_id, archived=archived)
+            self._write_json_file(path, payload)
+            return payload
+
+    def load_existing_session(
+        self, session_id: str, *, archived: bool = False
+    ) -> dict[str, Any]:
+        with self._lock:
+            path = self._session_path(session_id, archived=archived)
+            return self._read_session_payload(
+                path, session_id=session_id, archived=archived
+            )
+
     def load_session(
         self, session_id: str, *, archived: bool = False
     ) -> dict[str, Any]:
@@ -54,22 +100,11 @@ class SessionManager:
                 if archived:
                     raise FileNotFoundError(f"Archived session not found: {session_id}")
                 payload = self._default_payload()
-                path.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
+                self._write_json_file(path, payload)
                 return payload
-
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(raw, list):
-                payload = self._default_payload()
-                payload["messages"] = raw
-                path.write_text(
-                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
-                return payload
-            return raw
+            return self._read_session_payload(
+                path, session_id=session_id, archived=archived
+            )
 
     def save_session(
         self, session_id: str, payload: dict[str, Any], *, archived: bool = False
@@ -77,10 +112,7 @@ class SessionManager:
         with self._lock:
             payload["updated_at"] = self._now()
             path = self._session_path(session_id, archived=archived)
-            path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            self._write_json_file(path, payload)
 
     def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
         include_active = scope in {"active", "all"}
@@ -127,37 +159,40 @@ class SessionManager:
         self.save_session(session_id, session)
 
     def delete_session(self, session_id: str, *, archived: bool = False) -> bool:
-        path = self._session_path(session_id, archived=archived)
-        if not path.exists():
-            return False
-        path.unlink()
-        return True
+        with self._lock:
+            path = self._session_path(session_id, archived=archived)
+            if not path.exists():
+                return False
+            path.unlink()
+            return True
 
     def archive_session(self, session_id: str) -> bool:
-        source = self._session_path(session_id, archived=False)
-        target = self._session_path(session_id, archived=True)
-        if not source.exists():
-            return False
-        payload = self.load_session(session_id, archived=False)
-        payload["archived_at"] = self._now()
-        target.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        source.unlink()
-        return True
+        with self._lock:
+            source = self._session_path(session_id, archived=False)
+            target = self._session_path(session_id, archived=True)
+            if not source.exists():
+                return False
+            payload = self._read_session_payload(
+                source, session_id=session_id, archived=False
+            )
+            payload["archived_at"] = self._now()
+            self._write_json_file(target, payload)
+            source.unlink()
+            return True
 
     def restore_session(self, session_id: str) -> bool:
-        source = self._session_path(session_id, archived=True)
-        target = self._session_path(session_id, archived=False)
-        if not source.exists():
-            return False
-        payload = self.load_session(session_id, archived=True)
-        payload.pop("archived_at", None)
-        target.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-        source.unlink()
-        return True
+        with self._lock:
+            source = self._session_path(session_id, archived=True)
+            target = self._session_path(session_id, archived=False)
+            if not source.exists():
+                return False
+            payload = self._read_session_payload(
+                source, session_id=session_id, archived=True
+            )
+            payload.pop("archived_at", None)
+            self._write_json_file(target, payload)
+            source.unlink()
+            return True
 
     def save_message(
         self,
@@ -291,10 +326,7 @@ class SessionManager:
 
         if archive_count > 0:
             archive_path = self.archive_dir / f"{session_id}_{int(self._now())}.json"
-            archive_path.write_text(
-                json.dumps(to_archive, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            self._write_json_file(archive_path, to_archive)
 
         prior = str(session.get("compressed_context", "")).strip()
         if prior and summary.strip():

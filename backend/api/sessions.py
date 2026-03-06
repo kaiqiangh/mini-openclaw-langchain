@@ -110,11 +110,8 @@ async def create_session(
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     session_id = str(uuid.uuid4())
-    payload = manager.load_session(session_id)
-
-    if request and request.title:
-        payload["title"] = request.title.strip()
-        manager.save_session(session_id, payload)
+    title = request.title if request and request.title else "New Session"
+    payload = manager.create_session(session_id, title=title)
 
     response.headers["Location"] = f"/api/v1/agents/{agent_id}/sessions/{session_id}"
     return {
@@ -187,7 +184,7 @@ async def get_messages(
     agent, manager = _resolve_session_manager(agent_id)
 
     try:
-        session = manager.load_session(session_id, archived=archived)
+        session = manager.load_existing_session(session_id, archived=archived)
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     if agent.config is None:
@@ -226,7 +223,7 @@ async def get_history(
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
     try:
-        session = manager.load_session(session_id, archived=archived)
+        session = manager.load_existing_session(session_id, archived=archived)
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     return {
@@ -249,7 +246,10 @@ async def generate_title(
     session_id: str,
 ) -> dict[str, Any]:
     agent, manager = _resolve_session_manager(agent_id)
-    session = manager.load_session(session_id)
+    try:
+        session = manager.load_existing_session(session_id)
+    except FileNotFoundError as exc:
+        raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
     messages = session.get("messages", [])
     seed = ""

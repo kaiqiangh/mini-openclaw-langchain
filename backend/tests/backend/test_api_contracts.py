@@ -164,6 +164,21 @@ def test_archive_restore_and_delete_archived_session(client):
     assert deleted.content == b""
 
 
+def test_missing_session_reads_return_404_without_creating_files(client, api_app):
+    session_id = "missing-session"
+    session_path = api_app["session_manager"].sessions_dir / f"{session_id}.json"
+    assert not session_path.exists()
+
+    history = client.get(f"/api/v1/agents/default/sessions/{session_id}/history")
+    messages = client.get(f"/api/v1/agents/default/sessions/{session_id}/messages")
+
+    assert history.status_code == 404
+    assert history.json()["error"]["code"] == "not_found"
+    assert messages.status_code == 404
+    assert messages.json()["error"]["code"] == "not_found"
+    assert not session_path.exists()
+
+
 def test_agents_endpoint_and_session_isolation(client):
     created_agent = client.post("/api/v1/agents", json={"agent_id": "agent-b"})
     assert created_agent.status_code == 201
