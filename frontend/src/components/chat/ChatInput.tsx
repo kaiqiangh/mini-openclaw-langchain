@@ -13,11 +13,14 @@ export function ChatInput() {
   return (
     <form
       className="space-y-2 border-t border-[var(--border)] pt-3"
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
         const toSend = draft;
-        setDraft("");
-        void sendMessage(toSend);
+        if (!toSend.trim()) return;
+        const sent = await sendMessage(toSend);
+        if (sent) {
+          setDraft("");
+        }
       }}
     >
       <div className="flex items-center gap-2">

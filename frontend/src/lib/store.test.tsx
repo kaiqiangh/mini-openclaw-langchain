@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AppProvider, useAppStore } from "@/lib/store";
 
@@ -155,6 +155,25 @@ function AgentProbe() {
   );
 }
 
+function StreamProbe() {
+  const store = useAppStore();
+  if (!store.initialized) return <div>booting</div>;
+
+  return (
+    <div>
+      <div data-testid="agent">{store.currentAgentId}</div>
+      <div data-testid="message-count">{store.messages.length}</div>
+      <div data-testid="messages">
+        {store.messages.map((item) => item.content).join("|")}
+      </div>
+      <button onClick={() => void store.sendMessage("hello")}>send</button>
+      <button onClick={() => void store.setCurrentAgent("elon")}>
+        switch-agent
+      </button>
+    </div>
+  );
+}
+
 describe("store editor save flow", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -188,6 +207,26 @@ describe("store editor save flow", () => {
       "edited",
       "default",
     );
+  });
+
+  it("keeps the current file when unsaved changes are not discarded", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    render(
+      <AppProvider>
+        <Probe />
+      </AppProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("booting")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("edit"));
+    fireEvent.click(screen.getByText("switch-file"));
+
+    expect(screen.getByTestId("file")).toHaveTextContent("memory/MEMORY.md");
+    confirmSpy.mockRestore();
   });
 
   it("switches session and file context by selected agent", async () => {
@@ -240,5 +279,54 @@ describe("store editor save flow", () => {
         "content:elon:memory/MEMORY.md",
       ),
     );
+  });
+
+  it("ignores late stream updates after switching agents", async () => {
+    let emit:
+      | ((event: { event: string; data: string }) => void)
+      | null = null;
+    let release: (() => void) | null = null;
+    mockStreamChat.mockImplementationOnce(
+      async (
+        _message: string,
+        _sessionId: string,
+        onEvent: (event: { event: string; data: string }) => void,
+      ) => {
+        emit = onEvent;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    );
+
+    render(
+      <AppProvider>
+        <StreamProbe />
+      </AppProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("booting")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("send"));
+    await waitFor(() => expect(mockStreamChat).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByText("switch-agent"));
+    await waitFor(() =>
+      expect(screen.getByTestId("agent")).toHaveTextContent("elon"),
+    );
+
+    await act(async () => {
+      emit?.({ event: "token", data: JSON.stringify({ content: "stale" }) });
+      emit?.({ event: "done", data: JSON.stringify({ content: "stale" }) });
+      release?.();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("message-count")).toHaveTextContent("0"),
+    );
+    expect(screen.getByTestId("messages")).not.toHaveTextContent("stale");
   });
 });

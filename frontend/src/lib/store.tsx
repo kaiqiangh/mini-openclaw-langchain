@@ -107,8 +107,8 @@ type AppState = {
   deleteSessionById: (sessionId: string, archived?: boolean) => Promise<void>;
   createNewSession: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
-  continueAfterMaxSteps: () => Promise<void>;
+  sendMessage: (content: string) => Promise<boolean>;
+  continueAfterMaxSteps: () => Promise<boolean>;
   cancelAfterMaxSteps: () => Promise<void>;
 };
 
@@ -217,6 +217,10 @@ function isMaxStepsError(payload: unknown): boolean {
   );
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const [ragEnabled, setRagEnabledState] = useState(false);
@@ -239,7 +243,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [maxStepsPrompt, setMaxStepsPrompt] =
     useState<MaxStepsPromptState | null>(null);
   const agentSwitchEpochRef = useRef(0);
+  const streamEpochRef = useRef(0);
+  const streamAbortRef = useRef<AbortController | null>(null);
   const streamConnectionRef = useRef(false);
+
+  const cancelActiveStream = useCallback(() => {
+    streamEpochRef.current += 1;
+    const controller = streamAbortRef.current;
+    streamAbortRef.current = null;
+    if (controller && !controller.signal.aborted) {
+      controller.abort();
+    }
+    streamConnectionRef.current = false;
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -282,6 +298,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setCurrentAgent = useCallback(
     async (agentId: string) => {
       if (agentId === currentAgentId) return;
+      cancelActiveStream();
       const switchEpoch = agentSwitchEpochRef.current + 1;
       agentSwitchEpochRef.current = switchEpoch;
       setError(null);
@@ -319,7 +336,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setError(err instanceof Error ? err.message : "Failed to switch agent");
       }
     },
-    [currentAgentId, loadSession, refreshSessions],
+    [cancelActiveStream, currentAgentId, loadSession, refreshSessions],
   );
 
   const createAgentById = useCallback(
@@ -423,13 +440,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setSelectedFilePath = useCallback(
     async (path: string) => {
+      if (path === selectedFilePath) return;
+      if (
+        fileDirty &&
+        typeof window !== "undefined" &&
+        !window.confirm("Discard unsaved file changes and switch files?")
+      ) {
+        return;
+      }
       setError(null);
       const content = await readWorkspaceFile(path, currentAgentId);
       setSelectedFilePathState(path);
       setSelectedFileContent(content);
       setFileDirty(false);
     },
-    [currentAgentId],
+    [currentAgentId, fileDirty, selectedFilePath],
   );
 
   const updateSelectedFileContent = useCallback((content: string) => {
@@ -459,6 +484,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setSessionsScope = useCallback(
     async (scope: "active" | "archived") => {
       setError(null);
+      if (scope === "archived") {
+        cancelActiveStream();
+      }
       setSessionsScopeState(scope);
       if (scope === "archived") {
         setIsStreaming(false);
@@ -475,7 +503,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setMessages([]);
       }
     },
-    [currentAgentId, loadSession, refreshSessions],
+    [cancelActiveStream, currentAgentId, loadSession, refreshSessions],
   );
 
   const archiveSessionById = useCallback(
@@ -524,15 +552,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       resumeSameTurn?: boolean;
       seedUserMessage?: boolean;
       sessionIdOverride?: string;
-    }) => {
+    }): Promise<boolean> => {
       const trimmed = message.trim();
-      if (!trimmed || isStreaming) return;
+      if (!trimmed || isStreaming) return false;
       if (!resumeSameTurn && sessionsScope === "archived") {
         setError(
           "Archived sessions are read-only. Restore the session to continue chatting.",
         );
-        return;
+        return false;
       }
+
+      const streamEpoch = streamEpochRef.current + 1;
+      streamEpochRef.current = streamEpoch;
+      const streamAbortController = new AbortController();
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = streamAbortController;
+      const streamAgentId = currentAgentId;
+      const isCurrentStream = () =>
+        streamEpochRef.current === streamEpoch &&
+        !streamAbortController.signal.aborted;
 
       setError(null);
       setMaxStepsPrompt(null);
@@ -546,13 +584,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           if (resumeSameTurn) {
             throw new Error("Cannot continue: no active session is available.");
           }
-          const created = await createSession(undefined, currentAgentId);
+          const created = await createSession(undefined, streamAgentId);
+          if (!isCurrentStream()) return false;
           sessionId = created.session_id;
           activeSessionId = created.session_id;
           setCurrentSessionId(sessionId);
-          await refreshSessions(undefined, currentAgentId);
+          await refreshSessions(undefined, streamAgentId);
+          if (!isCurrentStream()) return false;
         }
 
+        if (!isCurrentStream()) return false;
         if (seedUserMessage) {
           const userMessage: ChatMessage = {
             id: genId("user"),
@@ -590,6 +631,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           trimmed,
           sessionId,
           ({ event, data }) => {
+            if (!isCurrentStream()) return;
             let parsed: unknown = data;
             try {
               parsed = data ? JSON.parse(data) : {};
@@ -711,7 +753,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             });
 
             if (event === "title" || event === "done") {
-              void refreshSessions("active", currentAgentId);
+              void refreshSessions("active", streamAgentId);
             }
             if (event === "error") {
               const messageText =
@@ -735,51 +777,66 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               }
             }
           },
-          currentAgentId,
+          streamAgentId,
           resumeSameTurn,
+          streamAbortController.signal,
         );
+        return true;
       } catch (err) {
+        if (!isCurrentStream() || isAbortError(err)) {
+          return false;
+        }
         setError(err instanceof Error ? err.message : "Failed to send message");
+        return false;
       } finally {
-        streamConnectionRef.current = false;
-        try {
-          if (activeSessionId) {
-            const finalSessionId = activeSessionId;
-            const refreshed = await getSessionHistory(
-              finalSessionId,
-              false,
-              currentAgentId,
-            );
-            const mapped: ChatMessage[] = refreshed.messages.map(
-              (msg, idx) => ({
-                ...mapHistoryMessage(finalSessionId, msg, idx),
-              }),
-            );
-            setMessages(mapped);
-            const hasStreaming = refreshed.messages.some((item) =>
-              Boolean(item.streaming),
-            );
-            setIsStreaming(hasStreaming);
-          } else {
-            setIsStreaming(false);
+        if (streamAbortRef.current === streamAbortController) {
+          streamAbortRef.current = null;
+        }
+        if (isCurrentStream()) {
+          streamConnectionRef.current = false;
+          try {
+            if (activeSessionId) {
+              const finalSessionId = activeSessionId;
+              const refreshed = await getSessionHistory(
+                finalSessionId,
+                false,
+                streamAgentId,
+              );
+              if (isCurrentStream()) {
+                const mapped: ChatMessage[] = refreshed.messages.map(
+                  (msg, idx) => ({
+                    ...mapHistoryMessage(finalSessionId, msg, idx),
+                  }),
+                );
+                setMessages(mapped);
+                const hasStreaming = refreshed.messages.some((item) =>
+                  Boolean(item.streaming),
+                );
+                setIsStreaming(hasStreaming);
+              }
+            } else {
+              setIsStreaming(false);
+            }
+          } catch {
+            if (isCurrentStream()) {
+              setIsStreaming(false);
+            }
           }
-        } catch {
-          setIsStreaming(false);
         }
       }
     },
     [
-      currentAgentId,
-      currentSessionId,
-      isStreaming,
-      refreshSessions,
-      sessionsScope,
+        currentAgentId,
+        currentSessionId,
+        isStreaming,
+        refreshSessions,
+        sessionsScope,
     ],
   );
 
   const sendMessage = useCallback(
     async (content: string) => {
-      await runStreamTurn({
+      return runStreamTurn({
         message: content,
         resumeSameTurn: false,
         seedUserMessage: true,
@@ -789,8 +846,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const continueAfterMaxSteps = useCallback(async () => {
-    if (!maxStepsPrompt) return;
-    await runStreamTurn({
+    if (!maxStepsPrompt) return false;
+    return runStreamTurn({
       message: maxStepsPrompt.message,
       sessionIdOverride: maxStepsPrompt.sessionId,
       resumeSameTurn: true,
@@ -802,8 +859,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!maxStepsPrompt) return;
     const targetSessionId = maxStepsPrompt.sessionId;
     setMaxStepsPrompt(null);
+    cancelActiveStream();
     setIsStreaming(false);
-    streamConnectionRef.current = false;
     setError(null);
     try {
       await generateSessionTitle(targetSessionId, currentAgentId);
@@ -816,6 +873,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [
     currentAgentId,
+    cancelActiveStream,
     currentSessionId,
     loadSession,
     maxStepsPrompt,
