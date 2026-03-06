@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 import shutil
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -20,7 +19,6 @@ from config import (
     RuntimeConfig,
     load_config,
     load_effective_runtime_config,
-    resolve_active_llm_profile,
     resolve_header_templates,
     runtime_config_digest,
 )
@@ -33,6 +31,14 @@ from graph.session_manager import SessionManager
 from graph.stream_orchestrator import StreamOrchestrator
 from graph.tool_orchestrator import ToolOrchestrator
 from graph.usage_orchestrator import UsageOrchestrator
+from llm_routing import (
+    ResolvedLlmCandidate,
+    ResolvedLlmRoute,
+    classify_llm_failure,
+    inspect_profile_availability,
+    resolve_agent_llm_route,
+    should_fallback_for_error,
+)
 from observability.tracing import build_optional_callbacks
 from storage.run_store import AuditStore
 from storage.usage_store import UsageStore
@@ -54,11 +60,9 @@ class AgentRuntime:
     runtime_config_digest: str
     global_config_mtime_ns: int
     agent_config_mtime_ns: int
-    llm: ChatOpenAI | None = None
-    llm_signature: tuple[float, int, str, str, str, str, str] | None = None
-    llm_profile_name: str = ""
-    llm_provider_id: str = ""
-    llm_base_url: str = ""
+    llm_cache: dict[tuple[float, int, str, str, str, str, str], ChatOpenAI] = field(
+        default_factory=dict
+    )
 
 
 class AgentManager:
@@ -76,6 +80,7 @@ class AgentManager:
         self.usage_orchestrator = UsageOrchestrator()
         self.default_agent_id = "default"
         self._runtimes: dict[str, AgentRuntime] = {}
+        self._app_config_mtime_ns: int = -1
 
     def initialize(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -85,6 +90,7 @@ class AgentManager:
         self.workspace_template_dir.mkdir(parents=True, exist_ok=True)
 
         self.config = load_config(base_dir)
+        self._app_config_mtime_ns = self._config_mtime_ns(base_dir / "config.json")
         self._ensure_workspace_template()
         self._ensure_workspace(self.default_agent_id)
         default_runtime = self.get_runtime(self.default_agent_id)
@@ -145,62 +151,57 @@ class AgentManager:
         return llm_kwargs
 
     @staticmethod
-    def _resolve_profile(config: AppConfig, runtime: RuntimeConfig) -> LLMProfile:
-        return resolve_active_llm_profile(
-            runtime=runtime,
-            llm_profiles=config.llm_profiles,
-            default_llm_profile=config.default_llm_profile,
+    def _tool_loop_override_is_compatible(
+        *,
+        configured_model: str,
+        target_model: str,
+        provider_id: str = "",
+        base_url: str = "",
+    ) -> bool:
+        configured_provider = infer_provider(
+            configured_model,
+            base_url=base_url,
+            explicit_provider=provider_id,
         )
+        target_provider = infer_provider(target_model)
+        if (
+            configured_provider != "unknown"
+            and target_provider != "unknown"
+            and configured_provider != target_provider
+        ):
+            return False
+        return True
 
     @staticmethod
-    def _parse_tool_loop_overrides(raw_value: str) -> dict[str, str]:
-        raw = raw_value.strip()
-        if not raw:
-            return {}
-
-        # Preferred format: JSON object for explicit model -> model mapping.
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                overrides: dict[str, str] = {}
-                for source, target in parsed.items():
-                    source_key = str(source).strip().lower()
-                    target_model = str(target).strip()
-                    if source_key and target_model:
-                        overrides[source_key] = target_model
-                if overrides:
-                    return overrides
-        except Exception:
-            pass
-
-        # Backward compatible format: "source=target,source2=target2".
-        overrides: dict[str, str] = {}
-        for item in raw.split(","):
-            source, sep, target = item.partition("=")
-            if not sep:
-                continue
-            source_key = source.strip().lower()
-            target_model = target.strip()
-            if source_key and target_model:
-                overrides[source_key] = target_model
-        return overrides
-
-    @staticmethod
-    def _resolve_tool_loop_model(configured_model: str, has_tools: bool) -> str:
+    def _resolve_tool_loop_model(
+        configured_model: str,
+        has_tools: bool,
+        provider_id: str = "",
+        base_url: str = "",
+        tool_loop_model: str = "",
+        tool_loop_model_overrides: dict[str, str] | None = None,
+    ) -> str:
         """Select a tool-compatible model when provider requirements demand it."""
         model = configured_model.strip() or "deepseek-chat"
         if not has_tools:
             return model
 
-        global_override = (os.getenv("TOOL_LOOP_MODEL", "") or "").strip()
-        if global_override:
-            return global_override
+        if tool_loop_model and AgentManager._tool_loop_override_is_compatible(
+            configured_model=model,
+            target_model=tool_loop_model,
+            provider_id=provider_id,
+            base_url=base_url,
+        ):
+            return tool_loop_model
 
         configured_key = model.lower()
-        map_override = AgentManager._parse_tool_loop_overrides(
-            os.getenv("TOOL_LOOP_MODEL_OVERRIDES", "") or ""
-        ).get(configured_key)
-        if map_override:
+        map_override = (tool_loop_model_overrides or {}).get(configured_key)
+        if map_override and AgentManager._tool_loop_override_is_compatible(
+            configured_model=model,
+            target_model=map_override,
+            provider_id=provider_id,
+            base_url=base_url,
+        ):
             return map_override
 
         return model
@@ -242,6 +243,15 @@ class AgentManager:
         if not path.exists():
             return -1
         return path.stat().st_mtime_ns
+
+    def _refresh_app_config(self) -> AppConfig:
+        base_dir, _ = self._require_initialized()
+        config_path = self._global_config_path()
+        mtime = self._config_mtime_ns(config_path)
+        if self.config is None or self._app_config_mtime_ns != mtime:
+            self.config = load_config(base_dir)
+            self._app_config_mtime_ns = mtime
+        return self.config
 
     def _runtime_config_paths(self, workspace_root: Path) -> tuple[Path, Path]:
         return self._global_config_path(), workspace_root / "config.json"
@@ -486,10 +496,15 @@ class AgentManager:
             except Exception:
                 continue
 
-    def _get_runtime_llm(self, runtime: AgentRuntime) -> ChatOpenAI:
-        if self.config is None:
-            raise RuntimeError("AgentManager is not initialized")
-        profile = self._resolve_profile(self.config, runtime.runtime_config)
+    def _resolve_llm_route(self, runtime: AgentRuntime) -> ResolvedLlmRoute:
+        config = self._refresh_app_config()
+        return resolve_agent_llm_route(
+            agent_id=runtime.agent_id,
+            runtime=runtime.runtime_config,
+            config=config,
+        )
+
+    def _get_runtime_llm(self, runtime: AgentRuntime, profile: LLMProfile) -> ChatOpenAI:
         api_key = self._profile_api_key(profile)
         signature = (
             runtime.runtime_config.llm_runtime.temperature,
@@ -500,18 +515,17 @@ class AgentManager:
             profile.base_url,
             api_key,
         )
-        if runtime.llm is not None and runtime.llm_signature == signature:
-            return runtime.llm
-        runtime.llm = ChatOpenAI(
+        cached = runtime.llm_cache.get(signature)
+        if cached is not None:
+            return cached
+        llm = ChatOpenAI(
             **self._build_llm_kwargs(profile=profile, runtime=runtime.runtime_config)
         )
-        runtime.llm_signature = signature
-        runtime.llm_profile_name = profile.profile_name
-        runtime.llm_provider_id = profile.provider_id
-        runtime.llm_base_url = profile.base_url
-        return runtime.llm
+        runtime.llm_cache[signature] = llm
+        return llm
 
     def get_runtime(self, agent_id: str = "default") -> AgentRuntime:
+        self._refresh_app_config()
         normalized = self._normalize_agent_id(agent_id)
         runtime = self._runtimes.get(normalized)
         if runtime is None:
@@ -530,7 +544,12 @@ class AgentManager:
     def get_usage_store(self, agent_id: str = "default") -> UsageStore:
         return self.get_runtime(agent_id).usage_store
 
+    def get_llm_status(self, agent_id: str = "default") -> dict[str, Any]:
+        runtime = self.get_runtime(agent_id)
+        return self._resolve_llm_route(runtime).to_status_dict()
+
     def list_agents(self) -> list[dict[str, Any]]:
+        self._refresh_app_config()
         _, workspaces_dir = self._require_initialized()
         rows: list[dict[str, Any]] = []
         for item in sorted(workspaces_dir.iterdir(), key=lambda p: p.name):
@@ -549,6 +568,18 @@ class AgentManager:
                 else 0
             )
             stat = item.stat()
+            llm_status = {
+                "valid": False,
+                "runnable": False,
+                "default_profile": "",
+                "fallback_profiles": [],
+                "warnings": [],
+                "errors": ["Failed to resolve agent LLM status"],
+            }
+            try:
+                llm_status = self.get_llm_status(item.name)
+            except Exception as exc:  # noqa: BLE001
+                llm_status["errors"] = [str(exc)]
             rows.append(
                 {
                     "agent_id": item.name,
@@ -557,6 +588,7 @@ class AgentManager:
                     "updated_at": float(stat.st_mtime),
                     "active_sessions": active_sessions,
                     "archived_sessions": archived_sessions,
+                    "llm_status": llm_status,
                 }
             )
         return rows
@@ -610,6 +642,55 @@ class AgentManager:
             *build_optional_callbacks(run_id=run_id),
         ], usage_capture
 
+    @staticmethod
+    def _candidate_unavailable_message(
+        agent_id: str,
+        candidate: ResolvedLlmCandidate,
+        reasons: tuple[str, ...],
+    ) -> str:
+        return (
+            f"Agent '{agent_id}' {candidate.source} profile '{candidate.profile_name}' "
+            f"is unavailable: {', '.join(reasons)}"
+        )
+
+    @staticmethod
+    def _route_error_message(route: ResolvedLlmRoute) -> str:
+        errors = [item.strip() for item in route.errors if str(item).strip()]
+        if errors:
+            return "; ".join(errors)
+        return f"Agent '{route.agent_id}' has no valid LLM route configured"
+
+    def _append_llm_route_event(
+        self,
+        *,
+        runtime: AgentRuntime,
+        run_id: str,
+        session_id: str,
+        trigger_type: str,
+        event: str,
+        details: dict[str, Any],
+    ) -> None:
+        runtime.audit_store.append_step(
+            run_id=run_id,
+            session_id=session_id,
+            trigger_type=trigger_type,
+            event=event,
+            details=details,
+        )
+
+    def _resolve_auxiliary_llm_candidate(
+        self,
+        runtime: AgentRuntime,
+    ) -> ResolvedLlmCandidate | None:
+        route = self._resolve_llm_route(runtime)
+        if not route.valid:
+            return None
+        for candidate in route.candidates:
+            availability = inspect_profile_availability(candidate.profile)
+            if availability.available:
+                return candidate
+        return None
+
     def _build_agent(
         self,
         *,
@@ -622,6 +703,7 @@ class AgentManager:
         session_id: str,
         runtime_root: Path,
         runtime_audit_store: AuditStore,
+        llm_route: ResolvedLlmRoute,
         response_format: Any | None = None,
     ) -> tuple[Any, str]:
         if self.base_dir is None:
@@ -638,7 +720,14 @@ class AgentManager:
             runtime_audit_store=runtime_audit_store,
             system_prompt=system_prompt,
             response_format=response_format,
-            resolve_tool_loop_model=self._resolve_tool_loop_model,
+            resolve_tool_loop_model=lambda configured_model, has_tools, provider_id, base_url: self._resolve_tool_loop_model(
+                configured_model,
+                has_tools,
+                provider_id,
+                base_url,
+                llm_route.tool_loop_model,
+                llm_route.tool_loop_model_overrides,
+            ),
             build_llm_kwargs=self._build_llm_kwargs,
         )
         return built.agent, built.selected_model
@@ -784,7 +873,10 @@ class AgentManager:
         if self.config is None:
             return seed_text[:10] or "New Session"
         runtime = self.get_runtime(agent_id)
-        llm = self._get_runtime_llm(runtime)
+        candidate = self._resolve_auxiliary_llm_candidate(runtime)
+        if candidate is None:
+            return seed_text[:40] or "New Session"
+        llm = self._get_runtime_llm(runtime, candidate.profile)
 
         prompt = (
             "Generate a short session title in plain English, at most 10 words. "
@@ -808,7 +900,14 @@ class AgentManager:
             )
             return joined[:500]
         runtime = self.get_runtime(agent_id)
-        llm = self._get_runtime_llm(runtime)
+        candidate = self._resolve_auxiliary_llm_candidate(runtime)
+        if candidate is None:
+            corpus = "\n".join(
+                f"{m.get('role', 'user')}: {str(m.get('content', ''))[:200]}"
+                for m in messages
+            )
+            return corpus[:500]
+        llm = self._get_runtime_llm(runtime, candidate.profile)
 
         corpus = "\n".join(
             f"{m.get('role', 'user')}: {str(m.get('content', ''))[:200]}"
@@ -856,10 +955,9 @@ class AgentManager:
             raise RuntimeError("AgentManager must be initialized before run_once().")
         runtime_state = self.get_runtime(agent_id)
         effective_runtime = runtime_state.runtime_config
-        llm = self._get_runtime_llm(runtime_state)
-        if self.config is None:
-            raise RuntimeError("AgentManager is not initialized")
-        llm_profile = self._resolve_profile(self.config, effective_runtime)
+        route = self._resolve_llm_route(runtime_state)
+        if not route.valid:
+            raise RuntimeError(self._route_error_message(route))
 
         retrieval_envelope = RetrievalOrchestrator.build_envelope(
             runtime=effective_runtime,
@@ -885,93 +983,201 @@ class AgentManager:
 
             response_schema = RunJsonResponse
 
-        run_id = str(uuid.uuid4())
-        agent, active_model = self._build_agent(
-            llm=llm,
-            llm_profile=llm_profile,
-            runtime=effective_runtime,
-            system_prompt=system_prompt,
-            trigger_type=trigger_type,
-            run_id=run_id,
-            session_id=session_id,
-            runtime_root=runtime_state.root_dir,
-            runtime_audit_store=runtime_state.audit_store,
-            response_format=response_schema,
-        )
+        last_error: Exception | None = None
+        for candidate_index, candidate in enumerate(route.candidates):
+            availability = inspect_profile_availability(candidate.profile)
+            if not availability.available:
+                unavailable_message = self._candidate_unavailable_message(
+                    runtime_state.agent_id,
+                    candidate,
+                    availability.reasons,
+                )
+                skipped_run_id = str(uuid.uuid4())
+                self._append_llm_route_event(
+                    runtime=runtime_state,
+                    run_id=skipped_run_id,
+                    session_id=session_id,
+                    trigger_type=trigger_type,
+                    event="llm_route_skipped",
+                    details={
+                        "profile": candidate.profile_name,
+                        "source": candidate.source,
+                        "reasons": list(availability.reasons),
+                    },
+                )
+                if candidate.source == "default":
+                    raise RuntimeError(unavailable_message)
+                continue
 
-        callbacks, usage_capture = self._build_callbacks(
-            run_id=run_id,
-            session_id=session_id,
-            trigger_type=trigger_type,
-            runtime_root=runtime_state.root_dir,
-            runtime_audit_store=runtime_state.audit_store,
-        )
-        config = {
-            "recursion_limit": effective_runtime.agent_runtime.max_steps,
-            "callbacks": callbacks,
-            "configurable": {"thread_id": session_id},
-        }
+            llm = self._get_runtime_llm(runtime_state, candidate.profile)
+            for attempt in range(effective_runtime.agent_runtime.max_retries + 1):
+                run_id = str(uuid.uuid4())
+                self._append_llm_route_event(
+                    runtime=runtime_state,
+                    run_id=run_id,
+                    session_id=session_id,
+                    trigger_type=trigger_type,
+                    event="llm_route_resolved",
+                    details={
+                        "profile": candidate.profile_name,
+                        "source": candidate.source,
+                        "candidate_index": candidate_index,
+                        "attempt": attempt + 1,
+                    },
+                )
+                if candidate.source == "fallback":
+                    self._append_llm_route_event(
+                        runtime=runtime_state,
+                        run_id=run_id,
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        event="llm_fallback_selected",
+                        details={
+                            "profile": candidate.profile_name,
+                            "candidate_index": candidate_index,
+                            "attempt": attempt + 1,
+                        },
+                    )
+                try:
+                    agent, active_model = self._build_agent(
+                        llm=llm,
+                        llm_profile=candidate.profile,
+                        runtime=effective_runtime,
+                        system_prompt=system_prompt,
+                        trigger_type=trigger_type,
+                        run_id=run_id,
+                        session_id=session_id,
+                        runtime_root=runtime_state.root_dir,
+                        runtime_audit_store=runtime_state.audit_store,
+                        llm_route=route,
+                        response_format=response_schema,
+                    )
 
-        result = await agent.ainvoke({"messages": messages}, config=config)
-        usage_payload: dict[str, Any] | None = None
-        default_provider = infer_provider(
-            active_model,
-            base_url=llm_profile.base_url,
-            explicit_provider=llm_profile.provider_id,
-        )
-        usage_state: dict[str, Any] = self.usage_orchestrator.initial_usage_state(
-            provider=default_provider,
-            model=active_model,
-        )
-        usage_sources: dict[str, dict[str, int]] = {}
+                    callbacks, usage_capture = self._build_callbacks(
+                        run_id=run_id,
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        runtime_root=runtime_state.root_dir,
+                        runtime_audit_store=runtime_state.audit_store,
+                    )
+                    config = {
+                        "recursion_limit": effective_runtime.agent_runtime.max_steps,
+                        "callbacks": callbacks,
+                        "configurable": {"thread_id": session_id},
+                    }
 
-        captured_messages = usage_capture.snapshot()
-        self._accumulate_usage_from_messages(
-            usage_state=usage_state,
-            usage_sources=usage_sources,
-            messages=captured_messages,
-            source_prefix=f"llm_end:{run_id}",
-            fallback_model=active_model,
-            fallback_base_url=llm_profile.base_url,
-            fallback_provider=llm_profile.provider_id,
-        )
+                    result = await agent.ainvoke({"messages": messages}, config=config)
+                    usage_payload: dict[str, Any] | None = None
+                    default_provider = infer_provider(
+                        active_model,
+                        base_url=candidate.profile.base_url,
+                        explicit_provider=candidate.profile.provider_id,
+                    )
+                    usage_state: dict[str, Any] = (
+                        self.usage_orchestrator.initial_usage_state(
+                            provider=default_provider,
+                            model=active_model,
+                        )
+                    )
+                    usage_sources: dict[str, dict[str, int]] = {}
 
-        output_messages = result.get("messages", [])
-        if (
-            isinstance(output_messages, list)
-            and self._as_int(usage_state.get("total_tokens", 0)) <= 0
-        ):
-            # Fallback for providers/environments where callback payloads are sparse.
-            self._accumulate_usage_from_messages(
-                usage_state=usage_state,
-                usage_sources=usage_sources,
-                messages=output_messages,
-                source_prefix=f"result:{run_id}",
-                fallback_model=active_model,
-                fallback_base_url=llm_profile.base_url,
-                fallback_provider=llm_profile.provider_id,
-            )
+                    captured_messages = usage_capture.snapshot()
+                    self._accumulate_usage_from_messages(
+                        usage_state=usage_state,
+                        usage_sources=usage_sources,
+                        messages=captured_messages,
+                        source_prefix=f"llm_end:{run_id}",
+                        fallback_model=active_model,
+                        fallback_base_url=candidate.profile.base_url,
+                        fallback_provider=candidate.profile.provider_id,
+                    )
 
-        if self._as_int(usage_state.get("total_tokens", 0)) > 0:
-            usage_payload = self._record_usage(
-                usage=usage_state,
-                run_id=run_id,
-                session_id=session_id,
-                trigger_type=trigger_type,
-                agent_id=agent_id,
-                usage_store=runtime_state.usage_store,
-            )
+                    output_messages = result.get("messages", [])
+                    if (
+                        isinstance(output_messages, list)
+                        and self._as_int(usage_state.get("total_tokens", 0)) <= 0
+                    ):
+                        # Fallback for providers/environments where callback payloads are sparse.
+                        self._accumulate_usage_from_messages(
+                            usage_state=usage_state,
+                            usage_sources=usage_sources,
+                            messages=output_messages,
+                            source_prefix=f"result:{run_id}",
+                            fallback_model=active_model,
+                            fallback_base_url=candidate.profile.base_url,
+                            fallback_provider=candidate.profile.provider_id,
+                        )
 
-        if output_format == "json":
-            return {
-                "structured_response": result.get("structured_response"),
-                "messages": result.get("messages", []),
-                "usage": usage_payload or {},
-            }
-        text = ""
-        if output_messages:
-            text = self._as_text(getattr(output_messages[-1], "content", ""))
-        return {"text": text, "messages": output_messages, "usage": usage_payload or {}}
+                    if self._as_int(usage_state.get("total_tokens", 0)) > 0:
+                        usage_payload = self._record_usage(
+                            usage=usage_state,
+                            run_id=run_id,
+                            session_id=session_id,
+                            trigger_type=trigger_type,
+                            agent_id=agent_id,
+                            usage_store=runtime_state.usage_store,
+                        )
+
+                    if output_format == "json":
+                        return {
+                            "structured_response": result.get("structured_response"),
+                            "messages": result.get("messages", []),
+                            "usage": usage_payload or {},
+                        }
+                    text = ""
+                    if output_messages:
+                        text = self._as_text(
+                            getattr(output_messages[-1], "content", "")
+                        )
+                    return {
+                        "text": text,
+                        "messages": output_messages,
+                        "usage": usage_payload or {},
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if attempt < effective_runtime.agent_runtime.max_retries:
+                        await asyncio.sleep(0.5 * (2**attempt))
+                        continue
+
+                    failure_kind = classify_llm_failure(exc)
+                    has_more_candidates = candidate_index + 1 < len(route.candidates)
+                    if has_more_candidates and should_fallback_for_error(
+                        route.fallback_policy, failure_kind
+                    ):
+                        next_candidate = route.candidates[candidate_index + 1]
+                        self._append_llm_route_event(
+                            runtime=runtime_state,
+                            run_id=run_id,
+                            session_id=session_id,
+                            trigger_type=trigger_type,
+                            event="llm_fallback_attempt",
+                            details={
+                                "from_profile": candidate.profile_name,
+                                "to_profile": next_candidate.profile_name,
+                                "failure_kind": failure_kind,
+                                "error": str(exc),
+                            },
+                        )
+                        break
+
+                    self._append_llm_route_event(
+                        runtime=runtime_state,
+                        run_id=run_id,
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        event="llm_route_exhausted",
+                        details={
+                            "profile": candidate.profile_name,
+                            "failure_kind": failure_kind,
+                            "error": str(exc),
+                        },
+                    )
+                    raise
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"Agent '{agent_id}' has no available LLM candidates")
 
     async def astream(
         self,
@@ -986,8 +1192,18 @@ class AgentManager:
             raise RuntimeError("AgentManager must be initialized before astream().")
         runtime_state = self.get_runtime(agent_id)
         effective_runtime = runtime_state.runtime_config
-        llm = self._get_runtime_llm(runtime_state)
-        llm_profile = self._resolve_profile(self.config, effective_runtime)
+        route = self._resolve_llm_route(runtime_state)
+        if not route.valid:
+            yield {
+                "type": "error",
+                "data": {
+                    "error": self._route_error_message(route),
+                    "code": "stream_failed",
+                    "run_id": str(uuid.uuid4()),
+                    "attempt": 0,
+                },
+            }
+            return
 
         retrieval_envelope = RetrievalOrchestrator.build_envelope(
             runtime=effective_runtime,
@@ -1009,333 +1225,463 @@ class AgentManager:
         )
 
         stream_state = StreamLoopState()
+        seed_candidate = route.candidates[0]
         default_provider = infer_provider(
-            llm_profile.model,
-            base_url=llm_profile.base_url,
-            explicit_provider=llm_profile.provider_id,
+            seed_candidate.profile.model,
+            base_url=seed_candidate.profile.base_url,
+            explicit_provider=seed_candidate.profile.provider_id,
         )
         usage_state: dict[str, Any] = self.usage_orchestrator.initial_usage_state(
             provider=default_provider,
-            model=llm_profile.model,
+            model=seed_candidate.profile.model,
         )
         usage_sources: dict[str, dict[str, int]] = {}
         usage_signature = ""
+        attempt_number = 0
 
-        for attempt in range(effective_runtime.agent_runtime.max_retries + 1):
-            run_id = str(uuid.uuid4())
-            try:
-                yield {
-                    "type": "run_start",
-                    "data": {"run_id": run_id, "attempt": attempt + 1},
-                }
-                agent, active_model = self._build_agent(
-                    llm=llm,
-                    llm_profile=llm_profile,
-                    runtime=effective_runtime,
-                    system_prompt=system_prompt,
-                    trigger_type=trigger_type,
-                    run_id=run_id,
-                    session_id=session_id,
-                    runtime_root=runtime_state.root_dir,
-                    runtime_audit_store=runtime_state.audit_store,
-                )
-
-                callbacks, usage_capture = self._build_callbacks(
-                    run_id=run_id,
+        for candidate_index, candidate in enumerate(route.candidates):
+            availability = inspect_profile_availability(candidate.profile)
+            if not availability.available:
+                skipped_run_id = str(uuid.uuid4())
+                self._append_llm_route_event(
+                    runtime=runtime_state,
+                    run_id=skipped_run_id,
                     session_id=session_id,
                     trigger_type=trigger_type,
-                    runtime_root=runtime_state.root_dir,
-                    runtime_audit_store=runtime_state.audit_store,
+                    event="llm_route_skipped",
+                    details={
+                        "profile": candidate.profile_name,
+                        "source": candidate.source,
+                        "reasons": list(availability.reasons),
+                    },
                 )
-                usage_capture_offset = 0
-                usage_state["provider"] = infer_provider(
-                    active_model,
-                    base_url=llm_profile.base_url,
-                    explicit_provider=llm_profile.provider_id,
-                )
-                usage_state["model"] = active_model
+                if candidate.source == "default":
+                    yield {
+                        "type": "error",
+                        "data": {
+                            "error": self._candidate_unavailable_message(
+                                runtime_state.agent_id,
+                                candidate,
+                                availability.reasons,
+                            ),
+                            "code": "stream_failed",
+                            "run_id": skipped_run_id,
+                            "attempt": attempt_number,
+                        },
+                    }
+                    return
+                continue
 
-                config = {
-                    "recursion_limit": effective_runtime.agent_runtime.max_steps,
-                    "callbacks": callbacks,
-                    "configurable": {"thread_id": session_id},
-                }
+            llm = self._get_runtime_llm(runtime_state, candidate.profile)
+            for retry_index in range(effective_runtime.agent_runtime.max_retries + 1):
+                attempt_number += 1
+                run_id = str(uuid.uuid4())
+                try:
+                    self._append_llm_route_event(
+                        runtime=runtime_state,
+                        run_id=run_id,
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        event="llm_route_resolved",
+                        details={
+                            "profile": candidate.profile_name,
+                            "source": candidate.source,
+                            "candidate_index": candidate_index,
+                            "attempt": attempt_number,
+                        },
+                    )
+                    if candidate.source == "fallback":
+                        self._append_llm_route_event(
+                            runtime=runtime_state,
+                            run_id=run_id,
+                            session_id=session_id,
+                            trigger_type=trigger_type,
+                            event="llm_fallback_selected",
+                            details={
+                                "profile": candidate.profile_name,
+                                "candidate_index": candidate_index,
+                                "attempt": attempt_number,
+                            },
+                        )
 
-                async for mode, chunk in agent.astream(
-                    {"messages": messages},
-                    stream_mode=["updates", "messages"],
-                    config=config,
-                ):
-                    if mode == "updates" and isinstance(chunk, dict):
-                        for node, payload in chunk.items():
-                            if not isinstance(payload, dict):
-                                continue
-                            msgs = payload.get("messages", [])
-                            if not isinstance(msgs, list) or not msgs:
-                                continue
-                            latest = msgs[-1]
-                            yield {
-                                "type": "agent_update",
-                                "data": {
-                                    "run_id": run_id,
-                                    "node": node,
-                                    "message_count": len(msgs),
-                                    "preview": self._as_text(
-                                        getattr(latest, "content", "")
-                                    )[:500],
-                                },
-                            }
-                            stream_state.emitted_agent_update = True
+                    yield {
+                        "type": "run_start",
+                        "data": {"run_id": run_id, "attempt": attempt_number},
+                    }
+                    agent, active_model = self._build_agent(
+                        llm=llm,
+                        llm_profile=candidate.profile,
+                        runtime=effective_runtime,
+                        system_prompt=system_prompt,
+                        trigger_type=trigger_type,
+                        run_id=run_id,
+                        session_id=session_id,
+                        runtime_root=runtime_state.root_dir,
+                        runtime_audit_store=runtime_state.audit_store,
+                        llm_route=route,
+                    )
 
-                            if node == "model":
-                                tool_calls = getattr(latest, "tool_calls", None)
-                                if isinstance(tool_calls, list) and tool_calls:
-                                    for call in tool_calls:
+                    callbacks, usage_capture = self._build_callbacks(
+                        run_id=run_id,
+                        session_id=session_id,
+                        trigger_type=trigger_type,
+                        runtime_root=runtime_state.root_dir,
+                        runtime_audit_store=runtime_state.audit_store,
+                    )
+                    usage_capture_offset = 0
+                    usage_state["provider"] = infer_provider(
+                        active_model,
+                        base_url=candidate.profile.base_url,
+                        explicit_provider=candidate.profile.provider_id,
+                    )
+                    usage_state["model"] = active_model
+
+                    config = {
+                        "recursion_limit": effective_runtime.agent_runtime.max_steps,
+                        "callbacks": callbacks,
+                        "configurable": {"thread_id": session_id},
+                    }
+
+                    async for mode, chunk in agent.astream(
+                        {"messages": messages},
+                        stream_mode=["updates", "messages"],
+                        config=config,
+                    ):
+                        if mode == "updates" and isinstance(chunk, dict):
+                            for node, payload in chunk.items():
+                                if not isinstance(payload, dict):
+                                    continue
+                                msgs = payload.get("messages", [])
+                                if not isinstance(msgs, list) or not msgs:
+                                    continue
+                                latest = msgs[-1]
+                                yield {
+                                    "type": "agent_update",
+                                    "data": {
+                                        "run_id": run_id,
+                                        "node": node,
+                                        "message_count": len(msgs),
+                                        "preview": self._as_text(
+                                            getattr(latest, "content", "")
+                                        )[:500],
+                                    },
+                                }
+                                stream_state.emitted_agent_update = True
+
+                                if node == "model":
+                                    tool_calls = getattr(latest, "tool_calls", None)
+                                    if isinstance(tool_calls, list) and tool_calls:
+                                        for call in tool_calls:
+                                            yield {
+                                                "type": "tool_start",
+                                                "data": {
+                                                    "run_id": run_id,
+                                                    "tool": str(
+                                                        call.get("name", "unknown")
+                                                    ),
+                                                    "input": call.get("args", {}),
+                                                },
+                                            }
+                                    else:
+                                        content = self._as_text(
+                                            getattr(latest, "content", "")
+                                        )
+                                        if content:
+                                            stream_state.fallback_final_text = content
+                                            if stream_state.token_source is None:
+                                                delta = self._diff_incremental(
+                                                    stream_state.latest_model_snapshot,
+                                                    content,
+                                                )
+                                                stream_state.latest_model_snapshot = (
+                                                    content
+                                                )
+                                                if delta:
+                                                    if (
+                                                        stream_state.pending_new_response
+                                                    ):
+                                                        yield {
+                                                            "type": "new_response",
+                                                            "data": {},
+                                                        }
+                                                        stream_state.pending_new_response = (
+                                                            False
+                                                        )
+                                                    stream_state.token_source = "updates"
+                                                    stream_state.final_tokens.append(
+                                                        delta
+                                                    )
+                                                    yield {
+                                                        "type": "token",
+                                                        "data": {
+                                                            "content": delta,
+                                                            "source": "updates",
+                                                        },
+                                                    }
+
+                                        for reasoning in self._extract_reasoning_text(
+                                            latest
+                                        ):
+                                            normalized = reasoning.strip()
+                                            if (
+                                                not normalized
+                                                or normalized
+                                                in stream_state.emitted_reasoning
+                                            ):
+                                                continue
+                                            stream_state.emitted_reasoning.add(
+                                                normalized
+                                            )
+                                            yield {
+                                                "type": "reasoning",
+                                                "data": {
+                                                    "run_id": run_id,
+                                                    "content": normalized[:1000],
+                                                },
+                                            }
+
+                                if node == "tools":
+                                    for tool_msg in msgs:
                                         yield {
-                                            "type": "tool_start",
+                                            "type": "tool_end",
                                             "data": {
                                                 "run_id": run_id,
                                                 "tool": str(
-                                                    call.get("name", "unknown")
-                                                ),
-                                                "input": call.get("args", {}),
-                                            },
-                                        }
-                                else:
-                                    content = self._as_text(
-                                        getattr(latest, "content", "")
-                                    )
-                                    if content:
-                                        stream_state.fallback_final_text = content
-                                        if stream_state.token_source is None:
-                                            delta = self._diff_incremental(
-                                                stream_state.latest_model_snapshot,
-                                                content,
-                                            )
-                                            stream_state.latest_model_snapshot = content
-                                            if delta:
-                                                if stream_state.pending_new_response:
-                                                    yield {
-                                                        "type": "new_response",
-                                                        "data": {},
-                                                    }
-                                                    stream_state.pending_new_response = (
-                                                        False
+                                                    getattr(tool_msg, "name", None)
+                                                    or getattr(
+                                                        tool_msg,
+                                                        "tool_call_id",
+                                                        "tool",
                                                     )
-                                                stream_state.token_source = "updates"
-                                                stream_state.final_tokens.append(delta)
-                                                yield {
-                                                    "type": "token",
-                                                    "data": {
-                                                        "content": delta,
-                                                        "source": "updates",
-                                                    },
-                                                }
-
-                                    for reasoning in self._extract_reasoning_text(
-                                        latest
-                                    ):
-                                        normalized = reasoning.strip()
-                                        if (
-                                            not normalized
-                                            or normalized
-                                            in stream_state.emitted_reasoning
-                                        ):
-                                            continue
-                                        stream_state.emitted_reasoning.add(normalized)
-                                        yield {
-                                            "type": "reasoning",
-                                            "data": {
-                                                "run_id": run_id,
-                                                "content": normalized[:1000],
+                                                ),
+                                                "output": self._as_text(
+                                                    getattr(tool_msg, "content", "")
+                                                ),
                                             },
                                         }
+                                        stream_state.pending_new_response = True
 
-                            if node == "tools":
-                                for tool_msg in msgs:
+                        if (
+                            mode == "messages"
+                            and isinstance(chunk, tuple)
+                            and len(chunk) == 2
+                        ):
+                            token, metadata = chunk
+                            node = (
+                                metadata.get("langgraph_node", "")
+                                if isinstance(metadata, dict)
+                                else ""
+                            )
+                            if node != "model":
+                                continue
+
+                            if stream_state.token_source not in {None, "messages"}:
+                                continue
+
+                            if not stream_state.emitted_agent_update:
+                                yield {
+                                    "type": "agent_update",
+                                    "data": {
+                                        "run_id": run_id,
+                                        "node": "model",
+                                        "message_count": 1,
+                                        "preview": "Streaming token output",
+                                    },
+                                }
+                                stream_state.emitted_agent_update = True
+
+                            for text in self._extract_token_text(token):
+                                if not text:
+                                    continue
+                                stream_state.token_source = "messages"
+                                if stream_state.pending_new_response:
+                                    yield {"type": "new_response", "data": {}}
+                                    stream_state.pending_new_response = False
+                                stream_state.final_tokens.append(text)
+                                yield {
+                                    "type": "token",
+                                    "data": {
+                                        "content": text,
+                                        "source": "messages",
+                                    },
+                                }
+
+                        captured_messages = usage_capture.snapshot()
+                        if usage_capture_offset < len(captured_messages):
+                            usage_changed = self._accumulate_usage_from_messages(
+                                usage_state=usage_state,
+                                usage_sources=usage_sources,
+                                messages=captured_messages[usage_capture_offset:],
+                                source_prefix=f"llm_end:{run_id}",
+                                fallback_model=active_model,
+                                fallback_base_url=candidate.profile.base_url,
+                                fallback_provider=candidate.profile.provider_id,
+                                source_offset=usage_capture_offset,
+                            )
+                            usage_capture_offset = len(captured_messages)
+                            if usage_changed:
+                                signature = self._usage_signature(usage_state)
+                                if signature != usage_signature:
+                                    usage_signature = signature
+                                    cost = calculate_cost_breakdown(
+                                        provider=str(
+                                            usage_state.get("provider", "unknown")
+                                        ),
+                                        model=str(usage_state.get("model", "unknown")),
+                                        input_tokens=self._as_int(
+                                            usage_state.get("input_tokens", 0)
+                                        ),
+                                        input_uncached_tokens=self._as_int(
+                                            usage_state.get(
+                                                "input_uncached_tokens", 0
+                                            )
+                                        ),
+                                        input_cache_read_tokens=self._as_int(
+                                            usage_state.get(
+                                                "input_cache_read_tokens", 0
+                                            )
+                                        ),
+                                        input_cache_write_tokens_5m=self._as_int(
+                                            usage_state.get(
+                                                "input_cache_write_tokens_5m", 0
+                                            )
+                                        ),
+                                        input_cache_write_tokens_1h=self._as_int(
+                                            usage_state.get(
+                                                "input_cache_write_tokens_1h", 0
+                                            )
+                                        ),
+                                        input_cache_write_tokens_unknown=self._as_int(
+                                            usage_state.get(
+                                                "input_cache_write_tokens_unknown",
+                                                0,
+                                            )
+                                        ),
+                                        output_tokens=self._as_int(
+                                            usage_state.get("output_tokens", 0)
+                                        ),
+                                    )
                                     yield {
-                                        "type": "tool_end",
+                                        "type": "usage",
                                         "data": {
                                             "run_id": run_id,
-                                            "tool": str(
-                                                getattr(tool_msg, "name", None)
-                                                or getattr(
-                                                    tool_msg, "tool_call_id", "tool"
-                                                )
+                                            "agent_id": agent_id,
+                                            "provider": usage_state.get(
+                                                "provider", "unknown"
                                             ),
-                                            "output": self._as_text(
-                                                getattr(tool_msg, "content", "")
+                                            "model": usage_state.get(
+                                                "model", "unknown"
                                             ),
+                                            **usage_state,
+                                            "pricing": cost,
+                                            "priced": bool(
+                                                cost.get("priced", False)
+                                            ),
+                                            "cost_usd": cost.get("total_cost_usd"),
                                         },
                                     }
-                                    stream_state.pending_new_response = True
-
-                    if (
-                        mode == "messages"
-                        and isinstance(chunk, tuple)
-                        and len(chunk) == 2
-                    ):
-                        token, metadata = chunk
-                        node = (
-                            metadata.get("langgraph_node", "")
-                            if isinstance(metadata, dict)
-                            else ""
-                        )
-                        if node != "model":
-                            continue
-
-                        if stream_state.token_source not in {None, "messages"}:
-                            continue
-
-                        if not stream_state.emitted_agent_update:
-                            yield {
-                                "type": "agent_update",
-                                "data": {
-                                    "run_id": run_id,
-                                    "node": "model",
-                                    "message_count": 1,
-                                    "preview": "Streaming token output",
-                                },
-                            }
-                            stream_state.emitted_agent_update = True
-
-                        for text in self._extract_token_text(token):
-                            if not text:
-                                continue
-                            stream_state.token_source = "messages"
-                            if stream_state.pending_new_response:
-                                yield {"type": "new_response", "data": {}}
-                                stream_state.pending_new_response = False
-                            stream_state.final_tokens.append(text)
-                            yield {
-                                "type": "token",
-                                "data": {"content": text, "source": "messages"},
-                            }
 
                     captured_messages = usage_capture.snapshot()
                     if usage_capture_offset < len(captured_messages):
-                        usage_changed = self._accumulate_usage_from_messages(
+                        self._accumulate_usage_from_messages(
                             usage_state=usage_state,
                             usage_sources=usage_sources,
                             messages=captured_messages[usage_capture_offset:],
                             source_prefix=f"llm_end:{run_id}",
                             fallback_model=active_model,
-                            fallback_base_url=llm_profile.base_url,
-                            fallback_provider=llm_profile.provider_id,
+                            fallback_base_url=candidate.profile.base_url,
+                            fallback_provider=candidate.profile.provider_id,
                             source_offset=usage_capture_offset,
                         )
-                        usage_capture_offset = len(captured_messages)
-                        if usage_changed:
-                            signature = self._usage_signature(usage_state)
-                            if signature != usage_signature:
-                                usage_signature = signature
-                                cost = calculate_cost_breakdown(
-                                    provider=str(
-                                        usage_state.get("provider", "unknown")
-                                    ),
-                                    model=str(usage_state.get("model", "unknown")),
-                                    input_tokens=self._as_int(
-                                        usage_state.get("input_tokens", 0)
-                                    ),
-                                    input_uncached_tokens=self._as_int(
-                                        usage_state.get("input_uncached_tokens", 0)
-                                    ),
-                                    input_cache_read_tokens=self._as_int(
-                                        usage_state.get("input_cache_read_tokens", 0)
-                                    ),
-                                    input_cache_write_tokens_5m=self._as_int(
-                                        usage_state.get(
-                                            "input_cache_write_tokens_5m", 0
-                                        )
-                                    ),
-                                    input_cache_write_tokens_1h=self._as_int(
-                                        usage_state.get(
-                                            "input_cache_write_tokens_1h", 0
-                                        )
-                                    ),
-                                    input_cache_write_tokens_unknown=self._as_int(
-                                        usage_state.get(
-                                            "input_cache_write_tokens_unknown",
-                                            0,
-                                        )
-                                    ),
-                                    output_tokens=self._as_int(
-                                        usage_state.get("output_tokens", 0)
-                                    ),
-                                )
-                                yield {
-                                    "type": "usage",
-                                    "data": {
-                                        "run_id": run_id,
-                                        "agent_id": agent_id,
-                                        "provider": usage_state.get(
-                                            "provider", "unknown"
-                                        ),
-                                        "model": usage_state.get("model", "unknown"),
-                                        **usage_state,
-                                        "pricing": cost,
-                                        "priced": bool(cost.get("priced", False)),
-                                        "cost_usd": cost.get("total_cost_usd"),
-                                    },
-                                }
 
-                captured_messages = usage_capture.snapshot()
-                if usage_capture_offset < len(captured_messages):
-                    self._accumulate_usage_from_messages(
-                        usage_state=usage_state,
-                        usage_sources=usage_sources,
-                        messages=captured_messages[usage_capture_offset:],
-                        source_prefix=f"llm_end:{run_id}",
-                        fallback_model=active_model,
-                        fallback_base_url=llm_profile.base_url,
-                        fallback_provider=llm_profile.provider_id,
-                        source_offset=usage_capture_offset,
+                    final_content = (
+                        "".join(stream_state.final_tokens).strip()
+                        or stream_state.fallback_final_text
                     )
-                    usage_capture_offset = len(captured_messages)
+                    enriched_usage = {}
+                    if self._as_int(usage_state.get("total_tokens", 0)) > 0:
+                        enriched_usage = self._record_usage(
+                            usage=usage_state,
+                            run_id=run_id,
+                            session_id=session_id,
+                            trigger_type=trigger_type,
+                            agent_id=agent_id,
+                            usage_store=runtime_state.usage_store,
+                        )
+                    yield {
+                        "type": "done",
+                        "data": {
+                            "content": final_content,
+                            "session_id": session_id,
+                            "agent_id": agent_id,
+                            "run_id": run_id,
+                            "token_source": stream_state.token_source or "fallback",
+                            "usage": enriched_usage,
+                        },
+                    }
+                    return
 
-                final_content = (
-                    "".join(stream_state.final_tokens).strip()
-                    or stream_state.fallback_final_text
-                )
-                enriched_usage = {}
-                if self._as_int(usage_state.get("total_tokens", 0)) > 0:
-                    enriched_usage = self._record_usage(
-                        usage=usage_state,
+                except Exception as exc:  # noqa: BLE001
+                    if retry_index < effective_runtime.agent_runtime.max_retries:
+                        await asyncio.sleep(0.5 * (2**retry_index))
+                        continue
+
+                    failure_kind = classify_llm_failure(exc)
+                    has_more_candidates = candidate_index + 1 < len(route.candidates)
+                    if has_more_candidates and should_fallback_for_error(
+                        route.fallback_policy, failure_kind
+                    ):
+                        next_candidate = route.candidates[candidate_index + 1]
+                        self._append_llm_route_event(
+                            runtime=runtime_state,
+                            run_id=run_id,
+                            session_id=session_id,
+                            trigger_type=trigger_type,
+                            event="llm_fallback_attempt",
+                            details={
+                                "from_profile": candidate.profile_name,
+                                "to_profile": next_candidate.profile_name,
+                                "failure_kind": failure_kind,
+                                "error": str(exc),
+                            },
+                        )
+                        stream_state.pending_new_response = True
+                        break
+
+                    self._append_llm_route_event(
+                        runtime=runtime_state,
                         run_id=run_id,
                         session_id=session_id,
                         trigger_type=trigger_type,
-                        agent_id=agent_id,
-                        usage_store=runtime_state.usage_store,
+                        event="llm_route_exhausted",
+                        details={
+                            "profile": candidate.profile_name,
+                            "failure_kind": failure_kind,
+                            "error": str(exc),
+                        },
                     )
-                yield {
-                    "type": "done",
-                    "data": {
-                        "content": final_content,
-                        "session_id": session_id,
-                        "agent_id": agent_id,
-                        "run_id": run_id,
-                        "token_source": stream_state.token_source or "fallback",
-                        "usage": enriched_usage,
-                    },
-                }
-                return
+                    error_code = (
+                        "max_steps_reached"
+                        if self._is_max_steps_error(exc)
+                        else "stream_failed"
+                    )
+                    yield {
+                        "type": "error",
+                        "data": {
+                            "error": str(exc),
+                            "code": error_code,
+                            "run_id": run_id,
+                            "attempt": attempt_number,
+                        },
+                    }
+                    return
 
-            except Exception as exc:  # noqa: BLE001
-                if attempt < effective_runtime.agent_runtime.max_retries:
-                    await asyncio.sleep(0.5 * (2**attempt))
-                    continue
-                error_code = (
-                    "max_steps_reached"
-                    if self._is_max_steps_error(exc)
-                    else "stream_failed"
-                )
-                yield {
-                    "type": "error",
-                    "data": {
-                        "error": str(exc),
-                        "code": error_code,
-                        "run_id": run_id,
-                        "attempt": attempt + 1,
-                    },
-                }
-                return
+        yield {
+            "type": "error",
+            "data": {
+                "error": f"Agent '{agent_id}' has no available LLM candidates",
+                "code": "stream_failed",
+                "run_id": str(uuid.uuid4()),
+                "attempt": attempt_number,
+            },
+        }

@@ -40,7 +40,7 @@ class ToolOrchestrator:
         runtime_audit_store: AuditStore,
         system_prompt: str,
         response_format: Any | None,
-        resolve_tool_loop_model: Callable[[str, bool], str],
+        resolve_tool_loop_model: Callable[[str, bool, str, str], str],
         build_llm_kwargs: Callable[..., dict[str, Any]],
     ) -> BuiltAgent:
         mini_tools = get_all_tools(
@@ -73,6 +73,8 @@ class ToolOrchestrator:
         selected_model = resolve_tool_loop_model(
             configured_model,
             bool(langchain_tools),
+            llm_profile.provider_id,
+            llm_profile.base_url,
         )
 
         active_llm = llm
