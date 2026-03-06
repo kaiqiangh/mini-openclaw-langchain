@@ -38,6 +38,20 @@ flowchart TB
   API --> SCH["CronScheduler + HeartbeatScheduler"]
 ```
 
+## Workspace Layout
+
+Each agent workspace is self-contained under `backend/workspaces/<agent_id>/`.
+
+- `workspace/`: prompt files such as `AGENTS.md`, `SOUL.md`, `USER.md`, `BOOTSTRAP.md`
+- `memory/`: long-lived memory files and retrieval source material
+- `knowledge/`: optional knowledge base inputs
+- `skills/`: agent-local skill files
+- `SKILLS_SNAPSHOT.md`: generated from that workspace's `skills/` directory
+- `storage/`: sessions, scheduler state, usage records, and retrieval indexes
+
+Root `backend/skills/` acts as the seed source for new workspaces only. Existing
+agent workspaces are not re-synced from root on backend restart.
+
 ## Agent Loop Architecture
 
 The backend keeps one public orchestrator (`AgentManager`) and now separates
@@ -158,15 +172,12 @@ Embedding behavior:
 - `UsageOrchestrator`: dedupe + normalize + compute cost + persist usage row.
 - Optional external tracing callbacks are attached when tracing is enabled.
 
-### Behavior-Parity Guarantee for This Refactor
+### Current Behavior Notes
 
-This architecture cleanup does not change:
-
-- API contracts or route shapes.
-- Chat/session persistence behavior.
-- SSE event names/order semantics.
-- Tool gating and policy enforcement points.
-- Usage normalization and pricing semantics.
+- LLM routing is agent-scoped and resolved at runtime from config precedence.
+- Provider credentials are validated lazily when a selected agent actually needs them.
+- Skills are workspace-local once an agent exists; snapshots are regenerated from local `skills/`.
+- Scheduler workers are started per agent rather than only for the default workspace.
 
 ## Runtime Config Matrix
 
@@ -198,6 +209,24 @@ This architecture cleanup does not change:
 - Usage accounting prefers explicit profile provider IDs.
 - `LLM_PROFILES_JSON` env overrides are no longer used.
 
+### Route Precedence
+
+Effective route resolution uses this order:
+
+1. Workspace config `backend/workspaces/<agent_id>/config.json` -> `llm`
+2. Root `agent_llm_overrides.<agent_id>`
+3. Root `llm_defaults`
+4. Legacy `DEFAULT_LLM_PROFILE` only when no effective default is configured
+
+`fallbacks: []` explicitly disables inherited fallbacks.
+
+### Validation Semantics
+
+- Startup validates route structure and profile references.
+- Startup does not require credentials for unused providers.
+- Missing credentials for the selected default profile fail that agent run.
+- Missing credentials for fallback profiles are skipped when fallback policy allows continued routing.
+
 ## LLM Model Selection (Tool Loop)
 
 - Tool-enabled loops can be overridden per agent in `runtime.llm` with:
@@ -206,16 +235,27 @@ This architecture cleanup does not change:
 - If no override applies, the configured model is used as-is.
 - `TOOL_LOOP_MODEL` and `TOOL_LOOP_MODEL_OVERRIDES` env vars are no longer used.
 
+## Skills and Snapshots
+
+- `GET /api/v1/skills` lists the root skill catalog only.
+- `GET /api/v1/agents/{agent_id}/skills` lists the selected agent's local skills and refreshes that workspace snapshot first.
+- In agent file and token APIs, `skills/...` paths resolve inside that agent workspace.
+- Saving `skills/...` through the agent file API refreshes that same agent's `SKILLS_SNAPSHOT.md`.
+- `backend/SKILLS_SNAPSHOT.md` is no longer part of runtime behavior.
+
 ## API Reference
 
 ### Chat / Sessions / Agents
 
 - `POST /api/v1/agents/{agent_id}/chat`
 - `GET|POST /api/v1/agents/{agent_id}/sessions`
+- `GET /api/v1/agents/{agent_id}/sessions/{session_id}/messages`
+- `GET /api/v1/agents/{agent_id}/sessions/{session_id}/history`
 - `PUT|DELETE /api/v1/agents/{agent_id}/sessions/{session_id}`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/archive`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/restore`
 - `POST /api/v1/agents/{agent_id}/sessions/{session_id}/compress`
+- `POST /api/v1/agents/{agent_id}/sessions/{session_id}/generate-title`
 - `GET|POST|DELETE /api/v1/agents`
 - `POST /api/v1/agents/bulk-delete`
 - `POST /api/v1/agents/bulk-export`
@@ -223,12 +263,18 @@ This architecture cleanup does not change:
 - `GET /api/v1/agents/templates`
 - `GET /api/v1/agents/templates/{template_name}`
 - `GET /api/v1/agents/{agent_id}/runtime-diff`
+- `GET /api/v1/agents/{agent_id}/tools`
+- `PUT /api/v1/agents/{agent_id}/tools/selection`
+
+`GET /api/v1/agents` includes per-agent `llm_status` with route validity, runnability,
+resolved default profile, fallback profiles, warnings, and errors.
 
 ### Files / Tokens / Usage
 
 - `GET|POST /api/v1/agents/{agent_id}/files`
 - `GET /api/v1/agents/{agent_id}/files/index`
 - `GET /api/v1/skills`
+- `GET /api/v1/agents/{agent_id}/skills`
 - `GET /api/v1/agents/{agent_id}/tokens/session/{session_id}`
 - `POST /api/v1/agents/{agent_id}/tokens/files`
 - `GET /api/v1/agents/{agent_id}/usage/summary`
