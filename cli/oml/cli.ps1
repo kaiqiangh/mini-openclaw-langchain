@@ -319,8 +319,7 @@ function Build-FrontendCommand {
     return "cd /d $(Quote-Cmd $workingDir) && $($script:OML_FRONTEND_CMD)"
   }
 
-  $npmPath = (Get-Command npm -ErrorAction Stop).Source
-  return "cd /d $(Quote-Cmd $workingDir) && $(Quote-Cmd $npmPath) exec -- next dev -p $($script:OML_FRONTEND_PORT) -H $($script:OML_FRONTEND_HOST)"
+  return "cd /d $(Quote-Cmd $workingDir) && call npm exec -- next dev -p $($script:OML_FRONTEND_PORT) -H $($script:OML_FRONTEND_HOST)"
 }
 
 function Start-ServiceInternal([string]$Service) {
@@ -387,7 +386,11 @@ function Stop-ServiceInternal([string]$Service) {
   }
 
   try {
-    Stop-Process -Id $pidValue -ErrorAction SilentlyContinue
+    if (Get-Command "taskkill.exe" -ErrorAction SilentlyContinue) {
+      & taskkill.exe /F /T /PID $pidValue 2>&1 | Out-Null
+    } else {
+      Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+    }
   } catch {
   }
 
@@ -396,10 +399,6 @@ function Stop-ServiceInternal([string]$Service) {
       break
     }
     Start-Sleep -Seconds 1
-  }
-
-  if (Test-PidRunning $pidValue) {
-    & taskkill.exe /F /T /PID $pidValue | Out-Null
   }
 
   Clear-Pid $Service
@@ -778,11 +777,17 @@ try {
   switch ($Command) {
     { $_ -in @("help", "-h", "--help") } { Invoke-CmdHelp }
     "version" { Invoke-CmdVersion }
-    "start" { Invoke-CmdStart ($(if ($RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
-    "stop" { Invoke-CmdStop ($(if ($RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
-    "restart" { Invoke-CmdRestart ($(if ($RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
+    "start" { Invoke-CmdStart ($(if ($null -ne $RemainingArgs -and $RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
+    "stop" { Invoke-CmdStop ($(if ($null -ne $RemainingArgs -and $RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
+    "restart" { Invoke-CmdRestart ($(if ($null -ne $RemainingArgs -and $RemainingArgs.Count -gt 0) { $RemainingArgs[0] } else { "all" })) }
     "status" { Invoke-CmdStatus }
-    "logs" { Invoke-CmdLogs $RemainingArgs }
+    "logs" {
+      if ($null -eq $RemainingArgs) {
+        Invoke-CmdLogs @()
+      } else {
+        Invoke-CmdLogs $RemainingArgs
+      }
+    }
     "ports" { Invoke-CmdPorts }
     "update" { Invoke-CmdUpdate }
     "doctor" { Invoke-CmdDoctor }
