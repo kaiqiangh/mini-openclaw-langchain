@@ -84,7 +84,7 @@ This separation is structural only; request/response and stream behavior are unc
      - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
      - tool runner with retry-guard
      - LangChain structured tools
-   - Tool-loop model override logic is preserved (`TOOL_LOOP_MODEL*`).
+   - Optional tool-loop model overrides come from the resolved agent `llm` config.
 
 5. **Execute agent**
    - Invoke with recursion limit and callbacks.
@@ -170,39 +170,41 @@ This architecture cleanup does not change:
 
 ## Runtime Config Matrix
 
-| Path                                          | Purpose                                     |
-| --------------------------------------------- | ------------------------------------------- |
-| `runtime.retrieval.storage.engine`            | `sqlite` (default) or fallback `json`.      |
-| `runtime.retrieval.storage.db_path`           | Relative DB path per agent workspace.       |
-| `runtime.retrieval.storage.fts_prefilter_k`   | Candidate count before semantic scoring.    |
-| `runtime.tool_network.allow_http_schemes`     | Allowed URL schemes for fetch tools.        |
-| `runtime.tool_network.block_private_networks` | Block localhost/private/link-local targets. |
-| `runtime.tool_network.max_redirects`          | Redirect safety cap.                        |
-| `runtime.tool_network.max_content_bytes`      | Maximum fetched response size.              |
-| `runtime.chat_enabled_tools`                  | Explicit chat-trigger high-risk tools.      |
-| `runtime.tool_execution.terminal.*`           | Terminal sandbox, allowlist, and limits.    |
-| `runtime.scheduler.api_enabled`               | Enable/disable scheduler API routes.        |
-| `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.    |
-| `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.      |
-| `runtime.cron.*`                              | Cron polling, retry/backoff, retention.     |
-| `runtime.llm_runtime.profile`                 | Active LLM profile name override.           |
+| Path                                          | Purpose                                      |
+| --------------------------------------------- | -------------------------------------------- |
+| `runtime.retrieval.storage.engine`            | `sqlite` (default) or fallback `json`.       |
+| `runtime.retrieval.storage.db_path`           | Relative DB path per agent workspace.        |
+| `runtime.retrieval.storage.fts_prefilter_k`   | Candidate count before semantic scoring.     |
+| `runtime.tool_network.allow_http_schemes`     | Allowed URL schemes for fetch tools.         |
+| `runtime.tool_network.block_private_networks` | Block localhost/private/link-local targets.  |
+| `runtime.tool_network.max_redirects`          | Redirect safety cap.                         |
+| `runtime.tool_network.max_content_bytes`      | Maximum fetched response size.               |
+| `runtime.chat_enabled_tools`                  | Explicit chat-trigger high-risk tools.       |
+| `runtime.tool_execution.terminal.*`           | Terminal sandbox, allowlist, and limits.     |
+| `runtime.scheduler.api_enabled`               | Enable/disable scheduler API routes.         |
+| `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.     |
+| `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.       |
+| `runtime.cron.*`                              | Cron polling, retry/backoff, retention.      |
+| `runtime.llm.default`                         | Agent default profile id (`provider.model`). |
+| `runtime.llm.fallbacks`                       | Ordered fallback profile ids.                |
+| `runtime.llm.tool_loop_model`                 | Optional tool-loop model name override.      |
+| `runtime.llm.tool_loop_model_overrides`       | Optional per-model-name tool-loop overrides. |
 
 ## LLM Profiles
 
-- Provider resolution is profile-driven (`llm_profiles` + `default_llm_profile`).
+- Provider resolution is profile-driven (`llm_profiles` + `llm_defaults` / agent `llm`).
 - Driver model is `openai_compatible` for OpenAI-compatible providers.
-- Azure AI Foundry is supported through the `azure_foundry` profile template.
+- `llm_profiles` supports provider groups with `models` entries that expand to dotted profile ids such as `openai.gpt_4o_mini`.
 - Usage accounting prefers explicit profile provider IDs.
+- `LLM_PROFILES_JSON` env overrides are no longer used.
 
 ## LLM Model Selection (Tool Loop)
 
-- Tool-enabled loops can be overridden with:
-  - `TOOL_LOOP_MODEL` (global override for all configured models).
-  - `TOOL_LOOP_MODEL_OVERRIDES` (per-model mapping).
-- `TOOL_LOOP_MODEL_OVERRIDES` supports:
-  - JSON object format (preferred): `{"source-model": "tool-model"}`
-  - comma-separated key/value format: `source-model=tool-model,source2=tool2`
+- Tool-enabled loops can be overridden per agent in `runtime.llm` with:
+  - `tool_loop_model` for a same-provider replacement model name
+  - `tool_loop_model_overrides` for exact model-name remaps
 - If no override applies, the configured model is used as-is.
+- `TOOL_LOOP_MODEL` and `TOOL_LOOP_MODEL_OVERRIDES` env vars are no longer used.
 
 ## API Reference
 

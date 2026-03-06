@@ -11,6 +11,80 @@
     "temperature": 0.2,
     "timeout_seconds": 60
   },
+  "llm_profiles": {
+    "deepseek": {
+      "provider_id": "deepseek",
+      "driver": "openai_compatible",
+      "base_url": "https://api.deepseek.com",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "default_headers": {},
+      "timeout_seconds": 60,
+      "models": {
+        "chat": "deepseek-chat",
+        "reasoner": "deepseek-reasoner"
+      }
+    },
+    "openai": {
+      "provider_id": "openai",
+      "driver": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key_env": "OPENAI_API_KEY",
+      "default_headers": {},
+      "timeout_seconds": 60,
+      "models": {
+        "gpt_4o_mini": "gpt-4o-mini",
+        "gpt_4_1_mini": "gpt-4.1-mini",
+        "gpt_5_mini": "gpt-5-mini"
+      }
+    },
+    "azure_foundry": {
+      "provider_id": "azure_foundry",
+      "driver": "openai_compatible",
+      "base_url": "https://example.foundry.azure.com/openai/v1",
+      "api_key_env": "AZURE_FOUNDRY_API_KEY",
+      "default_headers": {
+        "api-key": "${ENV:AZURE_FOUNDRY_API_KEY}"
+      },
+      "timeout_seconds": 60,
+      "models": {
+        "gpt_4o_mini": "gpt-4o-mini",
+        "gpt_4_1_mini": "gpt-4.1-mini",
+        "gpt_5_mini": "gpt-5-mini",
+        "kimi_k2_5": "kimi-k2.5",
+        "kimi_k2_thinking": "kimi-k2-thinking"
+      }
+    }
+  },
+  "llm_defaults": {
+    "default": "deepseek.chat",
+    "fallbacks": ["openai.gpt_4o_mini"],
+    "fallback_policy": {
+      "on_startup_missing_default": "warn",
+      "on_runtime_auth_error": "fail",
+      "on_timeout": "fallback",
+      "on_rate_limit": "fallback",
+      "on_5xx": "fallback",
+      "on_network_error": "fallback"
+    }
+  },
+  "agent_llm_overrides": {
+    "example_agent": {
+      "default": "azure_foundry.gpt_4_1_mini",
+      "fallbacks": ["openai.gpt_4_1_mini"],
+      "tool_loop_model_overrides": {
+        "gpt-5-mini": "gpt-4.1-mini",
+        "deepseek-reasoner": "deepseek-chat"
+      },
+      "fallback_policy": {
+        "on_startup_missing_default": "warn",
+        "on_runtime_auth_error": "fail",
+        "on_timeout": "fallback",
+        "on_rate_limit": "fallback",
+        "on_5xx": "fallback",
+        "on_network_error": "fallback"
+      }
+    }
+  },
   "retrieval": {
     "memory": {
       "top_k": 3,
@@ -63,6 +137,7 @@
     }
   },
   "chat_enabled_tools": [],
+  "chat_blocked_tools": [],
   "autonomous_tools": {
     "heartbeat_enabled_tools": [],
     "cron_enabled_tools": [
