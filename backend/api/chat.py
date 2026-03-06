@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,7 @@ from control import LocalCoordinator
 from graph.agent import AgentManager
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -295,6 +297,14 @@ async def _run_stream_task(
                 await _persist_final_segments(state, runtime)
 
     except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "Chat stream failed",
+            extra={
+                "agent_id": state.agent_id,
+                "session_id": state.session_id,
+                "run_id": state.run_id or "",
+            },
+        )
         session_manager.clear_live_response(
             state.session_id, run_id=state.run_id or None
         )
@@ -302,7 +312,8 @@ async def _run_stream_task(
             state,
             "error",
             {
-                "error": str(exc),
+                "error": "Stream failed. Check server logs for details.",
+                "code": "stream_failed",
                 "run_id": state.run_id,
                 "attempt": 1,
             },

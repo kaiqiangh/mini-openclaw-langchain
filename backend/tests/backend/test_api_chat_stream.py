@@ -155,3 +155,33 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
     assert ("user", "prior-question") in second_call
     assert ("assistant", "prior-answer") in second_call
     assert ("user", "hello") not in second_call
+
+
+def test_chat_stream_hides_backend_exception_text(client, api_app):
+    AppStatus.should_exit = False
+    if hasattr(AppStatus, "should_exit_event"):
+        setattr(AppStatus, "should_exit_event", None)
+
+    manager = api_app["agent_manager"]
+
+    async def failing_stream(
+        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
+    ):
+        _ = self, message, history, session_id, kwargs
+        raise RuntimeError("provider failed at /tmp/secret-config")
+        yield  # pragma: no cover
+
+    manager.astream = failing_stream.__get__(manager, type(manager))
+
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
+        "session_id"
+    ]
+    response = client.post(
+        "/api/v1/agents/default/chat",
+        json={"message": "hello", "session_id": session_id, "stream": True},
+    )
+
+    assert response.status_code == 200
+    assert "Stream failed. Check server logs for details." in response.text
+    assert "provider failed" not in response.text
+    assert "/tmp/secret-config" not in response.text

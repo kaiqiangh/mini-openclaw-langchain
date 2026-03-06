@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app import AdminAuthMiddleware
+from app import AdminAuthMiddleware, RequestIdMiddleware, unhandled_error_handler
 
 
 def _build_app() -> FastAPI:
@@ -76,3 +76,22 @@ def test_auth_accepts_valid_token(monkeypatch):
     assert raw_response.status_code == 200
     assert alt_response.status_code == 200
     assert cookie_response.status_code == 200
+
+
+def test_unhandled_error_handler_hides_exception_details():
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+    app.add_exception_handler(Exception, unhandled_error_handler)
+
+    @app.get("/boom")
+    async def boom() -> dict[str, str]:
+        raise RuntimeError("leaked provider key from /tmp/private")
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.get("/boom")
+
+    assert response.status_code == 500
+    payload = response.json()["error"]
+    assert payload["code"] == "internal_error"
+    assert payload["message"] == "Internal server error"
+    assert "details" not in payload

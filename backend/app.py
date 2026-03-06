@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import logging
 import os
 import time
 import uuid
@@ -55,6 +56,7 @@ _PROXY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+logger = logging.getLogger(__name__)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -392,12 +394,19 @@ async def validation_error_handler(
 
 @app.exception_handler(Exception)
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception(
+        "Unhandled request error",
+        extra={
+            "request_id": _request_id(request),
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
     return JSONResponse(
         status_code=500,
         content=error_payload(
             code="internal_error",
             message="Internal server error",
-            details={"exception": redact_text(str(exc))},
             request_id=_request_id(request),
         ),
     )
@@ -454,7 +463,7 @@ if _env_bool("APP_ENABLE_FRONTEND_PROXY", default=False):
                 value=configured,
                 httponly=True,
                 samesite="lax",
-                secure=False,
+                secure=request.url.scheme == "https",
                 path="/",
                 max_age=60 * 60 * 12,
             )
