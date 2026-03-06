@@ -1,21 +1,81 @@
 const API_BASE_ENV = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 export const API_BASE = API_BASE_ENV.trim().replace(/\/$/, "");
-
-function resolveAdminToken(): string {
-  const envToken = process.env.NEXT_PUBLIC_APP_ADMIN_TOKEN ?? "";
-  if (envToken.trim()) return envToken.trim();
-  if (typeof window === "undefined") return "";
-  const stored = window.localStorage.getItem("mini-openclaw:admin-token") ?? "";
-  return stored.trim();
-}
+const ADMIN_BOOTSTRAP_PATH = "/api/auth/session";
+let adminBootstrapPromise: Promise<boolean> | null = null;
 
 function withAuthHeaders(headers?: HeadersInit): Headers {
-  const next = new Headers(headers ?? {});
-  const token = resolveAdminToken();
-  if (token) {
-    next.set("Authorization", `Bearer ${token}`);
+  return new Headers(headers ?? {});
+}
+
+function canBootstrapAdminSession(url: string): boolean {
+  if (typeof window === "undefined" || process.env.NODE_ENV === "test") {
+    return false;
   }
-  return next;
+  try {
+    const target = new URL(url, window.location.origin);
+    return target.origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+async function bootstrapAdminSession(): Promise<boolean> {
+  if (typeof window === "undefined" || process.env.NODE_ENV === "test") {
+    return false;
+  }
+  if (adminBootstrapPromise) {
+    return adminBootstrapPromise;
+  }
+  adminBootstrapPromise = fetch(ADMIN_BOOTSTRAP_PATH, {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+  })
+    .then((response) => response.ok)
+    .catch(() => false);
+  const bootstrapped = await adminBootstrapPromise;
+  adminBootstrapPromise = null;
+  return bootstrapped;
+}
+
+async function fetchWithAdminSession(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const buildInit = (): RequestInit => ({
+    ...init,
+    credentials: "include",
+    headers: withAuthHeaders(init?.headers),
+  });
+
+  let response = await fetch(url, buildInit());
+  if (response.status !== 401 || !canBootstrapAdminSession(url)) {
+    return response;
+  }
+  const bootstrapped = await bootstrapAdminSession();
+  if (!bootstrapped) {
+    return response;
+  }
+  response = await fetch(url, buildInit());
+  return response;
+}
+
+async function readResponsePayload(
+  response: Response,
+): Promise<{ text: string; payload: Record<string, unknown> | null }> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return { text, payload: null };
+  }
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") {
+      return { text, payload: parsed as Record<string, unknown> };
+    }
+  } catch {
+    // Non-JSON responses should still surface their raw text.
+  }
+  return { text, payload: null };
 }
 
 export type StreamEvent = {
@@ -350,21 +410,22 @@ export type TracingConfig = {
 };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
-    ...init,
-    credentials: "include",
-    headers: withAuthHeaders(init?.headers),
-  });
-  const text = await response.text();
-  const payload = text ? (JSON.parse(text) as Record<string, unknown>) : null;
+  const response = await fetchWithAdminSession(url, init);
+  const { text, payload } = await readResponsePayload(response);
   if (!response.ok) {
+    const message =
+      (payload?.error as { message?: string } | undefined)?.message ||
+      text.trim() ||
+      `Request failed (${response.status})`;
     throw new Error(
-      (payload?.error as { message?: string } | undefined)?.message ??
-        `Request failed (${response.status})`,
+      message,
     );
   }
   if (!text) {
     return {} as T;
+  }
+  if (!payload) {
+    throw new Error(`Expected JSON response from ${url}`);
   }
   return payload as T;
 }
@@ -890,10 +951,11 @@ export async function streamChat(
   onEvent: (event: StreamEvent) => void,
   agentId = "default",
   resumeSameTurn = false,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`${agentBase(agentId)}/chat`, {
+  const response = await fetchWithAdminSession(`${agentBase(agentId)}/chat`, {
     method: "POST",
-    credentials: "include",
+    signal,
     headers: withAuthHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       message,
@@ -904,14 +966,14 @@ export async function streamChat(
   });
 
   if (!response.ok) {
-    let detail = "SSE stream request failed";
-    try {
-      const payload = await response.json();
-      detail = payload?.error?.message ?? detail;
-    } catch {
-      // ignore JSON parse failure
-    }
-    throw new Error(detail);
+    const { text, payload } = await readResponsePayload(response);
+    const detail =
+      (payload?.error as { message?: string } | undefined)?.message ||
+      text.trim() ||
+      "SSE stream request failed";
+    throw new Error(
+      detail,
+    );
   }
 
   if (!response.body) {

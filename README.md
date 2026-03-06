@@ -56,7 +56,8 @@ flowchart LR
 
 ## Security Model
 
-- `/api/v1/*` routes are protected by `Authorization: Bearer <APP_ADMIN_TOKEN>` (except health/readiness).
+- `/api/v1/*` routes are protected by the admin credential in `APP_ADMIN_TOKEN` (except health/readiness).
+- Browser clients now use an `HttpOnly` `app_admin_token` cookie; non-browser clients can still send `Authorization: Bearer <APP_ADMIN_TOKEN>`.
 - File APIs are workspace-root scoped and path-guarded.
 - Tool policy gates autonomous triggers (`heartbeat`, `cron`) with explicit allowlists.
 - `fetch_url` defaults:
@@ -97,7 +98,10 @@ npm install
 npm run dev
 ```
 
-Optional (recommended for local auth): set `NEXT_PUBLIC_APP_ADMIN_TOKEN` in `frontend/.env.local`.
+Preferred local auth flow:
+
+- `./oml start` or backend single-origin proxy mode: the backend issues the `app_admin_token` cookie automatically.
+- Direct `frontend` dev server usage: set server-only `APP_ADMIN_TOKEN` in `frontend/.env.local` so `/api/auth/session` can bootstrap the same cookie on first API auth challenge.
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) when using `./oml start` (backend single-origin proxy enabled).
 Direct frontend dev server remains available at [http://localhost:3000](http://localhost:3000).

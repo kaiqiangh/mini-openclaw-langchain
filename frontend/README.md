@@ -65,10 +65,11 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 - agent management: bulk delete/export/runtime patch and template discovery
 
 All agent-scoped calls append `agent_id`, and all API calls target `/api/v1/*`.
-Auth token source order:
+Browser auth is cookie-based:
 
-- `NEXT_PUBLIC_APP_ADMIN_TOKEN`
-- `localStorage["mini-openclaw:admin-token"]`
+- the preferred path is the `HttpOnly` `app_admin_token` cookie
+- direct frontend dev can bootstrap that cookie through `POST /api/auth/session`
+- the bootstrap route reads server-only `APP_ADMIN_TOKEN`; there is no public bearer-token fallback in browser code
 
 ## Local Development
 
@@ -86,12 +87,13 @@ Manual development modes:
 
 - `./oml start`: browser origin is `http://127.0.0.1:8000`; backend proxies frontend pages and API stays same-origin.
 - `npm run dev` with backend on `127.0.0.1:8000`: Next.js rewrites `/api/v1/*` to the backend automatically.
+- For direct `npm run dev`, add `APP_ADMIN_TOKEN=<same backend token>` to `frontend/.env.local` so the frontend can bootstrap the auth cookie on first API request.
 
 Optional frontend envs:
 
 - `NEXT_DEV_API_PROXY_URL`: overrides the manual-dev rewrite target (default `http://127.0.0.1:8000`)
 - `NEXT_PUBLIC_API_BASE_URL`: advanced absolute API override
-- `NEXT_PUBLIC_APP_ADMIN_TOKEN`: optional default bearer token for local auth
+- `APP_ADMIN_TOKEN`: server-only token used by `/api/auth/session` to issue the auth cookie during local frontend development
 
 ## Test + Build Flow
 

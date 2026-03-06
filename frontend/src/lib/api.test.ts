@@ -53,6 +53,21 @@ describe("streamChat", () => {
       { event: "done", data: '{"content":"AB"}' },
     ]);
   });
+
+  it("surfaces plain-text stream failures without a JSON parse error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () => "bad gateway",
+      }),
+    );
+
+    await expect(
+      streamChat("hello", "session-1", () => undefined),
+    ).rejects.toThrow("bad gateway");
+  });
 });
 
 describe("agent-scoped rag mode requests", () => {
@@ -78,6 +93,21 @@ describe("agent-scoped rag mode requests", () => {
     expect(secondUrl).toContain("/api/v1/agents/alpha/config/rag-mode");
     expect(firstUrl).not.toContain("agent_id=");
     expect(secondUrl).not.toContain("agent_id=");
+  });
+});
+
+describe("requestJson", () => {
+  it("surfaces plain-text failures instead of JSON parse errors", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => "plain upstream failure",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getAgentTools("alpha")).rejects.toThrow(
+      "plain upstream failure",
+    );
   });
 });
 
