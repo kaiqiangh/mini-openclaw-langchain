@@ -60,7 +60,35 @@ class AgentExecutionConfig:
 class LlmRuntimeConfig:
     temperature: float = 0.2
     timeout_seconds: int = 60
-    profile: str = ""
+
+
+@dataclass
+class LlmFallbackPolicy:
+    on_startup_missing_default: str = "warn"
+    on_runtime_auth_error: str = "fail"
+    on_timeout: str = "fallback"
+    on_rate_limit: str = "fallback"
+    on_5xx: str = "fallback"
+    on_network_error: str = "fallback"
+
+
+@dataclass
+class LlmFallbackPolicyPatch:
+    on_startup_missing_default: str | None = None
+    on_runtime_auth_error: str | None = None
+    on_timeout: str | None = None
+    on_rate_limit: str | None = None
+    on_5xx: str | None = None
+    on_network_error: str | None = None
+
+
+@dataclass
+class LlmRoutePatch:
+    default: str | None = None
+    fallbacks: list[str] | None = None
+    fallback_policy: LlmFallbackPolicyPatch | None = None
+    tool_loop_model: str | None = None
+    tool_loop_model_overrides: dict[str, str] | None = None
 
 
 @dataclass
@@ -199,6 +227,7 @@ class RuntimeConfig:
     bootstrap_total_max_chars: int = 150000
     agent_runtime: AgentExecutionConfig = field(default_factory=AgentExecutionConfig)
     llm_runtime: LlmRuntimeConfig = field(default_factory=LlmRuntimeConfig)
+    llm: LlmRoutePatch = field(default_factory=LlmRoutePatch)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     tool_retry_guard: ToolRetryGuardConfig = field(default_factory=ToolRetryGuardConfig)
     tool_network: ToolNetworkConfig = field(default_factory=ToolNetworkConfig)
@@ -223,11 +252,9 @@ class RuntimeConfig:
 class SecretConfig:
     deepseek_api_key: str
     deepseek_base_url: str
-    deepseek_model: str
     embedding_provider: EmbeddingProvider
     openai_api_key: str
     openai_base_url: str
-    openai_model: str
     embedding_model: str
     google_api_key: str
     google_embedding_model: str
@@ -242,6 +269,8 @@ class AppConfig:
     runtime: RuntimeConfig
     secrets: SecretConfig
     llm_profiles: dict[str, LLMProfile]
+    llm_defaults: LlmRoutePatch
+    agent_llm_overrides: dict[str, LlmRoutePatch]
     default_llm_profile: str
 
 
@@ -269,6 +298,224 @@ def _deep_diff(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str,
     return diff
 
 
+_LLM_ROUTE_KEYS = {
+    "default",
+    "fallbacks",
+    "fallback_policy",
+    "tool_loop_model",
+    "tool_loop_model_overrides",
+}
+_LLM_FALLBACK_POLICY_KEYS = {
+    "on_startup_missing_default",
+    "on_runtime_auth_error",
+    "on_timeout",
+    "on_rate_limit",
+    "on_5xx",
+    "on_network_error",
+}
+_STARTUP_POLICY_VALUES = {"warn", "error"}
+_RUNTIME_FALLBACK_POLICY_VALUES = {"fail", "fallback"}
+
+
+def _llm_fallback_policy_to_payload(
+    policy: LlmFallbackPolicyPatch | None,
+) -> dict[str, str]:
+    if policy is None:
+        return {}
+    payload: dict[str, str] = {}
+    for key in sorted(_LLM_FALLBACK_POLICY_KEYS):
+        value = getattr(policy, key, None)
+        if value is None:
+            continue
+        normalized = str(value).strip().lower()
+        if normalized:
+            payload[key] = normalized
+    return payload
+
+
+def _llm_route_to_payload(route: LlmRoutePatch) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    default_profile = str(route.default or "").strip()
+    if default_profile:
+        payload["default"] = default_profile
+    if route.fallbacks is not None:
+        payload["fallbacks"] = [str(item).strip() for item in route.fallbacks]
+    fallback_policy = _llm_fallback_policy_to_payload(route.fallback_policy)
+    if fallback_policy:
+        payload["fallback_policy"] = fallback_policy
+    if route.tool_loop_model is not None:
+        payload["tool_loop_model"] = str(route.tool_loop_model).strip()
+    if route.tool_loop_model_overrides is not None:
+        payload["tool_loop_model_overrides"] = {
+            str(source).strip(): str(target).strip()
+            for source, target in route.tool_loop_model_overrides.items()
+            if str(source).strip() and str(target).strip()
+        }
+    return payload
+
+
+def _parse_tool_loop_model_overrides(
+    value: Any,
+    *,
+    strict: bool,
+    context: str,
+) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError(f"{context} must be an object")
+        return {}
+    overrides: dict[str, str] = {}
+    for raw_source, raw_target in value.items():
+        source = str(raw_source).strip().lower()
+        target = str(raw_target).strip()
+        if not source or not target:
+            continue
+        overrides[source] = target
+    return overrides
+
+
+def _parse_llm_fallback_policy_patch(
+    value: Any,
+    *,
+    strict: bool,
+    context: str,
+) -> LlmFallbackPolicyPatch:
+    if value is None:
+        return LlmFallbackPolicyPatch()
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError(f"{context} must be an object")
+        return LlmFallbackPolicyPatch()
+    if strict:
+        unknown = sorted(set(value.keys()) - _LLM_FALLBACK_POLICY_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{context} has unknown keys: {', '.join(unknown)}"
+            )
+
+    def _normalize_policy_value(
+        key: str,
+        allowed: set[str],
+    ) -> str | None:
+        if key not in value:
+            return None
+        normalized = str(value.get(key, "")).strip().lower()
+        if not normalized:
+            return None
+        if strict and normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(
+                f"{context}.{key} must be one of: {allowed_values}"
+            )
+        if normalized in allowed:
+            return normalized
+        return None
+
+    return LlmFallbackPolicyPatch(
+        on_startup_missing_default=_normalize_policy_value(
+            "on_startup_missing_default", _STARTUP_POLICY_VALUES
+        ),
+        on_runtime_auth_error=_normalize_policy_value(
+            "on_runtime_auth_error", _RUNTIME_FALLBACK_POLICY_VALUES
+        ),
+        on_timeout=_normalize_policy_value(
+            "on_timeout", _RUNTIME_FALLBACK_POLICY_VALUES
+        ),
+        on_rate_limit=_normalize_policy_value(
+            "on_rate_limit", _RUNTIME_FALLBACK_POLICY_VALUES
+        ),
+        on_5xx=_normalize_policy_value("on_5xx", _RUNTIME_FALLBACK_POLICY_VALUES),
+        on_network_error=_normalize_policy_value(
+            "on_network_error", _RUNTIME_FALLBACK_POLICY_VALUES
+        ),
+    )
+
+
+def _parse_llm_route_patch(
+    value: Any,
+    *,
+    strict: bool,
+    context: str,
+) -> LlmRoutePatch:
+    if value is None:
+        return LlmRoutePatch()
+    if not isinstance(value, dict):
+        if strict:
+            raise ValueError(f"{context} must be an object")
+        return LlmRoutePatch()
+    if strict:
+        unknown = sorted(set(value.keys()) - _LLM_ROUTE_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{context} has unknown keys: {', '.join(unknown)}"
+            )
+
+    default_profile: str | None = None
+    if "default" in value:
+        default_profile = str(value.get("default", "")).strip() or None
+        if strict and default_profile is None:
+            raise ValueError(f"{context}.default must be a non-empty string")
+
+    fallbacks: list[str] | None = None
+    if "fallbacks" in value:
+        raw_fallbacks = value.get("fallbacks")
+        if not isinstance(raw_fallbacks, list):
+            if strict:
+                raise ValueError(f"{context}.fallbacks must be an array")
+            raw_fallbacks = []
+        fallbacks = []
+        for item in raw_fallbacks:
+            profile_id = str(item).strip()
+            if profile_id:
+                fallbacks.append(profile_id)
+
+    fallback_policy: LlmFallbackPolicyPatch | None = None
+    if "fallback_policy" in value:
+        fallback_policy = _parse_llm_fallback_policy_patch(
+            value.get("fallback_policy"),
+            strict=strict,
+            context=f"{context}.fallback_policy",
+        )
+
+    tool_loop_model: str | None = None
+    if "tool_loop_model" in value:
+        tool_loop_model = str(value.get("tool_loop_model", "")).strip()
+
+    tool_loop_model_overrides: dict[str, str] | None = None
+    if "tool_loop_model_overrides" in value:
+        tool_loop_model_overrides = _parse_tool_loop_model_overrides(
+            value.get("tool_loop_model_overrides"),
+            strict=strict,
+            context=f"{context}.tool_loop_model_overrides",
+        )
+
+    return LlmRoutePatch(
+        default=default_profile,
+        fallbacks=fallbacks,
+        fallback_policy=fallback_policy,
+        tool_loop_model=tool_loop_model,
+        tool_loop_model_overrides=tool_loop_model_overrides,
+    )
+
+
+def _parse_agent_llm_overrides(value: Any) -> dict[str, LlmRoutePatch]:
+    if not isinstance(value, dict):
+        return {}
+    overrides: dict[str, LlmRoutePatch] = {}
+    for raw_agent_id, raw_route in value.items():
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id:
+            continue
+        overrides[agent_id] = _parse_llm_route_patch(
+            raw_route,
+            strict=False,
+            context=f"agent_llm_overrides.{agent_id}",
+        )
+    return overrides
+
+
 def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
     sandbox_mode = runtime.tool_execution.terminal.sandbox_mode
     sandbox_mode_value = (
@@ -276,7 +523,7 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         if isinstance(sandbox_mode, TerminalSandboxMode)
         else (str(sandbox_mode).strip() or TerminalSandboxMode.HYBRID_AUTO.value)
     )
-    return {
+    payload = {
         "rag_mode": runtime.rag_mode,
         "injection_mode": runtime.injection_mode.value,
         "bootstrap_max_chars": runtime.bootstrap_max_chars,
@@ -288,7 +535,6 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         "llm_runtime": {
             "temperature": runtime.llm_runtime.temperature,
             "timeout_seconds": runtime.llm_runtime.timeout_seconds,
-            "profile": runtime.llm_runtime.profile,
         },
         "retrieval": {
             "memory": {
@@ -373,9 +619,15 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "failure_retention": runtime.cron.failure_retention,
         },
     }
+    llm_payload = _llm_route_to_payload(runtime.llm)
+    if llm_payload:
+        payload["llm"] = llm_payload
+    return payload
 
 
-def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
+def _runtime_from_payload(
+    payload: dict[str, Any], *, strict: bool = False
+) -> RuntimeConfig:
     tool_timeouts = payload.get("tool_timeouts", {})
     tool_output_limits = payload.get("tool_output_limits", {})
     autonomous_tools = payload.get("autonomous_tools", {})
@@ -383,6 +635,7 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     cron = payload.get("cron", {})
     agent_runtime = payload.get("agent_runtime", {})
     llm_runtime = payload.get("llm_runtime", {})
+    llm_route = payload.get("llm", {})
     retrieval = payload.get("retrieval", {})
     memory_retrieval = retrieval.get("memory", {})
     knowledge_retrieval = retrieval.get("knowledge", {})
@@ -425,6 +678,11 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         except ValueError:
             return TerminalSandboxMode.HYBRID_AUTO
 
+    if strict and isinstance(llm_runtime, dict) and "profile" in llm_runtime:
+        raise ValueError(
+            "llm_runtime.profile is no longer supported; use llm.default and llm.fallbacks"
+        )
+
     return RuntimeConfig(
         rag_mode=bool(payload.get("rag_mode", False)),
         injection_mode=injection_mode,
@@ -437,8 +695,8 @@ def _runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
         llm_runtime=LlmRuntimeConfig(
             temperature=float(llm_runtime.get("temperature", 0.2)),
             timeout_seconds=max(5, int(llm_runtime.get("timeout_seconds", 60))),
-            profile=str(llm_runtime.get("profile", "")).strip(),
         ),
+        llm=_parse_llm_route_patch(llm_route, strict=strict, context="llm"),
         retrieval=RetrievalConfig(
             memory=RetrievalDomainConfig(
                 top_k=max(1, int(memory_retrieval.get("top_k", 3))),
@@ -568,7 +826,7 @@ def load_runtime_config(config_path: Path) -> RuntimeConfig:
     if not config_path.exists():
         return RuntimeConfig()
     payload: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-    return _runtime_from_payload(payload)
+    return _runtime_from_payload(payload, strict=False)
 
 
 def merge_runtime_configs(
@@ -591,7 +849,7 @@ def load_effective_runtime_config(
     if agent_config_path.exists():
         agent_payload = json.loads(agent_config_path.read_text(encoding="utf-8"))
     merged_payload = _deep_merge(global_payload, agent_payload)
-    return _runtime_from_payload(merged_payload)
+    return _runtime_from_payload(merged_payload, strict=False)
 
 
 def runtime_config_digest(runtime: RuntimeConfig) -> str:
@@ -605,7 +863,7 @@ def runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
 
 
 def runtime_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
-    return _runtime_from_payload(payload)
+    return _runtime_from_payload(payload, strict=True)
 
 
 def _parse_headers(value: Any) -> dict[str, str]:
@@ -663,6 +921,41 @@ def _coerce_llm_profile(name: str, payload: dict[str, Any]) -> LLMProfile:
     )
 
 
+def _looks_like_profile_group(payload: Any) -> bool:
+    return isinstance(payload, dict) and isinstance(payload.get("models"), dict)
+
+
+def _coerce_group_model_payload(
+    *,
+    provider_key: str,
+    provider_payload: dict[str, Any],
+    model_key: str,
+    model_payload: Any,
+) -> dict[str, Any] | None:
+    shared_payload = {
+        "provider_id": str(
+            provider_payload.get("provider_id", provider_key)
+        ).strip().lower()
+        or provider_key.lower(),
+        "driver": provider_payload.get("driver", LLMDriver.OPENAI_COMPATIBLE.value),
+        "base_url": provider_payload.get("base_url", ""),
+        "api_key_env": provider_payload.get("api_key_env", ""),
+        "default_headers": _parse_headers(provider_payload.get("default_headers", {})),
+        "timeout_seconds": provider_payload.get("timeout_seconds", 60),
+    }
+    if isinstance(model_payload, str):
+        return {
+            **shared_payload,
+            "model": model_payload,
+        }
+    if isinstance(model_payload, dict):
+        merged_payload = _deep_merge(shared_payload, model_payload)
+        if not str(merged_payload.get("model", "")).strip():
+            return None
+        return merged_payload
+    return None
+
+
 def _default_llm_profiles() -> dict[str, LLMProfile]:
     azure_api_env = (
         os.getenv("AZURE_FOUNDRY_API_KEY_ENV", "AZURE_FOUNDRY_API_KEY").strip()
@@ -681,7 +974,7 @@ def _default_llm_profiles() -> dict[str, LLMProfile]:
             provider_id="deepseek",
             driver=LLMDriver.OPENAI_COMPATIBLE,
             base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            model="deepseek-chat",
             api_key_env="DEEPSEEK_API_KEY",
             default_headers={},
             timeout_seconds=max(5, int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "60"))),
@@ -691,7 +984,7 @@ def _default_llm_profiles() -> dict[str, LLMProfile]:
             provider_id="openai",
             driver=LLMDriver.OPENAI_COMPATIBLE,
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            model="gpt-4o-mini",
             api_key_env="OPENAI_API_KEY",
             default_headers={},
             timeout_seconds=max(5, int(os.getenv("OPENAI_TIMEOUT_SECONDS", "60"))),
@@ -701,7 +994,7 @@ def _default_llm_profiles() -> dict[str, LLMProfile]:
             provider_id="azure_foundry",
             driver=LLMDriver.OPENAI_COMPATIBLE,
             base_url=os.getenv("AZURE_FOUNDRY_BASE_URL", ""),
-            model=os.getenv("AZURE_FOUNDRY_MODEL", ""),
+            model="gpt-4.1-mini",
             api_key_env=azure_api_env,
             default_headers=azure_headers,
             timeout_seconds=max(
@@ -738,30 +1031,34 @@ def _merge_llm_profiles(
             return _merge_llm_profiles(base_profiles=merged, payload=parsed)
 
     for name, item in source.items():
-        if not isinstance(item, dict):
-            continue
         profile_name = str(name).strip()
         if not profile_name:
             continue
+        if _looks_like_profile_group(item):
+            provider_payload = item
+            models = provider_payload.get("models", {})
+            assert isinstance(models, dict)
+            for model_name, model_payload in models.items():
+                model_key = str(model_name).strip()
+                if not model_key:
+                    continue
+                expanded = _coerce_group_model_payload(
+                    provider_key=profile_name,
+                    provider_payload=provider_payload,
+                    model_key=model_key,
+                    model_payload=model_payload,
+                )
+                if expanded is None:
+                    continue
+                merged[f"{profile_name}.{model_key}"] = _coerce_llm_profile(
+                    f"{profile_name}.{model_key}",
+                    expanded,
+                )
+            continue
+        if not isinstance(item, dict):
+            continue
         merged[profile_name] = _coerce_llm_profile(profile_name, item)
     return merged
-
-
-def resolve_active_llm_profile(
-    *,
-    runtime: RuntimeConfig,
-    llm_profiles: dict[str, LLMProfile],
-    default_llm_profile: str,
-) -> LLMProfile:
-    preferred = runtime.llm_runtime.profile.strip() or default_llm_profile.strip()
-    if preferred and preferred in llm_profiles:
-        return llm_profiles[preferred]
-    if default_llm_profile.strip() in llm_profiles:
-        return llm_profiles[default_llm_profile.strip()]
-    if llm_profiles:
-        first_key = sorted(llm_profiles.keys())[0]
-        return llm_profiles[first_key]
-    raise RuntimeError("No LLM profiles are configured")
 
 
 def _load_secrets() -> SecretConfig:
@@ -774,11 +1071,9 @@ def _load_secrets() -> SecretConfig:
     return SecretConfig(
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
         embedding_provider=embedding_provider,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
         google_api_key=os.getenv("GOOGLE_API_KEY", ""),
         google_embedding_model=os.getenv(
@@ -801,23 +1096,6 @@ def validate_required_secrets(config: AppConfig) -> list[str]:
     missing: list[str] = []
     if not (os.getenv("APP_ADMIN_TOKEN", "") or "").strip():
         missing.append("APP_ADMIN_TOKEN")
-
-    active_profile = resolve_active_llm_profile(
-        runtime=config.runtime,
-        llm_profiles=config.llm_profiles,
-        default_llm_profile=config.default_llm_profile,
-    )
-    required_api_key_env = active_profile.api_key_env.strip()
-    if required_api_key_env and not (os.getenv(required_api_key_env, "") or "").strip():
-        missing.append(required_api_key_env)
-    if not active_profile.model.strip():
-        missing.append(f"LLM_PROFILE_{active_profile.profile_name.upper()}_MODEL")
-    if (
-        active_profile.driver == LLMDriver.OPENAI_COMPATIBLE
-        and active_profile.provider_id != "openai"
-        and not active_profile.base_url.strip()
-    ):
-        missing.append(f"LLM_PROFILE_{active_profile.profile_name.upper()}_BASE_URL")
     return missing
 
 
@@ -840,9 +1118,6 @@ def load_config(base_dir: Path) -> AppConfig:
     llm_profiles = _merge_llm_profiles(
         base_profiles=llm_profiles, payload=raw_config.get("llm_profiles")
     )
-    llm_profiles = _merge_llm_profiles(
-        base_profiles=llm_profiles, payload=os.getenv("LLM_PROFILES_JSON", "")
-    )
 
     default_llm_profile = (
         str(raw_config.get("default_llm_profile", "")).strip()
@@ -857,6 +1132,14 @@ def load_config(base_dir: Path) -> AppConfig:
         runtime=runtime,
         secrets=secrets,
         llm_profiles=llm_profiles,
+        llm_defaults=_parse_llm_route_patch(
+            raw_config.get("llm_defaults"),
+            strict=False,
+            context="llm_defaults",
+        ),
+        agent_llm_overrides=_parse_agent_llm_overrides(
+            raw_config.get("agent_llm_overrides")
+        ),
         default_llm_profile=default_llm_profile,
     )
 
