@@ -23,7 +23,10 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
         "/api/v1/agents/bulk-runtime-patch",
         json={
             "agent_ids": ["alpha", "beta"],
-            "patch": {"llm_runtime": {"timeout_seconds": 15}},
+            "patch": {
+                "llm_runtime": {"timeout_seconds": 15},
+                "llm": {"default": "openai", "fallbacks": ["deepseek"]},
+            },
             "mode": "merge",
         },
     )
@@ -35,6 +38,8 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
     alpha_runtime = client.get("/api/v1/agents/alpha/config/runtime")
     assert alpha_runtime.status_code == 200
     assert alpha_runtime.json()["data"]["config"]["llm_runtime"]["timeout_seconds"] == 15
+    assert alpha_runtime.json()["data"]["config"]["llm"]["default"] == "openai"
+    assert alpha_runtime.json()["data"]["config"]["llm"]["fallbacks"] == ["deepseek"]
 
     template_dir = api_app["base_dir"] / "agent_templates"
     template_dir.mkdir(parents=True, exist_ok=True)
@@ -42,7 +47,10 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
         json.dumps(
             {
                 "description": "Fast timeout profile",
-                "runtime_config": {"llm_runtime": {"timeout_seconds": 12}},
+                "runtime_config": {
+                    "llm_runtime": {"timeout_seconds": 12},
+                    "llm": {"default": "azure_foundry", "fallbacks": []},
+                },
             }
         )
         + "\n",
@@ -59,6 +67,9 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app):
     assert loaded_template.json()["data"]["runtime_config"]["llm_runtime"][
         "timeout_seconds"
     ] == 12
+    assert loaded_template.json()["data"]["runtime_config"]["llm"]["default"] == (
+        "azure_foundry"
+    )
 
     diff = client.get(
         "/api/v1/agents/alpha/runtime-diff", params={"baseline": "template:speedy"}
@@ -87,6 +98,30 @@ def test_bulk_runtime_patch_rejects_invalid_mode(client):
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_agents_endpoint_includes_llm_status(client):
+    response = client.get("/api/v1/agents")
+    assert response.status_code == 200
+    rows = response.json()["data"]
+    default_row = next(item for item in rows if item["agent_id"] == "default")
+    assert default_row["llm_status"]["valid"] is True
+    assert "default_profile" in default_row["llm_status"]
+
+
+def test_bulk_runtime_patch_reports_legacy_llm_profile_validation_error(client):
+    response = client.post(
+        "/api/v1/agents/bulk-runtime-patch",
+        json={
+            "agent_ids": ["default"],
+            "patch": {"llm_runtime": {"profile": "openai"}},
+            "mode": "merge",
+        },
+    )
+    assert response.status_code == 200
+    result = response.json()["data"]["results"][0]
+    assert result["updated"] is False
+    assert "llm_runtime.profile" in result["error"]
 
 
 def test_agent_tools_catalog_and_selection_update(client):

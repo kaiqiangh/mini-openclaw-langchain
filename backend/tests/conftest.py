@@ -145,6 +145,17 @@ class FakeAgentManager:
     def get_usage_store(self, agent_id: str = "default") -> UsageStore:
         return self.get_runtime(agent_id).usage_store
 
+    @staticmethod
+    def _llm_status() -> dict[str, object]:
+        return {
+            "valid": True,
+            "runnable": True,
+            "default_profile": "deepseek",
+            "fallback_profiles": [],
+            "warnings": [],
+            "errors": [],
+        }
+
     def list_agents(self) -> list[dict[str, object]]:
         rows = []
         for agent_id, runtime in self._runtimes.items():
@@ -156,6 +167,7 @@ class FakeAgentManager:
                     "updated_at": 0.0,
                     "active_sessions": 0,
                     "archived_sessions": 0,
+                    "llm_status": self._llm_status(),
                 }
             )
         return rows
@@ -171,6 +183,7 @@ class FakeAgentManager:
             "updated_at": 0.0,
             "active_sessions": 0,
             "archived_sessions": 0,
+            "llm_status": self._llm_status(),
         }
 
     def delete_agent(self, agent_id: str) -> bool:

@@ -47,6 +47,23 @@ def test_runtime_config_endpoint_roundtrip(client):
     )
 
 
+def test_runtime_config_endpoint_rejects_legacy_llm_profile(client):
+    response = client.put(
+        "/api/v1/agents/default/config/runtime",
+        json={
+            "config": {
+                "llm_runtime": {
+                    "temperature": 0.2,
+                    "timeout_seconds": 60,
+                    "profile": "openai",
+                }
+            }
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
 def test_tokens_session_uses_agent_effective_runtime(client):
     default_session = client.post("/api/v1/agents/default/sessions", json={}).json()[
         "data"
