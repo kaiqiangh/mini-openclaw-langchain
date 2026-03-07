@@ -133,7 +133,7 @@ export default function Home() {
       return {
         ...previous,
         right: clampRight(
-          previous.right + direction * RESIZE_STEP,
+          previous.right - direction * RESIZE_STEP,
           width,
           previous.left,
         ),
