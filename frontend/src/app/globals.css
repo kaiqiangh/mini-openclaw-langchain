@@ -730,6 +730,7 @@ h4 {
   height: 100%;
   width: 10px;
   cursor: col-resize;
+  outline: none;
   border-radius: 999px;
   background: var(--surface-header);
   transition: background-color 120ms var(--ease-standard);
@@ -744,6 +745,7 @@ h4 {
 }
 
 .ui-split-handle:hover,
+.ui-split-handle:focus-visible,
 .ui-split-handle[data-dragging="true"] {
   background: var(--accent-soft);
 }
