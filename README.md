@@ -7,12 +7,12 @@ Run powerful multi-agent systems with hardened tooling, a built-in scheduler, an
 
 <br/>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/kaiqiangh/mini-openclaw-langchain/ci.yml)](#testing)
+[![CI](https://github.com/kaiqiangh/mini-openclaw-langchain/actions/workflows/ci.yml/badge.svg)](https://github.com/kaiqiangh/mini-openclaw-langchain/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/kaiqiangh/mini-openclaw-langchain)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/github/package-json/v/kaiqiangh/mini-openclaw-langchain?filename=frontend%2Fpackage.json)
+[![Version](https://img.shields.io/github/v/release/kaiqiangh/mini-openclaw-langchain?label=version&color=blue)](https://github.com/kaiqiangh/mini-openclaw-langchain/releases)
 [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart)
-[![Next.js](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/next?filename=frontend%2Fpackage.json)](#architecture)
-![LangChain](https://img.shields.io/pypi/v/langchain?label=LangChain&color=15803d)
+[![Next.js](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/next?filename=frontend%2Fpackage.json&label=next.js&color=black)](frontend/package.json)
+[![LangChain](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/langchain?filename=backend%2Fpackage.json&label=LangChain&color=15803d)](backend/package.json)
 
 [Getting Started](#quickstart) · [Architecture](#architecture) · [Features](#features) · [API Reference](#new-api-highlights) · [Contributing](#contributing)
 
@@ -56,7 +56,7 @@ Security-conscious defaults across all tools:
 
 ### 🧰 Rich Tool Surface
 
-```
+```text
 terminal            python_repl          fetch_url
 read_files          read_pdf             search_knowledge_base
 web_search          sessions_list        session_history
@@ -213,14 +213,14 @@ OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
 
 **Scheduler metrics**
 
-```
+```text
 GET /api/v1/agents/{agent_id}/scheduler/metrics?window=1h|4h|12h|24h|7d|30d
 GET /api/v1/agents/{agent_id}/scheduler/metrics/timeseries?...&bucket=1m|5m|15m|1h
 ```
 
 **Agent bulk operations & templates**
 
-```
+```text
 POST /api/v1/agents/bulk-delete
 POST /api/v1/agents/bulk-export
 POST /api/v1/agents/bulk-runtime-patch
@@ -233,7 +233,7 @@ GET  /api/v1/agents/{agent_id}/runtime-diff?baseline=default|agent:<id>|template
 
 ## Repository Layout
 
-```
+```text
 .
 ├── backend/        # FastAPI app, AgentManager, tools, scheduler, retrieval engine
 ├── frontend/       # Next.js app router UI, API client, store, scheduler/usage pages
