@@ -7,18 +7,18 @@ Run powerful multi-agent systems with hardened tooling, a built-in scheduler, an
 
 <br/>
 
-[![Build](https://img.shields.io/badge/build-passing-15803d)](#testing)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![Version](https://img.shields.io/badge/version-0.1.0-blue)
+[![Build](https://img.shields.io/github/actions/workflow/status/kaiqiangh/mini-openclaw-langchain/ci.yml)](#testing)
+[![License](https://img.shields.io/github/license/kaiqiangh/mini-openclaw-langchain)](https://opensource.org/licenses/MIT)
+![Version](https://img.shields.io/github/package-json/v/kaiqiangh/mini-openclaw-langchain?filename=frontend%2Fpackage.json)
 [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart)
-[![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture)
-![LangChain](https://img.shields.io/badge/LangChain-1.2.10-15803d)
+[![Next.js](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/next?filename=frontend%2Fpackage.json)](#architecture)
+![LangChain](https://img.shields.io/pypi/v/langchain?label=LangChain&color=15803d)
 
 [Getting Started](#quickstart) · [Architecture](#architecture) · [Features](#features) · [API Reference](#new-api-highlights) · [Contributing](#contributing)
 
 </div>
 
------
+---
 
 ## What is this?
 
@@ -26,7 +26,7 @@ Mini-OpenClaw is an **agent workspace** you spin up locally in minutes. It gives
 
 Think of it as a **batteries-included LangChain runtime** for teams and individuals who want reliability and observability without the overhead of a managed cloud service.
 
------
+---
 
 ## Features
 
@@ -73,7 +73,7 @@ Per-agent model breakdown, trend charts, and CSV export for cost tracking and ca
 
 Bulk delete, bulk export, bulk runtime patch, template-driven config creation, and a live config diff view — all from the UI or API.
 
------
+---
 
 ## Architecture
 
@@ -96,7 +96,7 @@ flowchart LR
 
 **Stack:** Python 3.13 · FastAPI · LangChain 1.2 · SQLite · Next.js 15 · React
 
------
+---
 
 ## Quickstart
 
@@ -136,16 +136,15 @@ Next.js rewrites `/api/v1/*` → `http://127.0.0.1:8000/api/v1/*` automatically.
 
 ### Required environment variables
 
-|Variable                                                       |Required|Description                              |
-|---------------------------------------------------------------|--------|-----------------------------------------|
-|`APP_ADMIN_TOKEN`                                              |✅       |Admin secret for all `/api/v1/*` routes  |
-|`OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY`|✅       |Key for your active `DEFAULT_LLM_PROFILE`|
-|`LANGSMITH_API_KEY`                                            |Optional|Enable LangSmith tracing                 |
-
+| Variable                                                        | Required | Description                               |
+| --------------------------------------------------------------- | -------- | ----------------------------------------- |
+| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for all `/api/v1/*` routes   |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for your active `DEFAULT_LLM_PROFILE` |
+| `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                  |
 
 > **PDF extraction support:** `uv pip install --python .venv/bin/python -r requirements-pdf.txt`
 
------
+---
 
 ## Security Model
 
@@ -158,23 +157,23 @@ Mini-OpenClaw applies a defense-in-depth approach:
 - **Terminal sandboxing:** Environment is scrubbed of secret-like variables before execution.
 - **Middleware:** CORS + trusted hosts + rate limiting enabled by default.
 
------
+---
 
 ## CLI Reference (`./oml`)
 
 The repo-local CLI manages the full lifecycle of your local deployment. A PowerShell equivalent (`.\oml.ps1`) is available for Windows.
 
-|Command                 |Description                                           |
-|------------------------|------------------------------------------------------|
-|`./oml start [target]`  |Start `all`, `backend`, or `frontend` in detached mode|
-|`./oml stop [target]`   |Graceful stop (SIGTERM → SIGKILL fallback)            |
-|`./oml restart [target]`|Stop + start                                          |
-|`./oml status`          |Print service state, PID, health, and URL             |
-|`./oml logs [target]`   |Tail logs; supports `--follow` and `--lines N`        |
-|`./oml update`          |Sync Python and Node dependencies without touching git|
-|`./oml doctor`          |Validate prerequisites, `.env`, and port conflicts    |
-|`./oml ports`           |Print effective URLs and ports                        |
-|`./oml version`         |Print component versions                              |
+| Command                  | Description                                            |
+| ------------------------ | ------------------------------------------------------ |
+| `./oml start [target]`   | Start `all`, `backend`, or `frontend` in detached mode |
+| `./oml stop [target]`    | Graceful stop (SIGTERM → SIGKILL fallback)             |
+| `./oml restart [target]` | Stop + start                                           |
+| `./oml status`           | Print service state, PID, health, and URL              |
+| `./oml logs [target]`    | Tail logs; supports `--follow` and `--lines N`         |
+| `./oml update`           | Sync Python and Node dependencies without touching git |
+| `./oml doctor`           | Validate prerequisites, `.env`, and port conflicts     |
+| `./oml ports`            | Print effective URLs and ports                         |
+| `./oml version`          | Print component versions                               |
 
 **Runtime config** — create `.oml/config.env` to override defaults:
 
@@ -190,25 +189,25 @@ OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
 
 **Exit codes:** `0` success · `1` invalid args · `2` missing binary · `3` health timeout · `4` unsafe stop · `5` update failure · `6` doctor critical failure
 
------
+---
 
 ## Feature Status
 
-|Area                   |Status |Notes                                                                  |
-|-----------------------|-------|-----------------------------------------------------------------------|
-|Multi-agent workspaces |✅ Ready|Per-agent sessions, memory, knowledge, usage, scheduler state          |
-|Chat + streaming       |✅ Ready|SSE streaming, debug events, tool/retrieval traces                     |
-|Session compression    |✅ Ready|Context summarization and history truncation via `/compress`           |
-|Tool hardening         |✅ Ready|URL scheme/host controls, private network blocking, env scrubbing      |
-|Scheduler API          |✅ Ready|Cron CRUD, run-now, runs/failures, heartbeat config/runs               |
-|Scheduler observability|✅ Ready|Windowed duration/latency aggregates + timeseries (`1h` → `30d`)       |
-|Scheduler UI           |✅ Ready|`/scheduler` page for cron + heartbeat controls and history            |
-|Agent management UX    |✅ Ready|Bulk delete/export/runtime patch, template-driven config, diff view    |
-|Retrieval engine       |✅ Ready|SQLite + FTS5 prefilter, semantic+lexical blending, JSON migration     |
-|Runtime config editor  |✅ Ready|Agent-scoped JSON editor via `/api/v1/agents/{agent_id}/config/runtime`|
-|Usage analytics        |✅ Ready|Model breakdown, trend chart, CSV export                               |
+| Area                    | Status   | Notes                                                                   |
+| ----------------------- | -------- | ----------------------------------------------------------------------- |
+| Multi-agent workspaces  | ✅ Ready | Per-agent sessions, memory, knowledge, usage, scheduler state           |
+| Chat + streaming        | ✅ Ready | SSE streaming, debug events, tool/retrieval traces                      |
+| Session compression     | ✅ Ready | Context summarization and history truncation via `/compress`            |
+| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, env scrubbing       |
+| Scheduler API           | ✅ Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs                |
+| Scheduler observability | ✅ Ready | Windowed duration/latency aggregates + timeseries (`1h` → `30d`)        |
+| Scheduler UI            | ✅ Ready | `/scheduler` page for cron + heartbeat controls and history             |
+| Agent management UX     | ✅ Ready | Bulk delete/export/runtime patch, template-driven config, diff view     |
+| Retrieval engine        | ✅ Ready | SQLite + FTS5 prefilter, semantic+lexical blending, JSON migration      |
+| Runtime config editor   | ✅ Ready | Agent-scoped JSON editor via `/api/v1/agents/{agent_id}/config/runtime` |
+| Usage analytics         | ✅ Ready | Model breakdown, trend chart, CSV export                                |
 
------
+---
 
 ## New API Highlights
 
@@ -230,7 +229,7 @@ GET  /api/v1/agents/templates/{template_name}
 GET  /api/v1/agents/{agent_id}/runtime-diff?baseline=default|agent:<id>|template:<name>
 ```
 
------
+---
 
 ## Repository Layout
 
@@ -242,7 +241,7 @@ GET  /api/v1/agents/{agent_id}/runtime-diff?baseline=default|agent:<id>|template
 └── oml.ps1         # PowerShell CLI (Windows)
 ```
 
------
+---
 
 ## Testing
 
@@ -261,7 +260,7 @@ npm run test:run
 npm run build
 ```
 
------
+---
 
 ## Contributing
 
@@ -274,7 +273,7 @@ Contributions are welcome! Here’s how to get started:
 
 For larger changes, opening an issue first to discuss the approach is appreciated.
 
------
+---
 
 ## License
 
