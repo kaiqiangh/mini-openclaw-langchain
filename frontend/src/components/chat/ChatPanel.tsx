@@ -8,6 +8,8 @@ import { Badge, Button, EmptyState } from "@/components/ui/primitives";
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
 
+const LIVE_EDGE_THRESHOLD_PX = 80;
+
 export function ChatPanel() {
   const AGENT_LOG_EXPANDED_KEY = "mini-openclaw:agent-log-expanded:v1";
   const {
@@ -21,6 +23,7 @@ export function ChatPanel() {
   } = useAppStore();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const [atLiveEdge, setAtLiveEdge] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -53,8 +56,9 @@ export function ChatPanel() {
 
   useEffect(() => {
     if (!scrollRef.current) return;
+    if (!atLiveEdge) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, isStreaming]);
+  }, [atLiveEdge, messages, isStreaming]);
 
   return (
     <section className="panel-shell flex min-h-0 min-w-0 flex-col">
@@ -87,6 +91,12 @@ export function ChatPanel() {
         <div
           ref={scrollRef}
           className="ui-scroll-area mb-3 flex-1 px-3 pt-3 sm:px-4 sm:pt-4"
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            const distanceFromBottom =
+              node.scrollHeight - node.scrollTop - node.clientHeight;
+            setAtLiveEdge(distanceFromBottom <= LIVE_EDGE_THRESHOLD_PX);
+          }}
         >
           {messages.length === 0 ? (
             <EmptyState
@@ -105,6 +115,22 @@ export function ChatPanel() {
         </div>
 
         <div className="px-4 pb-4">
+          {!atLiveEdge && messages.length > 0 ? (
+            <div className="mb-2 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                className="px-3"
+                onClick={() => {
+                  if (!scrollRef.current) return;
+                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                  setAtLiveEdge(true);
+                }}
+              >
+                Jump to latest
+              </Button>
+            </div>
+          ) : null}
           {isStreaming ? (
             <div
               className="ui-status mb-2 text-[var(--accent-strong)]"
