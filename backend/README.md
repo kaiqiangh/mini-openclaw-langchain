@@ -77,22 +77,22 @@ This separation is structural only; request/response and stream behavior are unc
 
 ### Run-Once Loop (`AgentManager.run_once`)
 
-1. **Resolve runtime and model profile**
+1. Resolve runtime and model profile
    - Load agent-effective runtime config (global + workspace config).
    - Resolve active LLM profile and instantiate/reuse `ChatOpenAI`.
 
-2. **Build retrieval envelope**
+2. Build retrieval envelope
    - `RetrievalOrchestrator.build_envelope(...)` checks `runtime.rag_mode`.
    - If enabled, run memory retrieval through `MemoryIndexer.retrieve(...)`.
    - Build transient request context in this exact format:
      - `"[Memory Retrieval Results]\n- (score) text ..."`
 
-3. **Build prompt + message list**
+3. Build prompt and message list
    - `PromptBuilder` assembles system prompt from workspace files.
    - Conversation history is converted into LangChain messages.
    - Retrieval context (if any) is appended as a system message.
 
-4. **Build tool-enabled agent**
+4. Build tool-enabled agent
    - `ToolOrchestrator.build_agent(...)` wires:
      - available mini tools
      - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
@@ -100,11 +100,11 @@ This separation is structural only; request/response and stream behavior are unc
      - LangChain structured tools
    - Optional tool-loop model overrides come from the resolved agent `llm` config.
 
-5. **Execute agent**
+5. Execute agent
    - Invoke with recursion limit and callbacks.
    - Callback stack includes internal audit + usage capture + optional tracing callbacks.
 
-6. **Aggregate and persist usage**
+6. Aggregate and persist usage
    - `UsageOrchestrator` normalizes callback usage payloads, dedupes repeated message IDs,
      computes prices, and writes `UsageStore` records.
    - Response payload is unchanged (`text` or `structured_response` + `messages` + `usage`).
@@ -171,6 +171,37 @@ Embedding behavior:
 - `UsageCaptureCallbackHandler`: captures per-call model usage payloads.
 - `UsageOrchestrator`: dedupe + normalize + compute cost + persist usage row.
 - Optional external tracing callbacks are attached when tracing is enabled.
+
+## Trace Event Model
+
+Trace reads merge two persisted JSONL sources inside each agent workspace into one
+normalized event feed:
+
+- `storage/audit/steps.jsonl` -> `source: "audit.steps"`
+- `storage/runs_events.jsonl` -> `source: "runs.events"`
+
+Both sources are projected into the same record shape before the API returns them:
+
+- `event_id`
+- `timestamp_ms`
+- `agent_id`
+- `run_id`
+- `session_id`
+- `trigger_type`
+- `event`
+- `summary`
+- `details`
+- `source`
+
+Behavior notes:
+
+- `summary` is synthesized for common tool and LLM lifecycle events so list views can
+  render a compact human-readable description without reparsing raw payloads.
+- Duplicate events emitted into both source logs are deduplicated by a normalized
+  signature before sorting.
+- List reads are reverse chronological and support time-window filters, event/trigger
+  filters, run/session filters, full-text query matching over `summary` and `details`,
+  and cursor pagination.
 
 ### Current Behavior Notes
 
@@ -285,6 +316,13 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET|PUT /api/v1/agents/{agent_id}/config/rag-mode`
 - `GET|PUT /api/v1/agents/{agent_id}/config/runtime` (validated, atomic write)
 - `GET|PUT /api/v1/config/tracing` (persisted in `storage/runtime_state.json`)
+
+### Traces
+
+- `GET /api/v1/agents/{agent_id}/traces/events`
+  Supports `window`, `event`, `trigger`, `run_id`, `session_id`, `q`, `limit`, and `cursor`.
+- `GET /api/v1/agents/{agent_id}/traces/events/{event_id}`
+  Returns one normalized persisted trace event from `audit.steps` or `runs.events`.
 
 ### Scheduler
 
