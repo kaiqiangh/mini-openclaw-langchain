@@ -107,6 +107,11 @@ type AppState = {
   deleteSessionById: (sessionId: string, archived?: boolean) => Promise<void>;
   createNewSession: () => Promise<void>;
   selectSession: (sessionId: string) => Promise<void>;
+  openSessionInWorkspace: (params: {
+    agentId: string;
+    sessionId: string;
+    scope?: "active" | "archived";
+  }) => Promise<void>;
   sendMessage: (content: string) => Promise<boolean>;
   continueAfterMaxSteps: () => Promise<boolean>;
   cancelAfterMaxSteps: () => Promise<void>;
@@ -436,6 +441,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
     },
     [currentAgentId, loadSession, sessionsScope],
+  );
+
+  const openSessionInWorkspace = useCallback(
+    async ({
+      agentId,
+      sessionId,
+      scope = "active",
+    }: {
+      agentId: string;
+      sessionId: string;
+      scope?: "active" | "archived";
+    }) => {
+      const nextAgentId = agentId.trim() || "default";
+      const nextScope = scope === "archived" ? "archived" : "active";
+      cancelActiveStream();
+      const switchEpoch = agentSwitchEpochRef.current + 1;
+      agentSwitchEpochRef.current = switchEpoch;
+      setError(null);
+      setSessionsScopeState(nextScope);
+      setSessions([]);
+      setCurrentSessionId(null);
+      setMessages([]);
+      setIsStreaming(false);
+
+      const switchingAgent = nextAgentId !== currentAgentId;
+      if (switchingAgent) {
+        setCurrentAgentId(nextAgentId);
+        setSelectedFilePathState("memory/MEMORY.md");
+        setSelectedFileContent("");
+        setFileDirty(false);
+      }
+
+      try {
+        if (switchingAgent) {
+          const rag = await getRagMode(nextAgentId);
+          if (agentSwitchEpochRef.current !== switchEpoch) return;
+          setRagEnabledState(rag);
+        }
+
+        const list = await getSessions(nextScope, nextAgentId);
+        if (agentSwitchEpochRef.current !== switchEpoch) return;
+        setSessions(list);
+
+        await loadSession(sessionId, nextScope === "archived", nextAgentId);
+        if (agentSwitchEpochRef.current !== switchEpoch) return;
+
+        if (switchingAgent) {
+          const initialContent = await readWorkspaceFile(
+            "memory/MEMORY.md",
+            nextAgentId,
+          );
+          if (agentSwitchEpochRef.current !== switchEpoch) return;
+          setSelectedFilePathState("memory/MEMORY.md");
+          setSelectedFileContent(initialContent);
+          setFileDirty(false);
+        }
+      } catch (err) {
+        if (agentSwitchEpochRef.current !== switchEpoch) return;
+        const message =
+          err instanceof Error ? err.message : "Failed to open workspace session";
+        setError(message);
+        throw err instanceof Error ? err : new Error(message);
+      }
+    },
+    [cancelActiveStream, currentAgentId, loadSession],
   );
 
   const setSelectedFilePath = useCallback(
@@ -1036,6 +1106,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteSessionById,
       createNewSession,
       selectSession,
+      openSessionInWorkspace,
       sendMessage,
       continueAfterMaxSteps,
       cancelAfterMaxSteps,
@@ -1072,6 +1143,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteSessionById,
       createNewSession,
       selectSession,
+      openSessionInWorkspace,
       sendMessage,
       continueAfterMaxSteps,
       cancelAfterMaxSteps,

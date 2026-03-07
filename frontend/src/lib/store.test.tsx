@@ -174,6 +174,30 @@ function StreamProbe() {
   );
 }
 
+function WorkspaceSessionProbe() {
+  const store = useAppStore();
+  if (!store.initialized) return <div>booting</div>;
+
+  return (
+    <div>
+      <div data-testid="agent">{store.currentAgentId}</div>
+      <div data-testid="scope">{store.sessionsScope}</div>
+      <div data-testid="session">{store.currentSessionId ?? "none"}</div>
+      <button
+        onClick={() =>
+          void store.openSessionInWorkspace({
+            agentId: "elon",
+            sessionId: "e1",
+            scope: "archived",
+          })
+        }
+      >
+        open-session
+      </button>
+    </div>
+  );
+}
+
 describe("store editor save flow", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -328,5 +352,32 @@ describe("store editor save flow", () => {
       expect(screen.getByTestId("message-count")).toHaveTextContent("0"),
     );
     expect(screen.getByTestId("messages")).not.toHaveTextContent("stale");
+  });
+
+  it("opens a requested workspace session with explicit agent and scope", async () => {
+    render(
+      <AppProvider>
+        <WorkspaceSessionProbe />
+      </AppProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("booting")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("open-session"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent")).toHaveTextContent("elon"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("scope")).toHaveTextContent("archived"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("session")).toHaveTextContent("e1"),
+    );
+    await waitFor(() =>
+      expect(mockGetSessionHistory).toHaveBeenCalledWith("e1", true, "elon"),
+    );
   });
 });

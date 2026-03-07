@@ -177,7 +177,7 @@ type TabsContextValue = {
 
 const TabsContext = createContext<TabsContextValue | null>(null);
 
-type TabsListProps = HTMLAttributes<HTMLDivElement> &
+type TabsListProps = Omit<HTMLAttributes<HTMLDivElement>, "onChange"> &
   ClassNameProps & {
     ariaLabel?: string;
     value?: string;
