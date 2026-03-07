@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { Navbar } from "@/components/layout/Navbar";
 import {
   Badge,
   Button,
@@ -351,9 +350,8 @@ export default function SchedulerPage() {
   return (
     <main
       id="main-content"
-      className="flex min-h-dvh flex-col"
+      className="flex min-h-0 flex-1 flex-col"
     >
-      <Navbar />
       <section className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-y-auto p-3 pb-5">
         <div className="panel-shell">
           <div className="ui-panel-header">

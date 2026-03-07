@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { InspectorPanel } from "@/components/editor/InspectorPanel";
-import { Navbar } from "@/components/layout/Navbar";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TabButton, TabsList } from "@/components/ui/primitives";
@@ -17,6 +16,17 @@ const DEFAULT_LAYOUT = { left: 300, right: 360 };
 const MIN_LEFT = 260;
 const MIN_RIGHT = 340;
 const MIN_CENTER = 420;
+const RESIZE_STEP = 32;
+
+function clampLeft(left: number, width: number, right: number) {
+  const maxLeft = Math.max(MIN_LEFT, width - right - MIN_CENTER - 16);
+  return Math.min(maxLeft, Math.max(MIN_LEFT, left));
+}
+
+function clampRight(right: number, width: number, left: number) {
+  const maxRight = Math.max(MIN_RIGHT, width - left - MIN_CENTER - 16);
+  return Math.min(maxRight, Math.max(MIN_RIGHT, right));
+}
 
 export default function Home() {
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>("chat");
@@ -74,6 +84,14 @@ export default function Home() {
     };
   }, []);
 
+  function getContainerWidth(fallback = layout) {
+    const host = containerRef.current;
+    if (host) {
+      return host.getBoundingClientRect().width;
+    }
+    return fallback.left + fallback.right + MIN_CENTER + 16;
+  }
+
   function startResize(target: Exclude<DragTarget, null>, startX: number) {
     const host = containerRef.current;
     if (!host) return;
@@ -85,22 +103,11 @@ export default function Home() {
       const delta = event.clientX - startX;
       const width = host.getBoundingClientRect().width;
       if (target === "left") {
-        const maxLeft = Math.max(
-          MIN_LEFT,
-          width - startRight - MIN_CENTER - 16,
-        );
-        const nextLeft = Math.min(
-          maxLeft,
-          Math.max(MIN_LEFT, startLeft + delta),
-        );
+        const nextLeft = clampLeft(startLeft + delta, width, startRight);
         setLayout((prev) => ({ ...prev, left: nextLeft }));
         return;
       }
-      const maxRight = Math.max(MIN_RIGHT, width - startLeft - MIN_CENTER - 16);
-      const nextRight = Math.min(
-        maxRight,
-        Math.max(MIN_RIGHT, startRight - delta),
-      );
+      const nextRight = clampRight(startRight - delta, width, startLeft);
       setLayout((prev) => ({ ...prev, right: nextRight }));
     };
 
@@ -112,6 +119,26 @@ export default function Home() {
 
     window.addEventListener("pointermove", handleMove);
     window.addEventListener("pointerup", handleUp);
+  }
+
+  function stepResize(target: Exclude<DragTarget, null>, direction: -1 | 1) {
+    setLayout((previous) => {
+      const width = getContainerWidth(previous);
+      if (target === "left") {
+        return {
+          ...previous,
+          left: clampLeft(previous.left + direction * RESIZE_STEP, width, previous.right),
+        };
+      }
+      return {
+        ...previous,
+        right: clampRight(
+          previous.right + direction * RESIZE_STEP,
+          width,
+          previous.left,
+        ),
+      };
+    });
   }
 
   const desktopTemplateColumns = useMemo(() => {
@@ -128,13 +155,15 @@ export default function Home() {
     return cols.join(" ");
   }, [layout.left, layout.right, leftCollapsed, rightCollapsed]);
 
+  const containerWidth = getContainerWidth();
+  const leftMax = Math.max(MIN_LEFT, containerWidth - layout.right - MIN_CENTER - 16);
+  const rightMax = Math.max(MIN_RIGHT, containerWidth - layout.left - MIN_CENTER - 16);
+
   return (
     <main
       id="main-content"
-      className="app-main flex h-screen flex-col overflow-hidden"
+      className="app-main flex min-h-0 flex-1 flex-col overflow-hidden"
     >
-      <Navbar />
-
       <section className="hidden h-full min-w-0 p-3 md:flex md:flex-col">
         <div className="mb-2 flex items-center justify-end gap-2">
           <button
@@ -176,6 +205,10 @@ export default function Home() {
           {!leftCollapsed ? (
             <ResizeHandle
               dragging={dragging === "left"}
+              valueNow={layout.left}
+              valueMin={MIN_LEFT}
+              valueMax={leftMax}
+              onStep={(direction) => stepResize("left", direction)}
               onPointerDown={(event) => {
                 event.preventDefault();
                 startResize("left", event.clientX);
@@ -186,6 +219,10 @@ export default function Home() {
           {!rightCollapsed ? (
             <ResizeHandle
               dragging={dragging === "right"}
+              valueNow={layout.right}
+              valueMin={MIN_RIGHT}
+              valueMax={rightMax}
+              onStep={(direction) => stepResize("right", direction)}
               onPointerDown={(event) => {
                 event.preventDefault();
                 startResize("right", event.clientX);
