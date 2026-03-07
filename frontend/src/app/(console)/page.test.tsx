@@ -1,7 +1,7 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 
-import Home from "@/app/(console)/page";
+import Home from "@/app/page";
 
 vi.mock("@/components/layout/Sidebar", () => ({
   Sidebar: () => <div>sidebar</div>,
@@ -20,39 +20,18 @@ describe("workspace split layout", () => {
     window.localStorage.clear();
   });
 
-  it("matches right splitter keyboard behavior to drag semantics", () => {
+  it("renders the agents console without the middle chat panel", () => {
     const { container } = render(<Home />);
-    const desktopGrid = container.querySelector(".grid");
 
-    if (!(desktopGrid instanceof HTMLElement)) {
-      throw new Error("desktop grid not found");
-    }
+    expect(screen.getAllByText("sidebar").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("inspector").length).toBeGreaterThan(0);
+    expect(screen.queryByText("chat")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: "Chat" }),
+    ).not.toBeInTheDocument();
 
-    Object.defineProperty(desktopGrid, "getBoundingClientRect", {
-      value: () =>
-        ({
-          width: 1400,
-          height: 800,
-          top: 0,
-          left: 0,
-          right: 1400,
-          bottom: 800,
-          x: 0,
-          y: 0,
-          toJSON: () => ({}),
-        }) satisfies DOMRect,
-      configurable: true,
-    });
-
-    const handles = screen.getAllByRole("separator", { name: "Resize panels" });
-    const rightHandle = handles[1];
-
-    expect(rightHandle).toHaveAttribute("aria-valuenow", "360");
-
-    fireEvent.keyDown(rightHandle, { key: "ArrowLeft" });
-    expect(rightHandle).toHaveAttribute("aria-valuenow", "392");
-
-    fireEvent.keyDown(rightHandle, { key: "ArrowRight" });
-    expect(rightHandle).toHaveAttribute("aria-valuenow", "360");
+    expect(
+      container.querySelectorAll('[role="separator"][aria-label="Resize panels"]'),
+    ).toHaveLength(1);
   });
 });

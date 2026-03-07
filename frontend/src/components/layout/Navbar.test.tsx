@@ -51,7 +51,7 @@ describe("Navbar", () => {
 
     render(<Navbar />);
 
-    expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Agents" })).toHaveAttribute(
       "href",
       "/",
     );

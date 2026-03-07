@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 
-import RunsPage from "@/app/(console)/runs/page";
+import RunsPage from "@/app/runs/page";
 import {
   normalizeCronRun,
   normalizeUsageRun,
@@ -290,6 +290,14 @@ describe("RunsPage", () => {
 
     const drawer = screen.getByText("Run Detail").closest("aside");
     expect(drawer).not.toBeNull();
+    expect(
+      within(drawer as HTMLElement).getByText("Chat Usage"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer as HTMLElement).getByText(
+        "This row comes from persisted chat token and cost accounting. It is recorded activity, not a scheduler status stream.",
+      ),
+    ).toBeInTheDocument();
     expect(
       within(drawer as HTMLElement).getByRole("link", { name: "Open Session" }),
     ).toHaveAttribute(

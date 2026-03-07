@@ -1,7 +1,7 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import SessionsPage from "@/app/(console)/sessions/page";
+import SessionsPage from "@/app/sessions/page";
 
 type SessionRecord = {
   session_id: string;
@@ -18,7 +18,28 @@ const navigationState = vi.hoisted(() => ({
     const url = new URL(href, "http://localhost");
     navigationState.searchParams = new URLSearchParams(url.search);
   }),
-  push: vi.fn(),
+  push: vi.fn((href: string) => {
+    const url = new URL(href, "http://localhost");
+    navigationState.searchParams = new URLSearchParams(url.search);
+  }),
+}));
+
+const storeState = vi.hoisted(() => ({
+  currentAgentId: "default",
+  currentSessionId: null as string | null,
+  sessionsScope: "active" as "active" | "archived",
+  messages: [] as Array<{
+    id: string;
+    role: "user" | "assistant";
+    content: string;
+    timestampMs: number | null;
+    toolCalls: [];
+    retrievals: [];
+    debugEvents: [];
+  }>,
+  isStreaming: false,
+  error: null as string | null,
+  maxStepsPrompt: null,
 }));
 
 let sessionFixtures: Record<
@@ -66,7 +87,11 @@ const {
   mockArchiveSession,
   mockRestoreSession,
   mockDeleteSession,
-  mockOpenSessionInWorkspace,
+  mockSetCurrentAgent,
+  mockSetSessionsScope,
+  mockSelectSession,
+  mockContinueAfterMaxSteps,
+  mockCancelAfterMaxSteps,
 } = vi.hoisted(() => ({
   mockGetAgents: vi.fn(async () => listAgents()),
   mockGetSessions: vi.fn(
@@ -129,7 +154,30 @@ const {
       }
     },
   ),
-  mockOpenSessionInWorkspace: vi.fn(async () => undefined),
+  mockSetCurrentAgent: vi.fn(async (agentId: string) => {
+    storeState.currentAgentId = agentId;
+    storeState.sessionsScope = "active";
+  }),
+  mockSetSessionsScope: vi.fn(async (scope: "active" | "archived") => {
+    storeState.sessionsScope = scope;
+  }),
+  mockSelectSession: vi.fn(async (sessionId: string) => {
+    storeState.currentSessionId = sessionId;
+    storeState.sessionsScope = "active";
+    storeState.messages = [
+      {
+        id: `assistant-${sessionId}`,
+        role: "assistant",
+        content: `live:${sessionId}`,
+        timestampMs: 1_710_000_000_000,
+        toolCalls: [],
+        retrievals: [],
+        debugEvents: [],
+      },
+    ];
+  }),
+  mockContinueAfterMaxSteps: vi.fn(async () => true),
+  mockCancelAfterMaxSteps: vi.fn(async () => undefined),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -169,8 +217,12 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/lib/store", () => ({
   useAppStore: () => ({
-    currentAgentId: "default",
-    openSessionInWorkspace: mockOpenSessionInWorkspace,
+    ...storeState,
+    setCurrentAgent: mockSetCurrentAgent,
+    setSessionsScope: mockSetSessionsScope,
+    selectSession: mockSelectSession,
+    continueAfterMaxSteps: mockContinueAfterMaxSteps,
+    cancelAfterMaxSteps: mockCancelAfterMaxSteps,
   }),
 }));
 
@@ -231,11 +283,13 @@ describe("SessionsPage", () => {
 
     vi.clearAllMocks();
     window.localStorage.clear();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
+    storeState.currentAgentId = "default";
+    storeState.currentSessionId = null;
+    storeState.sessionsScope = "active";
+    storeState.messages = [];
+    storeState.isStreaming = false;
+    storeState.error = null;
+    storeState.maxStepsPrompt = null;
   });
 
   it("restores archived view state from the URL and shows the read-only detail state", async () => {
@@ -262,11 +316,11 @@ describe("SessionsPage", () => {
       ).length,
     ).toBeGreaterThan(0);
     expect(
-      screen.getAllByRole("button", { name: "Open Read-only in Workspace" }).length,
-    ).toBeGreaterThan(0);
+      screen.queryByRole("button", { name: "Send" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("filters locally and updates selection without mutating the live workspace", async () => {
+  it("filters locally and selects an active session for live chat", async () => {
     setRoute("agent=default");
     const { rerender } = render(<SessionsPage />);
 
@@ -288,27 +342,15 @@ describe("SessionsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Beta note/i }));
     rerender(<SessionsPage />);
 
-    await waitFor(() =>
-      expect(mockGetSessionHistory).toHaveBeenCalledWith(
-        "s-2",
-        false,
-        "default",
-      ),
-    );
-    expect(mockOpenSessionInWorkspace).not.toHaveBeenCalled();
+    await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith("s-2"));
+    expect(screen.getAllByText("live:s-2").length).toBeGreaterThan(0);
   });
 
-  it("archives and deletes sessions through the local review actions", async () => {
+  it("archives and deletes sessions through the detail actions", async () => {
     setRoute("agent=default&scope=active&session=s-1");
     const { rerender } = render(<SessionsPage />);
 
-    await waitFor(() =>
-      expect(mockGetSessionHistory).toHaveBeenCalledWith(
-        "s-1",
-        false,
-        "default",
-      ),
-    );
+    await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith("s-1"));
 
     fireEvent.click(screen.getAllByRole("button", { name: "Archive" })[0]);
     await waitFor(() =>
@@ -319,13 +361,7 @@ describe("SessionsPage", () => {
 
     setRoute("agent=default&scope=active&session=s-2");
     rerender(<SessionsPage />);
-    await waitFor(() =>
-      expect(mockGetSessionHistory).toHaveBeenCalledWith(
-        "s-2",
-        false,
-        "default",
-      ),
-    );
+    await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith("s-2"));
 
     fireEvent.click(screen.getAllByRole("button", { name: "Delete" })[0]);
     await waitFor(() =>
@@ -333,38 +369,18 @@ describe("SessionsPage", () => {
     );
   });
 
-  it("restores archived sessions and hands off to the workspace only on explicit resume", async () => {
+  it("restores archived sessions from the detail view without a workspace handoff", async () => {
     setRoute("agent=alpha&scope=archived&session=a-arch-1");
-    const { rerender } = render(<SessionsPage />);
+
+    render(<SessionsPage />);
 
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Restore" }).length).toBeGreaterThan(0),
     );
-    expect(mockOpenSessionInWorkspace).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
     await waitFor(() =>
       expect(mockRestoreSession).toHaveBeenCalledWith("a-arch-1", "alpha"),
     );
-
-    setRoute("agent=default&scope=active&session=s-1");
-    rerender(<SessionsPage />);
-    await waitFor(() =>
-      expect(
-        screen.getAllByRole("button", { name: "Resume in Workspace" }).length,
-      ).toBeGreaterThan(0),
-    );
-
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Resume in Workspace" })[0],
-    );
-    await waitFor(() =>
-      expect(mockOpenSessionInWorkspace).toHaveBeenCalledWith({
-        agentId: "default",
-        sessionId: "s-1",
-        scope: "active",
-      }),
-    );
-    expect(navigationState.push).toHaveBeenCalledWith("/", { scroll: false });
   });
 });

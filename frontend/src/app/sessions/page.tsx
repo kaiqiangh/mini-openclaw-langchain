@@ -7,8 +7,9 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
+import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import {
   Badge,
@@ -34,11 +35,13 @@ import {
 } from "@/lib/api";
 import {
   ChatDebugEvent,
+  ChatMessage as StoreChatMessage,
   ChatToolCall,
   RetrievalItem,
   useAppStore,
 } from "@/lib/store";
 
+const LIVE_EDGE_THRESHOLD_PX = 80;
 const detailTimestampFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
   month: "short",
@@ -49,7 +52,6 @@ const detailTimestampFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 type SessionScope = "active" | "archived";
-
 type SessionMessageView = {
   id: string;
   role: "user" | "assistant";
@@ -120,20 +122,168 @@ function buildParams(
   return params;
 }
 
+type TranscriptFeedProps = {
+  messages: Array<SessionMessageView | StoreChatMessage>;
+  loading: boolean;
+  error: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  footer?: ReactNode;
+};
+
+function TranscriptFeed({
+  messages,
+  loading,
+  error,
+  emptyTitle,
+  emptyDescription,
+  footer,
+}: TranscriptFeedProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [atLiveEdge, setAtLiveEdge] = useState(true);
+
+  useEffect(() => {
+    if (!scrollRef.current || !atLiveEdge) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [atLiveEdge, messages, loading]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scrollRef}
+        className="ui-scroll-area flex-1 px-4 pt-4"
+        onScroll={(event) => {
+          const node = event.currentTarget;
+          const distanceFromBottom =
+            node.scrollHeight - node.scrollTop - node.clientHeight;
+          setAtLiveEdge(distanceFromBottom <= LIVE_EDGE_THRESHOLD_PX);
+        }}
+      >
+        {error ? (
+          <div className="ui-alert mb-3" role="alert">
+            {error}
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : messages.length === 0 ? (
+          <EmptyState title={emptyTitle} description={emptyDescription} />
+        ) : (
+          <div className="space-y-3">
+            {messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                role={message.role}
+                content={message.content}
+                timestampMs={message.timestampMs}
+                toolCalls={message.toolCalls}
+                retrievals={message.retrievals}
+                debugEvents={message.debugEvents}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {footer ? (
+        <div className="border-t border-[var(--border)] px-4 pb-4 pt-3">
+          {!atLiveEdge && messages.length > 0 ? (
+            <div className="mb-2 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                className="px-3"
+                onClick={() => {
+                  if (!scrollRef.current) return;
+                  scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+                  setAtLiveEdge(true);
+                }}
+              >
+                Jump to latest
+              </Button>
+            </div>
+          ) : null}
+          {footer}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+type LiveConversationProps = {
+  messages: StoreChatMessage[];
+  loading: boolean;
+  error: string;
+  isStreaming: boolean;
+  maxStepsPrompt: unknown;
+  onContinue: () => void;
+  onCancel: () => void;
+};
+
+function LiveConversation({
+  messages,
+  loading,
+  error,
+  isStreaming,
+  maxStepsPrompt,
+  onContinue,
+  onCancel,
+}: LiveConversationProps) {
+  return (
+    <TranscriptFeed
+      messages={messages}
+      loading={loading}
+      error={error}
+      emptyTitle="No Messages Yet"
+      emptyDescription="Send a message to start the session."
+      footer={
+        <>
+          {isStreaming ? (
+            <div
+              className="ui-status mb-2 text-[var(--accent-strong)]"
+              aria-live="polite"
+            >
+              Streaming response…
+            </div>
+          ) : null}
+
+          {maxStepsPrompt ? (
+            <div className="ui-alert mb-2" role="alert">
+              <div className="font-medium">Agent reached max_steps.</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" size="sm" variant="primary" onClick={onContinue}>
+                  Continue
+                </Button>
+                <Button type="button" size="sm" onClick={onCancel}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <ChatInput />
+        </>
+      }
+    />
+  );
+}
+
 type SessionDetailProps = {
   agentId: string;
   scope: SessionScope;
   session: SessionMeta | null;
   history: ChatHistoryResponse | null;
-  messages: SessionMessageView[];
-  loading: boolean;
   busyAction: string | null;
-  error: string;
-  onResume: () => void;
+  status: string;
   onArchive: () => void;
   onRestore: () => void;
   onDelete: () => void;
   onClose?: () => void;
+  children: ReactNode;
 };
 
 function SessionDetail({
@@ -141,22 +291,20 @@ function SessionDetail({
   scope,
   session,
   history,
-  messages,
-  loading,
   busyAction,
-  error,
-  onResume,
+  status,
   onArchive,
   onRestore,
   onDelete,
   onClose,
+  children,
 }: SessionDetailProps) {
   if (!session) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center p-6">
         <EmptyState
           title="Select a session"
-          description="Choose a session from the inbox to review the transcript and hand it back to the workspace when needed."
+          description="Choose a session from the inbox to review or continue the conversation."
         />
       </div>
     );
@@ -177,16 +325,6 @@ function SessionDetail({
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button
-            type="button"
-            size="sm"
-            loading={busyAction === "resume"}
-            onClick={onResume}
-          >
-            {scope === "archived"
-              ? "Open Read-only in Workspace"
-              : "Resume in Workspace"}
-          </Button>
           {scope === "active" ? (
             <Button
               type="button"
@@ -223,91 +361,67 @@ function SessionDetail({
         </div>
       </div>
 
-      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-3 p-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            <div className="ui-label">Session</div>
-            <div className="ui-mono mt-1 break-all text-sm">{session.session_id}</div>
-          </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            <div className="ui-label">Created</div>
-            <div className="mt-1 text-sm text-[var(--text)]">
-              {formatTimestamp(session.created_at)}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="ui-scroll-area border-b border-[var(--border)] px-4 py-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Session</div>
+              <div className="ui-mono mt-1 break-all text-sm">{session.session_id}</div>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Created</div>
+              <div className="mt-1 text-sm text-[var(--text)]">
+                {formatTimestamp(session.created_at)}
+              </div>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Updated</div>
+              <div className="mt-1 text-sm text-[var(--text)]">
+                {formatTimestamp(session.updated_at)}
+              </div>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Related Views</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Link
+                  href={`/runs?agent=${encodeURIComponent(agentId)}`}
+                  className="ui-btn ui-btn-sm"
+                >
+                  Open Runs
+                </Link>
+                <Link
+                  href={`/traces?agent=${encodeURIComponent(agentId)}&session=${encodeURIComponent(session.session_id)}`}
+                  className="ui-btn ui-btn-sm ui-btn-ghost"
+                >
+                  Open Traces
+                </Link>
+              </div>
             </div>
           </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            <div className="ui-label">Updated</div>
-            <div className="mt-1 text-sm text-[var(--text)]">
-              {formatTimestamp(session.updated_at)}
+
+          {history?.compressed_context ? (
+            <section className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Compressed Context</div>
+              <pre className="ui-mono mt-2 whitespace-pre-wrap text-xs text-[var(--text)]">
+                {history.compressed_context}
+              </pre>
+            </section>
+          ) : null}
+
+          {scope === "archived" ? (
+            <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--muted)]">
+              Archived sessions are read-only. Restore this session before continuing work.
             </div>
-          </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            <div className="ui-label">Related Views</div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Link
-                href={`/runs?agent=${encodeURIComponent(agentId)}`}
-                className="ui-btn ui-btn-sm"
-              >
-                Open Runs
-              </Link>
-              <Link href="/traces" className="ui-btn ui-btn-sm ui-btn-ghost">
-                Trace Placeholder
-              </Link>
-            </div>
-          </div>
+          ) : null}
+
+          {status ? (
+            <p className="ui-helper mt-3" aria-live="polite">
+              {status}
+            </p>
+          ) : null}
         </div>
 
-        {history?.compressed_context ? (
-          <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            <div className="ui-label">Compressed Context</div>
-            <pre className="ui-mono mt-2 whitespace-pre-wrap text-xs text-[var(--text)]">
-              {history.compressed_context}
-            </pre>
-          </section>
-        ) : null}
-
-        {scope === "archived" ? (
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--muted)]">
-            Archived sessions are read-only. Restore this session before continuing work.
-          </div>
-        ) : null}
-
-        {error ? (
-          <div className="ui-alert" role="alert">
-            {error}
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-28 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        ) : messages.length === 0 ? (
-          <EmptyState
-            title={scope === "archived" ? "Archived Session" : "No Messages Yet"}
-            description={
-              scope === "archived"
-                ? "This session is read-only in the review console."
-                : "This session has not captured any transcript yet."
-            }
-          />
-        ) : (
-          <div className="space-y-3">
-            {messages.map((message) => (
-              <ChatMessage
-                key={message.id}
-                role={message.role}
-                content={message.content}
-                timestampMs={message.timestampMs}
-                toolCalls={message.toolCalls}
-                retrievals={message.retrievals}
-                debugEvents={message.debugEvents}
-              />
-            ))}
-          </div>
-        )}
+        {children}
       </div>
     </>
   );
@@ -339,13 +453,27 @@ function SessionsPageContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { currentAgentId, openSessionInWorkspace } = useAppStore();
+  const {
+    currentAgentId,
+    currentSessionId,
+    sessionsScope,
+    messages: liveMessages,
+    isStreaming,
+    error: liveError,
+    maxStepsPrompt,
+    continueAfterMaxSteps,
+    cancelAfterMaxSteps,
+    setCurrentAgent,
+    setSessionsScope,
+    selectSession,
+  } = useAppStore();
 
   const [agents, setAgents] = useState<AgentMeta[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [activeSyncing, setActiveSyncing] = useState(false);
   const [history, setHistory] = useState<ChatHistoryResponse | null>(null);
   const [status, setStatus] = useState("");
   const [listError, setListError] = useState("");
@@ -377,10 +505,15 @@ function SessionsPageContent() {
     });
   }, [query, sessions]);
 
-  const renderedMessages = useMemo(
+  const archivedMessages = useMemo(
     () => (history ? mapHistoryMessages(history) : []),
     [history],
   );
+  const liveSessionReady =
+    scope === "active" &&
+    currentAgentId === agentId &&
+    sessionsScope === "active" &&
+    currentSessionId === selectedSessionId;
 
   function navigateWithUpdates(
     updates: Record<string, string | undefined>,
@@ -407,9 +540,7 @@ function SessionsPageContent() {
         setAgents(rows);
       } catch (error) {
         if (cancelled) return;
-        setListError(
-          error instanceof Error ? error.message : "Failed to load agents",
-        );
+        setListError(error instanceof Error ? error.message : "Failed to load agents");
       } finally {
         if (!cancelled) {
           setAgentsLoading(false);
@@ -444,9 +575,7 @@ function SessionsPageContent() {
       } catch (error) {
         if (cancelled) return;
         setSessions([]);
-        setListError(
-          error instanceof Error ? error.message : "Failed to load sessions",
-        );
+        setListError(error instanceof Error ? error.message : "Failed to load sessions");
       } finally {
         if (!cancelled) {
           setSessionsLoading(false);
@@ -465,21 +594,19 @@ function SessionsPageContent() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadHistory() {
-      if (!selectedSessionId) {
+    async function loadArchivedHistory() {
+      if (scope !== "archived" || !selectedSessionId) {
         setHistory(null);
-        setDetailError("");
+        if (scope === "active") {
+          setDetailError("");
+        }
         return;
       }
 
       setDetailLoading(true);
       setDetailError("");
       try {
-        const nextHistory = await getSessionHistory(
-          selectedSessionId,
-          scope === "archived",
-          agentId,
-        );
+        const nextHistory = await getSessionHistory(selectedSessionId, true, agentId);
         if (cancelled) return;
         setHistory(nextHistory);
       } catch (error) {
@@ -496,12 +623,72 @@ function SessionsPageContent() {
     }
 
     if (!agentId) return;
-    void loadHistory();
+    void loadArchivedHistory();
 
     return () => {
       cancelled = true;
     };
   }, [agentId, scope, selectedSessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncLiveSession() {
+      if (scope !== "active" || !selectedSessionId || !agentId) {
+        setActiveSyncing(false);
+        return;
+      }
+
+      if (
+        currentAgentId === agentId &&
+        sessionsScope === "active" &&
+        currentSessionId === selectedSessionId
+      ) {
+        setActiveSyncing(false);
+        setDetailError("");
+        return;
+      }
+
+      setActiveSyncing(true);
+      setDetailError("");
+      try {
+        if (currentAgentId !== agentId) {
+          await setCurrentAgent(agentId);
+        } else if (sessionsScope !== "active") {
+          await setSessionsScope("active");
+        }
+        if (cancelled) return;
+        await selectSession(selectedSessionId);
+        if (cancelled) return;
+        setDetailError("");
+      } catch (error) {
+        if (cancelled) return;
+        setDetailError(
+          error instanceof Error ? error.message : "Failed to activate session",
+        );
+      } finally {
+        if (!cancelled) {
+          setActiveSyncing(false);
+        }
+      }
+    }
+
+    void syncLiveSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    agentId,
+    currentAgentId,
+    currentSessionId,
+    scope,
+    selectedSessionId,
+    selectSession,
+    sessionsScope,
+    setCurrentAgent,
+    setSessionsScope,
+  ]);
 
   async function refreshCurrentSessions(nextScope = scope) {
     const rows = await getSessions(nextScope, agentId);
@@ -515,11 +702,7 @@ function SessionsPageContent() {
     try {
       const created = await createSession(undefined, agentId);
       await refreshCurrentSessions("active");
-      setHistory({
-        session_id: created.session_id,
-        agent_id: agentId,
-        messages: [],
-      });
+      setHistory(null);
       navigateWithUpdates(
         {
           agent: agentId,
@@ -530,29 +713,7 @@ function SessionsPageContent() {
       );
       setStatus("Created a new active session.");
     } catch (error) {
-      setListError(
-        error instanceof Error ? error.message : "Failed to create session",
-      );
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function handleResumeSession() {
-    if (!selectedSessionId) return;
-    setBusyAction("resume");
-    setStatus("");
-    try {
-      await openSessionInWorkspace({
-        agentId,
-        sessionId: selectedSessionId,
-        scope,
-      });
-      router.push("/", { scroll: false });
-    } catch (error) {
-      setDetailError(
-        error instanceof Error ? error.message : "Failed to open workspace session",
-      );
+      setListError(error instanceof Error ? error.message : "Failed to create session");
     } finally {
       setBusyAction(null);
     }
@@ -570,9 +731,7 @@ function SessionsPageContent() {
       navigateWithUpdates({ session: undefined });
       setStatus("Archived session.");
     } catch (error) {
-      setListError(
-        error instanceof Error ? error.message : "Failed to archive session",
-      );
+      setListError(error instanceof Error ? error.message : "Failed to archive session");
     } finally {
       setBusyAction(null);
     }
@@ -590,9 +749,7 @@ function SessionsPageContent() {
       navigateWithUpdates({ session: undefined });
       setStatus("Restored session to the active inbox.");
     } catch (error) {
-      setListError(
-        error instanceof Error ? error.message : "Failed to restore session",
-      );
+      setListError(error instanceof Error ? error.message : "Failed to restore session");
     } finally {
       setBusyAction(null);
     }
@@ -610,13 +767,36 @@ function SessionsPageContent() {
       navigateWithUpdates({ session: undefined });
       setStatus("Deleted session.");
     } catch (error) {
-      setListError(
-        error instanceof Error ? error.message : "Failed to delete session",
-      );
+      setListError(error instanceof Error ? error.message : "Failed to delete session");
     } finally {
       setBusyAction(null);
     }
   }
+
+  const detailContent =
+    scope === "active" ? (
+      <LiveConversation
+        messages={liveSessionReady ? liveMessages : []}
+        loading={activeSyncing}
+        error={detailError || liveError || ""}
+        isStreaming={liveSessionReady ? isStreaming : false}
+        maxStepsPrompt={liveSessionReady ? maxStepsPrompt : null}
+        onContinue={() => {
+          void continueAfterMaxSteps();
+        }}
+        onCancel={() => {
+          void cancelAfterMaxSteps();
+        }}
+      />
+    ) : (
+      <TranscriptFeed
+        messages={archivedMessages}
+        loading={detailLoading}
+        error={detailError}
+        emptyTitle="Archived Session"
+        emptyDescription="This session is read-only in the operator console."
+      />
+    );
 
   return (
     <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
@@ -626,7 +806,7 @@ function SessionsPageContent() {
             <div>
               <h1 className="ui-panel-title">Sessions</h1>
               <p className="mt-1 text-sm text-[var(--muted)]">
-                Review session history without disturbing the live workspace.
+                Active chat home for operator conversations and archived transcript review.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -689,7 +869,7 @@ function SessionsPageContent() {
               <label className="grid gap-1">
                 <span className="ui-label">Search</span>
                 <Input
-                  aria-label="Search sessions"
+                  aria-label="Search"
                   value={query}
                   onChange={(event) =>
                     navigateWithUpdates({ q: event.target.value || undefined })
@@ -725,8 +905,8 @@ function SessionsPageContent() {
                   query
                     ? "Try a different title or session id search."
                     : scope === "archived"
-                      ? "Archived sessions will appear here once sessions are restored or archived."
-                      : "Create a new session to start building the inbox."
+                      ? "Archived sessions will appear here once conversations are stored."
+                      : "Create a new session to start the inbox."
                 }
               />
             ) : (
@@ -743,7 +923,7 @@ function SessionsPageContent() {
                             : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
                         }`}
                         onClick={() =>
-                          navigateWithUpdates({ session: session.session_id })
+                          navigateWithUpdates({ session: session.session_id }, "push")
                         }
                       >
                         <div className="flex items-start justify-between gap-3">
@@ -756,10 +936,10 @@ function SessionsPageContent() {
                             </div>
                           </div>
                           <Badge tone={scope === "archived" ? "warn" : "neutral"}>
-                            {scope === "archived" ? "Archived" : "Review"}
+                            {scope === "archived" ? "Archived" : "Live"}
                           </Badge>
                         </div>
-                        <div className="mt-3 grid gap-1 text-xs text-[var(--muted)] sm:grid-cols-2">
+                        <div className="mt-3 flex flex-wrap gap-3 text-xs text-[var(--muted)]">
                           <span>Updated {formatTimestamp(session.updated_at)}</span>
                           <span>Created {formatTimestamp(session.created_at)}</span>
                         </div>
@@ -778,37 +958,33 @@ function SessionsPageContent() {
             scope={scope}
             session={selectedSession}
             history={history}
-            messages={renderedMessages}
-            loading={detailLoading}
             busyAction={busyAction}
-            error={detailError}
-            onResume={handleResumeSession}
+            status={status}
             onArchive={handleArchiveSession}
             onRestore={handleRestoreSession}
             onDelete={handleDeleteSession}
-          />
+          >
+            {detailContent}
+          </SessionDetail>
         </section>
       </section>
 
       {selectedSession ? (
-        <aside className="fixed inset-3 z-50 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl md:hidden">
-          <div className="flex h-full min-h-0 flex-col">
-            <SessionDetail
-              agentId={agentId}
-              scope={scope}
-              session={selectedSession}
-              history={history}
-              messages={renderedMessages}
-              loading={detailLoading}
-              busyAction={busyAction}
-              error={detailError}
-              onResume={handleResumeSession}
-              onArchive={handleArchiveSession}
-              onRestore={handleRestoreSession}
-              onDelete={handleDeleteSession}
-              onClose={() => navigateWithUpdates({ session: undefined })}
-            />
-          </div>
+        <aside className="panel-shell fixed inset-3 z-50 flex min-h-0 flex-col md:hidden">
+          <SessionDetail
+            agentId={agentId}
+            scope={scope}
+            session={selectedSession}
+            history={history}
+            busyAction={busyAction}
+            status={status}
+            onArchive={handleArchiveSession}
+            onRestore={handleRestoreSession}
+            onDelete={handleDeleteSession}
+            onClose={() => navigateWithUpdates({ session: undefined })}
+          >
+            {detailContent}
+          </SessionDetail>
         </aside>
       ) : null}
     </main>

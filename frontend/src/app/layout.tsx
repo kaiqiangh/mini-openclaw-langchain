@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { AppShell } from "@/components/layout/AppShell";
 import { AppProvider } from "@/lib/store";
 
 export const metadata: Metadata = {
@@ -32,7 +33,9 @@ export default function RootLayout({
         <a className="skip-link" href="#main-content">
           Skip to main content
         </a>
-        <AppProvider>{children}</AppProvider>
+        <AppProvider>
+          <AppShell>{children}</AppShell>
+        </AppProvider>
       </body>
     </html>
   );
