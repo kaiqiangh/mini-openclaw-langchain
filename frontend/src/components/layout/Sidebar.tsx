@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 
 import {
   AgentToolCatalog,
@@ -22,12 +21,11 @@ import {
 } from "@/components/ui/primitives";
 
 type ToolStatusFilter = "all" | "enabled" | "disabled";
-type SidebarSectionKey = "agents" | "sessions" | "tools";
+type SidebarSectionKey = "agents" | "tools";
 
 const SIDEBAR_SECTION_STATE_KEY = "mini-openclaw:sidebar-sections:v1";
 const DEFAULT_SECTIONS: Record<SidebarSectionKey, boolean> = {
   agents: true,
-  sessions: true,
   tools: true,
 };
 
@@ -66,9 +64,6 @@ export function Sidebar() {
     deleteAgentById,
     bulkDeleteAgents,
     bulkExportAgents,
-    sessionsScope,
-    currentSessionId,
-    createNewSession,
   } = useAppStore();
 
   useEffect(() => {
@@ -87,7 +82,6 @@ export function Sidebar() {
       const parsed = JSON.parse(raw) as Partial<Record<SidebarSectionKey, boolean>>;
       setSections({
         agents: parsed.agents ?? true,
-        sessions: parsed.sessions ?? true,
         tools: parsed.tools ?? true,
       });
     } catch {
@@ -278,7 +272,6 @@ export function Sidebar() {
             onClick={() =>
               setSections({
                 agents: false,
-                sessions: false,
                 tools: false,
               })
             }
@@ -433,60 +426,6 @@ export function Sidebar() {
                 ) : null}
               </div>
             </>
-          ) : null}
-        </section>
-
-        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="ui-label">Sessions</span>
-            <Button
-              type="button"
-              size="sm"
-              className="px-2"
-              aria-expanded={sections.sessions}
-              onClick={() => toggleSection("sessions")}
-            >
-              {sections.sessions ? "Collapse" : "Expand"}
-            </Button>
-          </div>
-          {sections.sessions ? (
-            <div className="space-y-3">
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="ui-label">Workspace Session</span>
-                  <Badge tone={sessionsScope === "active" ? "success" : "warn"}>
-                    {sessionsScope === "active" ? "Active" : "Archived"}
-                  </Badge>
-                </div>
-                <div className="mt-2 text-[var(--muted)]">
-                  {currentSessionId ? (
-                    <span className="ui-mono">{currentSessionId.slice(0, 8)}</span>
-                  ) : (
-                    "No active workspace session selected."
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="primary"
-                  className="px-3"
-                  disabled={sessionsScope !== "active"}
-                  onClick={() => {
-                    void createNewSession();
-                  }}
-                >
-                  New Session
-                </Button>
-                <Link href="/sessions" className="ui-btn ui-btn-sm px-3">
-                  Open Sessions
-                </Link>
-              </div>
-              <p className="ui-helper">
-                Browse, search, archive, and restore sessions in the dedicated Sessions view.
-              </p>
-            </div>
           ) : null}
         </section>
 

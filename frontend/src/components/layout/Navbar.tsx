@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/primitives";
 import { getTracingConfig, setTracingConfig } from "@/lib/api";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Workspace", exact: true },
+  { href: "/", label: "Agents", exact: true },
   { href: "/sessions", label: "Sessions", exact: false },
   { href: "/runs", label: "Runs", exact: false },
   { href: "/traces", label: "Trace Explorer", exact: false },
