@@ -7,12 +7,12 @@ Run powerful multi-agent systems with hardened tooling, a built-in scheduler, an
 
 <br/>
 
-[![CI](https://github.com/kaiqiangh/mini-openclaw-langchain/actions/workflows/ci.yml/badge.svg)](https://github.com/kaiqiangh/mini-openclaw-langchain/actions/workflows/ci.yml)
-[![License](https://img.shields.io/github/license/kaiqiangh/mini-openclaw-langchain)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/github/v/release/kaiqiangh/mini-openclaw-langchain?label=version&color=blue)](https://github.com/kaiqiangh/mini-openclaw-langchain/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/kaiqiangh/mini-openclaw-langchain/ci.yml?branch=main&label=build)](https://github.com/kaiqiangh/mini-openclaw-langchain/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
 [![Python](https://img.shields.io/badge/python-3.13+-1d4ed8)](#quickstart)
-[![Next.js](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/next?filename=frontend%2Fpackage.json&label=next.js&color=black)](frontend/package.json)
-[![LangChain](https://img.shields.io/github/package-json/dependency-version/kaiqiangh/mini-openclaw-langchain/langchain?filename=backend%2Fpackage.json&label=LangChain&color=15803d)](backend/package.json)
+[![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture)
+![LangChain](https://img.shields.io/badge/LangChain-1.2.10-15803d)
 
 [Getting Started](#quickstart) · [Architecture](#architecture) · [Features](#features) · [API Reference](#new-api-highlights) · [Contributing](#contributing)
 
