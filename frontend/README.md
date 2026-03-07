@@ -4,16 +4,24 @@ Next.js App Router frontend for Mini-OpenClaw.
 
 ## Route Map
 
-| Route        | Purpose                                                                    |
-| ------------ | -------------------------------------------------------------------------- |
-| `/`          | Main workspace UI (agents/sessions + chat + inspector).                    |
-| `/usage`     | Usage analytics, trend chart, CSV export.                                  |
-| `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history. |
+| Route        | Purpose                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `/`          | Agents console and config workspace: agent switching, tool controls, RAG/tracing toggles, and inspector editing.                |
+| `/sessions`  | Sessions hub and live chat home for opening active threads, reviewing archived transcripts, and resuming work in the workspace. |
+| `/runs`      | Unified run ledger across chat usage, cron jobs, and heartbeat executions, with links back to sessions and traces.              |
+| `/traces`    | Trace explorer route for persisted run/audit events, with typed trace event list/detail API integration in the frontend client. |
+| `/usage`     | Usage analytics, trend chart, CSV export.                                                                                       |
+| `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history.                                                      |
+
+Live app routes now live directly under `src/app/<route>/page.tsx`.
+The remaining `src/app/(console)/` directory is not part of the public URL map anymore; it only holds colocated tests from the earlier route-group layout.
 
 ## UI Model
 
-- Desktop workspace: draggable split panes (`Sidebar | Chat | Inspector`) with localStorage persistence.
+- Desktop agents console: draggable split panes (`Sidebar | Inspector`) with localStorage persistence.
 - Mobile workspace: tab-switched panels.
+- `/` is the operator-facing agent console: the sidebar manages agents and tool policy, while the inspector handles workspace files and runtime config.
+- `/sessions` is the sessions inbox and live chat home for the product: active/archived filtering, transcript review, archive/restore, and active-session messaging.
 - Inspector modes:
   - workspace file editing
   - per-agent runtime config editing (`/api/v1/agents/{agent_id}/config/runtime`)
@@ -61,8 +69,10 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 
 - agent/sessions/chat/files/tokens/usage/compress
 - config: rag mode + runtime config + runtime diff
+- traces: trace event list/detail (`/api/v1/agents/{agent_id}/traces/events`, `/api/v1/agents/{agent_id}/traces/events/{event_id}`)
 - scheduler: cron jobs, runs/failures, heartbeat config/runs + metrics/timeseries
 - agent management: bulk delete/export/runtime patch and template discovery
+- auth bootstrap: `POST /api/auth/session` for local browser cookie bootstrap during frontend-only development
 
 All agent-scoped calls append `agent_id`, and all API calls target `/api/v1/*`.
 Browser auth is cookie-based:
@@ -70,6 +80,9 @@ Browser auth is cookie-based:
 - the preferred path is the `HttpOnly` `app_admin_token` cookie
 - direct frontend dev can bootstrap that cookie through `POST /api/auth/session`
 - the bootstrap route reads server-only `APP_ADMIN_TOKEN`; there is no public bearer-token fallback in browser code
+
+The frontend client already exposes the trace read APIs, and session/run views can
+deep-link operators into trace-focused investigation flows through `/traces`.
 
 ## Local Development
 
