@@ -172,3 +172,33 @@ def test_trace_events_support_cursor_pagination_and_detail_lookup(client, api_ap
     missing = client.get("/api/v1/agents/default/traces/events/missing-event")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
+
+
+def test_trace_events_preserve_missing_run_and_session_ids(client, api_app):
+    now_ms = int(time.time() * 1000)
+    base_dir = api_app["base_dir"]
+
+    _append_jsonl(
+        base_dir / "storage" / "audit" / "steps.jsonl",
+        [
+            {
+                "schema": "audit.step.v1",
+                "run_id": None,
+                "session_id": None,
+                "trigger_type": "chat",
+                "event": "llm_end",
+                "details": {"generation_count": 1},
+                "timestamp_ms": now_ms - 1_000,
+            },
+        ],
+    )
+
+    response = client.get(
+        "/api/v1/agents/default/traces/events",
+        params={"window": "24h", "limit": 10},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]["events"][0]
+    assert payload["run_id"] is None
+    assert payload["session_id"] is None

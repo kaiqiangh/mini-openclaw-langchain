@@ -73,6 +73,8 @@ def _read_jsonl_rows(path: Path) -> Iterable[tuple[int, dict[str, Any]]]:
 
 
 def _as_text(value: Any) -> str:
+    if value is None:
+        return ""
     text = str(value).strip()
     return text or ""
 
