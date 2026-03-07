@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import time
 
@@ -202,3 +203,32 @@ def test_trace_events_preserve_missing_run_and_session_ids(client, api_app):
     payload = response.json()["data"]["events"][0]
     assert payload["run_id"] is None
     assert payload["session_id"] is None
+
+
+def test_trace_events_reject_cursor_payloads_that_are_not_objects(client, api_app):
+    now_ms = int(time.time() * 1000)
+    base_dir = api_app["base_dir"]
+
+    _append_jsonl(
+        base_dir / "storage" / "audit" / "steps.jsonl",
+        [
+            {
+                "schema": "audit.step.v1",
+                "run_id": "run-1",
+                "session_id": "session-1",
+                "trigger_type": "chat",
+                "event": "llm_start",
+                "details": {"model": "ChatOpenAI", "prompt_count": 1},
+                "timestamp_ms": now_ms - 1_000,
+            },
+        ],
+    )
+
+    cursor = base64.urlsafe_b64encode(json.dumps([]).encode("utf-8")).decode("ascii")
+    response = client.get(
+        "/api/v1/agents/default/traces/events",
+        params={"window": "24h", "limit": 10, "cursor": cursor},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"

@@ -119,6 +119,13 @@ def _decode_cursor(cursor: str) -> tuple[int, str]:
             message="Invalid trace cursor",
         ) from exc
 
+    if not isinstance(parsed, dict):
+        raise ApiError(
+            status_code=400,
+            code="invalid_request",
+            message="Invalid trace cursor",
+        )
+
     timestamp_ms = _as_int(parsed.get("timestamp_ms"))
     event_id = _as_text(parsed.get("event_id"))
     if timestamp_ms <= 0 or not event_id:
