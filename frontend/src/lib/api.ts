@@ -409,6 +409,33 @@ export type TracingConfig = {
   enabled: boolean;
 };
 
+export type TraceEventRecord = {
+  event_id: string;
+  timestamp_ms: number;
+  agent_id: string;
+  run_id: string | null;
+  session_id: string | null;
+  trigger_type: string;
+  event: string;
+  summary: string;
+  details: Record<string, unknown>;
+  source: string;
+};
+
+export type TraceEventsSummary = {
+  total_matches: number;
+  by_event: Record<string, number>;
+};
+
+export type TraceEventsResponse = {
+  agent_id: string;
+  window: string;
+  total: number;
+  next_cursor: string | null;
+  summary: TraceEventsSummary;
+  events: TraceEventRecord[];
+};
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetchWithAdminSession(url, init);
   const { text, payload } = await readResponsePayload(response);
@@ -781,6 +808,43 @@ export async function setRuntimeConfig(
 export async function getTracingConfig(): Promise<TracingConfig> {
   const payload = await requestJson<{ data: TracingConfig }>(
     `${API_BASE}/api/v1/config/tracing`,
+  );
+  return payload.data;
+}
+
+export async function listTraceEvents(params: {
+  agentId?: string;
+  window?: string;
+  event?: string;
+  trigger?: string;
+  runId?: string;
+  sessionId?: string;
+  query?: string;
+  limit?: number;
+  cursor?: string;
+}): Promise<TraceEventsResponse> {
+  const agentId = params.agentId ?? "default";
+  const qs = new URLSearchParams();
+  if (params.window) qs.set("window", params.window);
+  if (params.event) qs.set("event", params.event);
+  if (params.trigger) qs.set("trigger", params.trigger);
+  if (params.runId) qs.set("run_id", params.runId);
+  if (params.sessionId) qs.set("session_id", params.sessionId);
+  if (params.query) qs.set("q", params.query);
+  if (typeof params.limit === "number") qs.set("limit", String(params.limit));
+  if (params.cursor) qs.set("cursor", params.cursor);
+  const payload = await requestJson<{ data: TraceEventsResponse }>(
+    `${agentBase(agentId)}/traces/events?${qs.toString()}`,
+  );
+  return payload.data;
+}
+
+export async function getTraceEvent(
+  eventId: string,
+  agentId = "default",
+): Promise<TraceEventRecord> {
+  const payload = await requestJson<{ data: TraceEventRecord }>(
+    `${agentBase(agentId)}/traces/events/${encodeURIComponent(eventId)}`,
   );
   return payload.data;
 }
