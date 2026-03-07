@@ -24,6 +24,7 @@ from api import (
     files,
     scheduler_api,
     sessions,
+    traces,
     tokens,
     usage,
 )  # noqa: E402
@@ -327,6 +328,7 @@ def api_app(backend_base_dir: Path):
     config_api.set_dependencies(backend_base_dir, typed_agent_manager)
     usage.set_agent_manager(typed_agent_manager)
     agents.set_agent_manager(typed_agent_manager)
+    traces.set_agent_manager(typed_agent_manager)
     runtime = agent_manager.get_runtime("default")
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=runtime.root_dir,
@@ -389,6 +391,7 @@ def api_app(backend_base_dir: Path):
     app.include_router(config_api.router, prefix="/api/v1")
     app.include_router(usage.router, prefix="/api/v1")
     app.include_router(agents.router, prefix="/api/v1")
+    app.include_router(traces.router, prefix="/api/v1")
     app.include_router(scheduler_api.router, prefix="/api/v1")
 
     return {

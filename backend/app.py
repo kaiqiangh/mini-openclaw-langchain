@@ -28,6 +28,7 @@ from api import (
     files,
     scheduler_api,
     sessions,
+    traces,
     tokens,
     usage,
 )
@@ -291,6 +292,7 @@ async def lifespan(_: FastAPI):
     config_api.set_dependencies(BASE_DIR, agent_manager)
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
+    traces.set_agent_manager(agent_manager)
 
     default_runtime = agent_manager.get_runtime("default")
     if agent_manager.memory_indexer is not None:
@@ -420,6 +422,7 @@ app.include_router(compress.router, prefix="/api/v1")
 app.include_router(config_api.router, prefix="/api/v1")
 app.include_router(usage.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
+app.include_router(traces.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 
 
