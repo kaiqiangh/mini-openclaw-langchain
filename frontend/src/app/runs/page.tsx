@@ -111,6 +111,33 @@ function statusTone(status: string) {
   return "neutral" as const;
 }
 
+function sourceTone(source: RunLedgerRow["source"]) {
+  if (source === "usage") return "neutral" as const;
+  if (source === "cron") return "warn" as const;
+  if (source === "heartbeat") return "accent" as const;
+  return "neutral" as const;
+}
+
+function formatRunSourceLabel(source: RunLedgerRow["source"]) {
+  if (source === "usage") return "Chat Usage";
+  if (source === "cron") return "Cron Run";
+  if (source === "heartbeat") return "Heartbeat Run";
+  return source;
+}
+
+function describeRunSource(row: RunLedgerRow) {
+  if (row.source === "usage") {
+    return "This row comes from persisted chat token and cost accounting. It is recorded activity, not a scheduler status stream.";
+  }
+  if (row.source === "cron") {
+    return "This row comes from the scheduler's cron run history.";
+  }
+  if (row.source === "heartbeat") {
+    return "This row comes from the scheduler's heartbeat run history.";
+  }
+  return "This row came from a normalized operational source.";
+}
+
 function displayRunIdentifier(row: RunLedgerRow): string {
   return row.runId ?? row.jobId ?? row.label;
 }
@@ -132,7 +159,7 @@ function RunDetailDrawer({ row, agentId, onClose }: RunDetailProps) {
             <h2 className="ui-panel-title">Run Detail</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
               <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-              <Badge tone="neutral">{row.source}</Badge>
+              <Badge tone={sourceTone(row.source)}>{formatRunSourceLabel(row.source)}</Badge>
             </div>
           </div>
           <Button type="button" size="sm" onClick={onClose}>
@@ -151,6 +178,12 @@ function RunDetailDrawer({ row, agentId, onClose }: RunDetailProps) {
             <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
               <div className="ui-label">Trigger</div>
               <div className="mt-1 text-[var(--text)]">{row.triggerType}</div>
+            </div>
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="ui-label">Origin</div>
+              <div className="mt-1 text-[var(--text)]">
+                {describeRunSource(row)}
+              </div>
             </div>
             <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
               <div className="ui-label">Primary Identifier</div>
@@ -209,8 +242,11 @@ function RunDetailDrawer({ row, agentId, onClose }: RunDetailProps) {
                 Open Session
               </Link>
             ) : null}
-            <Link href="/traces" className="ui-btn ui-btn-sm ui-btn-ghost">
-              Trace Placeholder
+            <Link
+              href={`/traces?agent=${encodeURIComponent(agentId)}${row.runId ? `&run=${encodeURIComponent(row.runId)}` : ""}${row.sessionId ? `&session=${encodeURIComponent(row.sessionId)}` : ""}`}
+              className="ui-btn ui-btn-sm ui-btn-ghost"
+            >
+              Open Traces
             </Link>
           </div>
 
