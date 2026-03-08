@@ -813,10 +813,6 @@ h4 {
     min-width: 640px;
   }
 
-  .panel-shell {
-    min-height: calc(100dvh - 178px);
-  }
-
   .ui-panel-header {
     min-height: 52px;
     padding: 10px 12px;
