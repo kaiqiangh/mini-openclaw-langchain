@@ -33,6 +33,7 @@ import {
   updateHeartbeatConfig,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { usePersistentSectionState } from "@/lib/usePersistentSectionState";
 
 type ScheduleType = "at" | "every" | "cron";
 type SchedulerSectionKey =
@@ -46,7 +47,7 @@ type SchedulerSectionKey =
   | "heartbeat_runs";
 
 const SCHEDULER_SECTIONS_KEY = "mini-openclaw:scheduler-sections:v1";
-const DEFAULT_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
+const DESKTOP_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
   composer: true,
   metrics: true,
   trend: true,
@@ -56,6 +57,26 @@ const DEFAULT_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
   recent_failures: true,
   heartbeat_runs: true,
 };
+const MOBILE_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
+  composer: false,
+  metrics: true,
+  trend: true,
+  cron: false,
+  heartbeat: false,
+  recent_runs: false,
+  recent_failures: false,
+  heartbeat_runs: false,
+};
+
+const SCHEDULER_FILTER_GRID_STYLE = {
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+} as const;
+
+const SCHEDULER_METRIC_GRID_STYLE = {
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+} as const;
+
+const SCHEDULER_DATA_PANEL_CLASS = "max-h-[26rem] overflow-y-auto lg:max-h-[40vh]";
 
 type JobDraft = {
   id: string | null;
@@ -158,9 +179,12 @@ export default function SchedulerPage() {
     "comfortable",
   );
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
-  const [sections, setSections] = useState<Record<SchedulerSectionKey, boolean>>(
-    DEFAULT_SCHEDULER_SECTIONS,
-  );
+  const { sections, toggleSection, expandAll, collapseAll } =
+    usePersistentSectionState<SchedulerSectionKey>({
+      storageKey: SCHEDULER_SECTIONS_KEY,
+      desktopDefaults: DESKTOP_SCHEDULER_SECTIONS,
+      mobileDefaults: MOBILE_SCHEDULER_SECTIONS,
+    });
   const agentId = currentAgentId;
 
   useEffect(() => {
@@ -175,32 +199,6 @@ export default function SchedulerPage() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem("mini-openclaw:scheduler-density", density);
   }, [density]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(SCHEDULER_SECTIONS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Record<SchedulerSectionKey, boolean>>;
-      setSections({
-        composer: parsed.composer ?? true,
-        metrics: parsed.metrics ?? true,
-        trend: parsed.trend ?? true,
-        cron: parsed.cron ?? true,
-        heartbeat: parsed.heartbeat ?? true,
-        recent_runs: parsed.recent_runs ?? true,
-        recent_failures: parsed.recent_failures ?? true,
-        heartbeat_runs: parsed.heartbeat_runs ?? true,
-      });
-    } catch {
-      setSections(DEFAULT_SCHEDULER_SECTIONS);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(SCHEDULER_SECTIONS_KEY, JSON.stringify(sections));
-  }, [sections]);
 
   async function refreshAll(nextAgentId: string, window: SchedulerMetricsWindow) {
     setLoading(true);
@@ -343,23 +341,19 @@ export default function SchedulerPage() {
     }
   }
 
-  function toggleSection(key: SchedulerSectionKey) {
-    setSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
-
   return (
     <main
       id="main-content"
       className="flex min-h-0 flex-1 flex-col"
     >
-      <section className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-y-auto p-3 pb-5">
+      <section className="flex-1 min-h-0 min-w-0 space-y-3 overflow-y-auto p-3 pb-5">
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h1 className="ui-panel-title">Scheduler</h1>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
               <Select
                 aria-label="Scheduler agent switch"
-                className="ui-mono min-h-[36px] w-[160px] text-sm"
+                className="ui-mono min-h-[44px] w-full text-sm sm:w-[160px]"
                 value={agentId}
                 onChange={(event) => {
                   void setCurrentAgent(event.target.value);
@@ -373,7 +367,7 @@ export default function SchedulerPage() {
               </Select>
               <Select
                 aria-label="Scheduler metrics window"
-                className="min-h-[36px] w-[92px] text-sm"
+                className="min-h-[44px] w-full text-sm sm:w-[92px]"
                 value={metricsWindow}
                 onChange={(event) =>
                   setMetricsWindow(event.target.value as SchedulerMetricsWindow)
@@ -387,7 +381,7 @@ export default function SchedulerPage() {
               </Select>
               <Select
                 aria-label="Scheduler density"
-                className="min-h-[36px] w-[120px] text-sm"
+                className="min-h-[44px] w-full text-sm sm:w-[120px]"
                 value={density}
                 onChange={(event) =>
                   setDensity(event.target.value as "comfortable" | "compact")
@@ -407,28 +401,17 @@ export default function SchedulerPage() {
                 type="button"
                 size="sm"
                 className="px-2"
-                onClick={() => setSections(DEFAULT_SCHEDULER_SECTIONS)}
+                onClick={expandAll}
               >
-                Expand All
+                Expand All Sections
               </Button>
               <Button
                 type="button"
                 size="sm"
                 className="px-2"
-                onClick={() =>
-                  setSections({
-                    composer: false,
-                    metrics: false,
-                    trend: false,
-                    cron: false,
-                    heartbeat: false,
-                    recent_runs: false,
-                    recent_failures: false,
-                    heartbeat_runs: false,
-                  })
-                }
+                onClick={collapseAll}
               >
-                Collapse All
+                Collapse All Sections
               </Button>
               <Button
                 type="button"
@@ -442,7 +425,10 @@ export default function SchedulerPage() {
             </div>
           </div>
           {sections.composer ? (
-            <div className="grid gap-3 p-4 md:grid-cols-5">
+            <div
+              className="grid gap-3 p-4"
+              style={SCHEDULER_FILTER_GRID_STYLE}
+            >
               <label className="min-w-0">
                 <span className="ui-label">Agent</span>
                 <Select
@@ -460,128 +446,128 @@ export default function SchedulerPage() {
                 </Select>
               </label>
               <label className="min-w-0">
-              <span className="ui-label">Schedule Type</span>
-              <Select
-                className="mt-1 ui-mono text-sm"
-                value={draft.schedule_type}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    schedule_type: event.target.value as ScheduleType,
-                  }))
-                }
-              >
-                <option value="every">every (seconds)</option>
-                <option value="cron">cron (5 fields)</option>
-                <option value="at">at (ISO datetime)</option>
-              </Select>
-            </label>
-            <label className="min-w-0">
-              <span className="ui-label">Schedule</span>
-              <Input
-                className="mt-1 ui-mono text-sm"
-                invalid={submitAttempted && !draft.schedule.trim()}
-                hintId="scheduler-schedule-hint"
-                errorId="scheduler-schedule-error"
-                value={draft.schedule}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    schedule: event.target.value,
-                  }))
-                }
-                placeholder={
-                  draft.schedule_type === "every"
-                    ? "300"
-                    : draft.schedule_type === "cron"
-                      ? "*/5 * * * *"
-                      : "2026-03-01T10:00:00Z"
-                }
-              />
-              <span
-                id={
-                  submitAttempted && !draft.schedule.trim()
-                    ? "scheduler-schedule-error"
-                    : "scheduler-schedule-hint"
-                }
-                className="ui-helper mt-1 block"
-              >
-                {submitAttempted && !draft.schedule.trim()
-                  ? "Schedule is required."
-                  : scheduleHint}
-              </span>
-            </label>
-            <label className="min-w-0 md:col-span-2">
-              <span className="ui-label">Prompt</span>
-              <Input
-                className="mt-1 text-sm"
-                invalid={submitAttempted && !draft.prompt.trim()}
-                hintId="scheduler-prompt-hint"
-                errorId="scheduler-prompt-error"
-                value={draft.prompt}
-                onChange={(event) =>
-                  setDraft((prev) => ({ ...prev, prompt: event.target.value }))
-                }
-                placeholder="Prompt executed when this cron job runs"
-              />
-              <span
-                id={
-                  submitAttempted && !draft.prompt.trim()
-                    ? "scheduler-prompt-error"
-                    : "scheduler-prompt-hint"
-                }
-                className="ui-helper mt-1 block"
-              >
-                {submitAttempted && !draft.prompt.trim()
-                  ? "Prompt is required."
-                  : "This prompt is sent when the job executes."}
-              </span>
-            </label>
-            <label className="min-w-0">
-              <span className="ui-label">Name</span>
-              <Input
-                className="mt-1 text-sm"
-                value={draft.name}
-                onChange={(event) =>
-                  setDraft((prev) => ({ ...prev, name: event.target.value }))
-                }
-                placeholder="optional job name"
-              />
-            </label>
-            <label className="flex items-center gap-2 pt-6 text-sm text-[var(--muted)]">
-              <input
-                type="checkbox"
-                checked={draft.enabled}
-                onChange={(event) =>
-                  setDraft((prev) => ({
-                    ...prev,
-                    enabled: event.target.checked,
-                  }))
-                }
-              />
-              Enabled
-            </label>
-            <div className="flex items-end gap-2 md:col-span-3">
-              <Button
-                type="button"
-                className="px-3 text-sm"
-                onClick={() => void handleSubmitJob()}
-              >
-                {draft.id ? "Update Job" : "Create Job"}
-              </Button>
-              {draft.id ? (
+                <span className="ui-label">Schedule Type</span>
+                <Select
+                  className="mt-1 ui-mono text-sm"
+                  value={draft.schedule_type}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      schedule_type: event.target.value as ScheduleType,
+                    }))
+                  }
+                >
+                  <option value="every">every (seconds)</option>
+                  <option value="cron">cron (5 fields)</option>
+                  <option value="at">at (ISO datetime)</option>
+                </Select>
+              </label>
+              <label className="min-w-0">
+                <span className="ui-label">Schedule</span>
+                <Input
+                  className="mt-1 ui-mono text-sm"
+                  invalid={submitAttempted && !draft.schedule.trim()}
+                  hintId="scheduler-schedule-hint"
+                  errorId="scheduler-schedule-error"
+                  value={draft.schedule}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      schedule: event.target.value,
+                    }))
+                  }
+                  placeholder={
+                    draft.schedule_type === "every"
+                      ? "300"
+                      : draft.schedule_type === "cron"
+                        ? "*/5 * * * *"
+                        : "2026-03-01T10:00:00Z"
+                  }
+                />
+                <span
+                  id={
+                    submitAttempted && !draft.schedule.trim()
+                      ? "scheduler-schedule-error"
+                      : "scheduler-schedule-hint"
+                  }
+                  className="ui-helper mt-1 block"
+                >
+                  {submitAttempted && !draft.schedule.trim()
+                    ? "Schedule is required."
+                    : scheduleHint}
+                </span>
+              </label>
+              <label className="min-w-0 sm:col-span-2">
+                <span className="ui-label">Prompt</span>
+                <Input
+                  className="mt-1 text-sm"
+                  invalid={submitAttempted && !draft.prompt.trim()}
+                  hintId="scheduler-prompt-hint"
+                  errorId="scheduler-prompt-error"
+                  value={draft.prompt}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, prompt: event.target.value }))
+                  }
+                  placeholder="Prompt executed when this cron job runs"
+                />
+                <span
+                  id={
+                    submitAttempted && !draft.prompt.trim()
+                      ? "scheduler-prompt-error"
+                      : "scheduler-prompt-hint"
+                  }
+                  className="ui-helper mt-1 block"
+                >
+                  {submitAttempted && !draft.prompt.trim()
+                    ? "Prompt is required."
+                    : "This prompt is sent when the job executes."}
+                </span>
+              </label>
+              <label className="min-w-0">
+                <span className="ui-label">Name</span>
+                <Input
+                  className="mt-1 text-sm"
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft((prev) => ({ ...prev, name: event.target.value }))
+                  }
+                  placeholder="optional job name"
+                />
+              </label>
+              <label className="flex min-h-[44px] items-center gap-2 pt-6 text-sm text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      enabled: event.target.checked,
+                    }))
+                  }
+                />
+                Enabled
+              </label>
+              <div className="flex flex-wrap items-end gap-2 sm:col-span-2">
                 <Button
                   type="button"
                   className="px-3 text-sm"
-                  onClick={() => {
-                    setDraft(EMPTY_DRAFT);
-                    setSubmitAttempted(false);
-                  }}
+                  onClick={() => void handleSubmitJob()}
                 >
-                  Cancel Edit
+                  {draft.id ? "Update Job" : "Create Job"}
                 </Button>
-              ) : null}
-            </div>
+                {draft.id ? (
+                  <Button
+                    type="button"
+                    className="px-3 text-sm"
+                    onClick={() => {
+                      setDraft(EMPTY_DRAFT);
+                      setSubmitAttempted(false);
+                    }}
+                  >
+                    Cancel Edit
+                  </Button>
+                ) : null}
+              </div>
             </div>
           ) : null}
           {error ? (
@@ -607,7 +593,10 @@ export default function SchedulerPage() {
             </Button>
           </div>
           {sections.metrics ? (
-            <div className="grid min-w-0 gap-3 p-4 lg:grid-cols-4">
+            <div
+              className="grid min-w-0 gap-3 p-4"
+              style={SCHEDULER_METRIC_GRID_STYLE}
+            >
               <div className="panel-shell p-4">
                 <div className="ui-label">Scheduler Events</div>
                 <div className="ui-tabular mt-1 text-lg font-semibold">
@@ -733,7 +722,7 @@ export default function SchedulerPage() {
           <div className="panel-shell min-w-0 lg:col-span-2">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Cron Jobs</h2>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="neutral">{jobs.length} jobs</Badge>
                 <Button
                   type="button"
@@ -760,170 +749,173 @@ export default function SchedulerPage() {
                     description="Create a cron job to start scheduled automation."
                   />
                 ) : (
-                  <>
-                  <div className="space-y-2 lg:hidden">
-                    {jobs.map((job) => (
-                      <article
-                        key={`${job.id}-mobile`}
-                        className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
-                        onClick={() => setSelectedJob(job)}
+                  <div
+                    className={SCHEDULER_DATA_PANEL_CLASS}
+                    data-testid="scheduler-cron-scroll"
+                  >
+                    <div className="space-y-2 lg:hidden">
+                      {jobs.map((job) => (
+                        <article
+                          key={`${job.id}-mobile`}
+                          className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                          onClick={() => setSelectedJob(job)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="ui-mono">{job.name || job.id.slice(0, 8)}</div>
+                            <Badge tone={job.enabled ? "success" : "warn"}>
+                              {job.enabled ? "Enabled" : "Disabled"}
+                            </Badge>
+                          </div>
+                          <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
+                            {job.schedule_type} {job.schedule}
+                          </div>
+                          <div className="mt-2 text-xs text-[var(--muted)]">
+                            Next run {asDateTime(job.next_run_ts)} · failures {job.failure_count}
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-1">
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDraft({
+                                  id: job.id,
+                                  name: job.name,
+                                  schedule_type: job.schedule_type,
+                                  schedule: job.schedule,
+                                  prompt: job.prompt,
+                                  enabled: job.enabled,
+                                });
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                setSelectedJob(null);
+                                await runCronJob(job.id, agentId);
+                                await refreshAll(agentId, metricsWindow);
+                              }}
+                            >
+                              Run now
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="danger"
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                setSelectedJob(null);
+                                await deleteCronJob(job.id, agentId);
+                                await refreshAll(agentId, metricsWindow);
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    <TableWrap className="hidden lg:block">
+                      <DataTable
+                        className={density === "compact" ? "ui-table-compact" : ""}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="ui-mono">{job.name || job.id.slice(0, 8)}</div>
-                          <Badge tone={job.enabled ? "success" : "warn"}>
-                            {job.enabled ? "Enabled" : "Disabled"}
-                          </Badge>
-                        </div>
-                        <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
-                          {job.schedule_type} {job.schedule}
-                        </div>
-                        <div className="mt-2 text-xs text-[var(--muted)]">
-                          Next run {asDateTime(job.next_run_ts)} · failures {job.failure_count}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setDraft({
-                                id: job.id,
-                                name: job.name,
-                                schedule_type: job.schedule_type,
-                                schedule: job.schedule,
-                                prompt: job.prompt,
-                                enabled: job.enabled,
-                              });
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              setSelectedJob(null);
-                              await runCronJob(job.id, agentId);
-                              await refreshAll(agentId, metricsWindow);
-                            }}
-                          >
-                            Run now
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="danger"
-                            onClick={async (event) => {
-                              event.stopPropagation();
-                              setSelectedJob(null);
-                              await deleteCronJob(job.id, agentId);
-                              await refreshAll(agentId, metricsWindow);
-                            }}
-                          >
-                            Delete
-                          </Button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <TableWrap className="hidden lg:block">
-                    <DataTable
-                      className={density === "compact" ? "ui-table-compact" : ""}
-                    >
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Schedule</th>
-                          <th>Enabled</th>
-                          <th>Next Run</th>
-                          <th>Failure</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {jobs.map((job) => (
-                          <tr
-                            key={job.id}
-                            className="cursor-pointer"
-                            onClick={() => setSelectedJob(job)}
-                          >
-                            <td className="ui-mono">
-                              {job.name || job.id.slice(0, 8)}
-                            </td>
-                            <td className="ui-mono">
-                              {job.schedule_type} {job.schedule}
-                            </td>
-                            <td>
-                              <label className="flex items-center gap-2 text-xs">
-                                <input
-                                  type="checkbox"
-                                  checked={job.enabled}
-                                  onChange={async (event) => {
-                                    event.stopPropagation();
-                                    await updateCronJob(
-                                      job.id,
-                                      { enabled: event.target.checked },
-                                      agentId,
-                                    );
-                                    await refreshAll(agentId, metricsWindow);
-                                  }}
-                                />
-                                {job.enabled ? "on" : "off"}
-                              </label>
-                            </td>
-                            <td>{asDateTime(job.next_run_ts)}</td>
-                            <td>{job.failure_count}</td>
-                            <td>
-                              <div className="flex gap-1">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setDraft({
-                                      id: job.id,
-                                      name: job.name,
-                                      schedule_type: job.schedule_type,
-                                      schedule: job.schedule,
-                                      prompt: job.prompt,
-                                      enabled: job.enabled,
-                                    });
-                                  }}
-                                >
-                                  Edit
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={async (event) => {
-                                    event.stopPropagation();
-                                    await runCronJob(job.id, agentId);
-                                    await refreshAll(agentId, metricsWindow);
-                                  }}
-                                >
-                                  Run now
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="danger"
-                                  onClick={async (event) => {
-                                    event.stopPropagation();
-                                    await deleteCronJob(job.id, agentId);
-                                    await refreshAll(agentId, metricsWindow);
-                                  }}
-                                >
-                                  Delete
-                                </Button>
-                              </div>
-                            </td>
+                        <thead>
+                          <tr>
+                            <th>Name</th>
+                            <th>Schedule</th>
+                            <th>Enabled</th>
+                            <th>Next Run</th>
+                            <th>Failure</th>
+                            <th>Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </DataTable>
-                  </TableWrap>
-                  </>
+                        </thead>
+                        <tbody>
+                          {jobs.map((job) => (
+                            <tr
+                              key={job.id}
+                              className="cursor-pointer"
+                              onClick={() => setSelectedJob(job)}
+                            >
+                              <td className="ui-mono">
+                                {job.name || job.id.slice(0, 8)}
+                              </td>
+                              <td className="ui-mono">
+                                {job.schedule_type} {job.schedule}
+                              </td>
+                              <td>
+                                <label className="flex items-center gap-2 text-xs">
+                                  <input
+                                    type="checkbox"
+                                    checked={job.enabled}
+                                    onChange={async (event) => {
+                                      event.stopPropagation();
+                                      await updateCronJob(
+                                        job.id,
+                                        { enabled: event.target.checked },
+                                        agentId,
+                                      );
+                                      await refreshAll(agentId, metricsWindow);
+                                    }}
+                                  />
+                                  {job.enabled ? "on" : "off"}
+                                </label>
+                              </td>
+                              <td>{asDateTime(job.next_run_ts)}</td>
+                              <td>{job.failure_count}</td>
+                              <td>
+                                <div className="flex gap-1">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setDraft({
+                                        id: job.id,
+                                        name: job.name,
+                                        schedule_type: job.schedule_type,
+                                        schedule: job.schedule,
+                                        prompt: job.prompt,
+                                        enabled: job.enabled,
+                                      });
+                                    }}
+                                  >
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      await runCronJob(job.id, agentId);
+                                      await refreshAll(agentId, metricsWindow);
+                                    }}
+                                  >
+                                    Run now
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="danger"
+                                    onClick={async (event) => {
+                                      event.stopPropagation();
+                                      await deleteCronJob(job.id, agentId);
+                                      await refreshAll(agentId, metricsWindow);
+                                    }}
+                                  >
+                                    Delete
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </DataTable>
+                    </TableWrap>
+                  </div>
                 )}
               </div>
             ) : null}
@@ -1078,55 +1070,58 @@ export default function SchedulerPage() {
                   <Skeleton className="h-9 w-full" />
                 </div>
               ) : recentRuns.length === 0 ? (
-                <EmptyState
-                  title="No Runs"
-                  description="No recent run records."
-                />
-              ) : (
-                <>
-                  <div className="space-y-2 md:hidden">
-                    {recentRuns.map((row, idx) => (
-                      <article
-                        key={`${idx}-runs-mobile`}
-                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                  <EmptyState
+                    title="No Runs"
+                    description="No recent run records."
+                  />
+                ) : (
+                  <div
+                    className={SCHEDULER_DATA_PANEL_CLASS}
+                    data-testid="scheduler-recent-runs-scroll"
+                  >
+                    <div className="space-y-2 md:hidden">
+                      {recentRuns.map((row, idx) => (
+                        <article
+                          key={`${idx}-runs-mobile`}
+                          className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        >
+                          <div className="ui-mono text-sm">
+                            {String(row.name ?? row.job_id ?? "unknown")}
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            {asRunTime(row.timestamp_ms)}
+                          </div>
+                          <div className="mt-2 text-xs text-[var(--muted)]">
+                            Status {String(row.status ?? "ok")}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    <TableWrap className="hidden md:block">
+                      <DataTable
+                        className={density === "compact" ? "ui-table-compact" : ""}
                       >
-                        <div className="ui-mono text-sm">
-                          {String(row.name ?? row.job_id ?? "unknown")}
-                        </div>
-                        <div className="mt-1 text-xs text-[var(--muted)]">
-                          {asRunTime(row.timestamp_ms)}
-                        </div>
-                        <div className="mt-2 text-xs text-[var(--muted)]">
-                          Status {String(row.status ?? "ok")}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <TableWrap className="hidden md:block">
-                    <DataTable
-                      className={density === "compact" ? "ui-table-compact" : ""}
-                    >
-                      <thead>
-                        <tr>
-                          <th>Time</th>
-                          <th>Job</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentRuns.map((row, idx) => (
-                          <tr key={idx}>
-                            <td>{asRunTime(row.timestamp_ms)}</td>
-                            <td className="ui-mono">
-                              {String(row.name ?? row.job_id ?? "unknown")}
-                            </td>
-                            <td>{String(row.status ?? "ok")}</td>
+                        <thead>
+                          <tr>
+                            <th>Time</th>
+                            <th>Job</th>
+                            <th>Status</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </DataTable>
-                  </TableWrap>
-                </>
+                        </thead>
+                        <tbody>
+                          {recentRuns.map((row, idx) => (
+                            <tr key={idx}>
+                              <td>{asRunTime(row.timestamp_ms)}</td>
+                              <td className="ui-mono">
+                                {String(row.name ?? row.job_id ?? "unknown")}
+                              </td>
+                              <td>{String(row.status ?? "ok")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </DataTable>
+                    </TableWrap>
+                  </div>
               )}
             </div> : null}
           </div>
@@ -1153,55 +1148,58 @@ export default function SchedulerPage() {
                   <Skeleton className="h-9 w-full" />
                 </div>
               ) : recentFailures.length === 0 ? (
-                <EmptyState
-                  title="No Failures"
-                  description="No recent scheduler failures."
-                />
-              ) : (
-                <>
-                  <div className="space-y-2 md:hidden">
-                    {recentFailures.map((row, idx) => (
-                      <article
-                        key={`${idx}-failures-mobile`}
-                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                  <EmptyState
+                    title="No Failures"
+                    description="No recent scheduler failures."
+                  />
+                ) : (
+                  <div
+                    className={SCHEDULER_DATA_PANEL_CLASS}
+                    data-testid="scheduler-recent-failures-scroll"
+                  >
+                    <div className="space-y-2 md:hidden">
+                      {recentFailures.map((row, idx) => (
+                        <article
+                          key={`${idx}-failures-mobile`}
+                          className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        >
+                          <div className="ui-mono text-sm">
+                            {String(row.name ?? row.job_id ?? "unknown")}
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            {asRunTime(row.timestamp_ms)}
+                          </div>
+                          <div className="mt-2 text-xs text-[var(--danger)]">
+                            {String(row.error ?? "error")}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    <TableWrap className="hidden md:block">
+                      <DataTable
+                        className={density === "compact" ? "ui-table-compact" : ""}
                       >
-                        <div className="ui-mono text-sm">
-                          {String(row.name ?? row.job_id ?? "unknown")}
-                        </div>
-                        <div className="mt-1 text-xs text-[var(--muted)]">
-                          {asRunTime(row.timestamp_ms)}
-                        </div>
-                        <div className="mt-2 text-xs text-[var(--danger)]">
-                          {String(row.error ?? "error")}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <TableWrap className="hidden md:block">
-                    <DataTable
-                      className={density === "compact" ? "ui-table-compact" : ""}
-                    >
-                      <thead>
-                        <tr>
-                          <th>Time</th>
-                          <th>Job</th>
-                          <th>Error</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {recentFailures.map((row, idx) => (
-                          <tr key={idx}>
-                            <td>{asRunTime(row.timestamp_ms)}</td>
-                            <td className="ui-mono">
-                              {String(row.name ?? row.job_id ?? "unknown")}
-                            </td>
-                            <td>{String(row.error ?? "error")}</td>
+                        <thead>
+                          <tr>
+                            <th>Time</th>
+                            <th>Job</th>
+                            <th>Error</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </DataTable>
-                  </TableWrap>
-                </>
+                        </thead>
+                        <tbody>
+                          {recentFailures.map((row, idx) => (
+                            <tr key={idx}>
+                              <td>{asRunTime(row.timestamp_ms)}</td>
+                              <td className="ui-mono">
+                                {String(row.name ?? row.job_id ?? "unknown")}
+                              </td>
+                              <td>{String(row.error ?? "error")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </DataTable>
+                    </TableWrap>
+                  </div>
               )}
             </div> : null}
           </div>
@@ -1228,40 +1226,43 @@ export default function SchedulerPage() {
                   <Skeleton className="h-9 w-full" />
                 </div>
               ) : recentHeartbeat.length === 0 ? (
-                <EmptyState
-                  title="No Heartbeat Runs"
-                  description="No heartbeat records have been captured yet."
-                />
-              ) : (
-                <>
-                  <div className="space-y-2 md:hidden">
-                    {recentHeartbeat.map((row, idx) => (
-                      <article
-                        key={`${idx}-heartbeat-mobile`}
-                        className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                  <EmptyState
+                    title="No Heartbeat Runs"
+                    description="No heartbeat records have been captured yet."
+                  />
+                ) : (
+                  <div
+                    className={SCHEDULER_DATA_PANEL_CLASS}
+                    data-testid="scheduler-heartbeat-runs-scroll"
+                  >
+                    <div className="space-y-2 md:hidden">
+                      {recentHeartbeat.map((row, idx) => (
+                        <article
+                          key={`${idx}-heartbeat-mobile`}
+                          className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{String(row.status ?? "unknown")}</span>
+                            <span className="text-xs text-[var(--muted)]">
+                              {asRunTime(row.timestamp_ms)}
+                            </span>
+                          </div>
+                          <div className="mt-2 text-xs text-[var(--muted)]">
+                            {String(
+                              (
+                                row.details as
+                                  | { response_preview?: string }
+                                  | undefined
+                              )?.response_preview ?? "",
+                            )}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                    <TableWrap className="hidden md:block">
+                      <DataTable
+                        className={density === "compact" ? "ui-table-compact" : ""}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span>{String(row.status ?? "unknown")}</span>
-                          <span className="text-xs text-[var(--muted)]">
-                            {asRunTime(row.timestamp_ms)}
-                          </span>
-                        </div>
-                        <div className="mt-2 text-xs text-[var(--muted)]">
-                          {String(
-                            (
-                              row.details as
-                                | { response_preview?: string }
-                                | undefined
-                            )?.response_preview ?? "",
-                          )}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                  <TableWrap className="hidden md:block">
-                    <DataTable
-                      className={density === "compact" ? "ui-table-compact" : ""}
-                    >
                       <thead>
                         <tr>
                           <th>Time</th>
@@ -1288,7 +1289,7 @@ export default function SchedulerPage() {
                       </tbody>
                     </DataTable>
                   </TableWrap>
-                </>
+                  </div>
               )}
             </div> : null}
           </div>
