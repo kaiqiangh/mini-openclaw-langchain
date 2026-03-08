@@ -27,6 +27,10 @@ WORKDIR /app
 
 COPY requirements.txt requirements-dev.txt ./
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt -r requirements-dev.txt
 
@@ -45,6 +49,7 @@ RUN apt-get update \
     jq \
     procps \
     netcat-openbsd \
+    bubblewrap \
  && rm -rf /var/lib/apt/lists/*
  
 RUN groupadd --gid 10001 app \
