@@ -19,6 +19,40 @@ import {
   UsageSummary,
 } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
+import { usePersistentSectionState } from "@/lib/usePersistentSectionState";
+
+type UsageSectionKey =
+  | "filters"
+  | "summary"
+  | "trend"
+  | "provider_model"
+  | "recent_runs";
+
+const USAGE_SECTIONS_KEY = "mini-openclaw:usage-sections:v1";
+const DESKTOP_USAGE_SECTIONS: Record<UsageSectionKey, boolean> = {
+  filters: true,
+  summary: true,
+  trend: true,
+  provider_model: true,
+  recent_runs: true,
+};
+const MOBILE_USAGE_SECTIONS: Record<UsageSectionKey, boolean> = {
+  filters: true,
+  summary: true,
+  trend: true,
+  provider_model: false,
+  recent_runs: false,
+};
+
+const USAGE_FILTER_GRID_STYLE = {
+  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+} as const;
+
+const USAGE_SUMMARY_GRID_STYLE = {
+  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+} as const;
+
+const USAGE_DATA_PANEL_CLASS = "max-h-[26rem] overflow-y-auto lg:max-h-[40vh]";
 
 const TIMEFRAME_OPTIONS = [
   { label: "Last 1 hour", value: 1 },
@@ -168,6 +202,12 @@ export default function UsagePage() {
     "comfortable",
   );
   const [selectedRun, setSelectedRun] = useState<UsageRecord | null>(null);
+  const { sections, toggleSection, expandAll, collapseAll } =
+    usePersistentSectionState<UsageSectionKey>({
+      storageKey: USAGE_SECTIONS_KEY,
+      desktopDefaults: DESKTOP_USAGE_SECTIONS,
+      mobileDefaults: MOBILE_USAGE_SECTIONS,
+    });
   const agentId = currentAgentId;
 
   useEffect(() => {
@@ -346,11 +386,11 @@ export default function UsagePage() {
       id="main-content"
       className="flex min-h-0 flex-1 flex-col"
     >
-      <section className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-y-auto p-3 pb-5">
+      <section className="flex-1 min-h-0 min-w-0 space-y-3 overflow-y-auto p-3 pb-5">
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h1 className="ui-panel-title">Usage Analytics</h1>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
               {loading ? (
                 <Badge tone="accent">Running</Badge>
               ) : (
@@ -367,126 +407,156 @@ export default function UsagePage() {
               >
                 Export CSV
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={expandAll}
+              >
+                Expand All Sections
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={collapseAll}
+              >
+                Collapse All Sections
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.filters}
+                onClick={() => toggleSection("filters")}
+              >
+                {sections.filters ? "Collapse" : "Expand"}
+              </Button>
             </div>
           </div>
 
-          <div className="grid gap-3 p-4 md:grid-cols-7">
-            <label className="min-w-0">
-              <span className="ui-label">Agent</span>
-              <Select
-                name="agent-filter"
-                className="mt-1 ui-mono text-sm"
-                value={agentId}
-                onChange={(event) => {
-                  void setCurrentAgent(event.target.value);
-                }}
-              >
-                {agents.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-            </label>
+          {sections.filters ? (
+            <div
+              className="grid gap-3 p-4"
+              style={USAGE_FILTER_GRID_STYLE}
+            >
+              <label className="min-w-0">
+                <span className="ui-label">Agent</span>
+                <Select
+                  name="agent-filter"
+                  className="mt-1 ui-mono text-sm"
+                  value={agentId}
+                  onChange={(event) => {
+                    void setCurrentAgent(event.target.value);
+                  }}
+                >
+                  {agents.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </Select>
+              </label>
 
-            <label className="min-w-0">
-              <span className="ui-label">Timeframe</span>
-              <Select
-                name="timeframe-filter"
-                className="mt-1 text-sm"
-                value={String(sinceHours)}
-                onChange={(event) => setSinceHours(Number(event.target.value))}
-              >
-                {TIMEFRAME_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </label>
+              <label className="min-w-0">
+                <span className="ui-label">Timeframe</span>
+                <Select
+                  name="timeframe-filter"
+                  className="mt-1 text-sm"
+                  value={String(sinceHours)}
+                  onChange={(event) => setSinceHours(Number(event.target.value))}
+                >
+                  {TIMEFRAME_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </label>
 
-            <label className="min-w-0">
-              <span className="ui-label">Provider</span>
-              <Select
-                name="provider-filter"
-                className="mt-1 ui-mono text-sm"
-                value={provider}
-                onChange={(event) => {
-                  setProvider(event.target.value);
-                  setModel("");
-                }}
-              >
-                <option value="">All providers</option>
-                {providerOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-            </label>
+              <label className="min-w-0">
+                <span className="ui-label">Provider</span>
+                <Select
+                  name="provider-filter"
+                  className="mt-1 ui-mono text-sm"
+                  value={provider}
+                  onChange={(event) => {
+                    setProvider(event.target.value);
+                    setModel("");
+                  }}
+                >
+                  <option value="">All providers</option>
+                  {providerOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </Select>
+              </label>
 
-            <label className="min-w-0">
-              <span className="ui-label">Model</span>
-              <Select
-                name="model-filter"
-                className="mt-1 ui-mono text-sm"
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-              >
-                <option value="">All models</option>
-                {modelOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </Select>
-            </label>
+              <label className="min-w-0">
+                <span className="ui-label">Model</span>
+                <Select
+                  name="model-filter"
+                  className="mt-1 ui-mono text-sm"
+                  value={model}
+                  onChange={(event) => setModel(event.target.value)}
+                >
+                  <option value="">All models</option>
+                  {modelOptions.map((item) => (
+                    <option key={item} value={item}>
+                      {item}
+                    </option>
+                  ))}
+                </Select>
+              </label>
 
-            <label className="min-w-0">
-              <span className="ui-label">Trigger</span>
-              <Select
-                name="trigger-filter"
-                className="mt-1 ui-mono text-sm"
-                value={triggerType}
-                onChange={(event) => setTriggerType(event.target.value)}
-              >
-                <option value="">All triggers</option>
-                <option value="chat">chat</option>
-                <option value="heartbeat">heartbeat</option>
-                <option value="cron">cron</option>
-              </Select>
-            </label>
-            <label className="min-w-0">
-              <span className="ui-label">Density</span>
-              <Select
-                name="density-filter"
-                className="mt-1 text-sm"
-                value={density}
-                onChange={(event) =>
-                  setDensity(event.target.value as "comfortable" | "compact")
-                }
-              >
-                <option value="comfortable">Comfortable</option>
-                <option value="compact">Compact</option>
-              </Select>
-            </label>
+              <label className="min-w-0">
+                <span className="ui-label">Trigger</span>
+                <Select
+                  name="trigger-filter"
+                  className="mt-1 ui-mono text-sm"
+                  value={triggerType}
+                  onChange={(event) => setTriggerType(event.target.value)}
+                >
+                  <option value="">All triggers</option>
+                  <option value="chat">chat</option>
+                  <option value="heartbeat">heartbeat</option>
+                  <option value="cron">cron</option>
+                </Select>
+              </label>
+              <label className="min-w-0">
+                <span className="ui-label">Density</span>
+                <Select
+                  name="density-filter"
+                  className="mt-1 text-sm"
+                  value={density}
+                  onChange={(event) =>
+                    setDensity(event.target.value as "comfortable" | "compact")
+                  }
+                >
+                  <option value="comfortable">Comfortable</option>
+                  <option value="compact">Compact</option>
+                </Select>
+              </label>
 
-            <div className="min-w-0">
-              <div className="ui-label">Status</div>
-              <div className="mt-1 flex min-h-[42px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
-                {loading ? (
-                  <Badge tone="accent">Loading…</Badge>
-                ) : (
-                  <Badge tone="neutral">Loaded</Badge>
-                )}
-                {error ? (
-                  <span className="truncate text-sm text-[var(--danger)]">
-                    {error}
-                  </span>
-                ) : null}
+              <div className="min-w-0">
+                <div className="ui-label">Status</div>
+                <div className="mt-1 flex min-h-[44px] items-center gap-2 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-3)] px-3">
+                  {loading ? (
+                    <Badge tone="accent">Loading…</Badge>
+                  ) : (
+                    <Badge tone="neutral">Loaded</Badge>
+                  )}
+                  {error ? (
+                    <span className="truncate text-sm text-[var(--danger)]">
+                      {error}
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
+          ) : null}
           {error ? (
             <div className="px-4 pb-4">
               <div className="ui-alert" role="alert">
@@ -496,145 +566,188 @@ export default function UsagePage() {
           ) : null}
         </div>
 
-        <div className="grid gap-3 md:grid-cols-5">
-          {loading ? (
-            Array.from({ length: 5 }).map((_, index) => (
-              <div key={index} className="panel-shell p-4">
-                <Skeleton className="h-3 w-1/2" />
-                <Skeleton className="mt-3 h-8 w-4/5" />
-                <Skeleton className="mt-3 h-3 w-3/5" />
-              </div>
-            ))
-          ) : (
-            <>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Priced Cost (USD)</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {formatUsd(totals.cost_usd)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Priced runs {formatNumber(totals.priced_runs)} /{" "}
-                  {formatNumber(totals.runs)}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Input Tokens</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {formatNumber(totals.input_tokens)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Uncached {formatNumber(totals.input_uncached_tokens)}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Cache Read</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {formatNumber(totals.input_cache_read_tokens)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Cache Write{" "}
-                  {formatNumber(
-                    totals.input_cache_write_tokens_5m +
-                      totals.input_cache_write_tokens_1h +
-                      totals.input_cache_write_tokens_unknown,
-                  )}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Output Tokens</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {formatNumber(totals.output_tokens)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Reasoning {formatNumber(totals.reasoning_tokens)}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Total / Tool Input</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {formatNumber(totals.total_tokens)} /{" "}
-                  {formatNumber(totals.tool_input_tokens)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Unpriced runs {formatNumber(totals.unpriced_runs)}
-                </div>
-              </div>
-            </>
-          )}
+        <div className="panel-shell">
+          <div className="ui-panel-header">
+            <h2 className="ui-panel-title">Usage Summary</h2>
+            <Button
+              type="button"
+              size="sm"
+              className="px-2"
+              aria-expanded={sections.summary}
+              onClick={() => toggleSection("summary")}
+            >
+              {sections.summary ? "Collapse" : "Expand"}
+            </Button>
+          </div>
+          {sections.summary ? (
+            <div
+              className="grid gap-3 p-4"
+              style={USAGE_SUMMARY_GRID_STYLE}
+            >
+              {loading ? (
+                Array.from({ length: 5 }).map((_, index) => (
+                  <div key={index} className="panel-shell p-4">
+                    <Skeleton className="h-3 w-1/2" />
+                    <Skeleton className="mt-3 h-8 w-4/5" />
+                    <Skeleton className="mt-3 h-3 w-3/5" />
+                  </div>
+                ))
+              ) : (
+                <>
+                  <div className="panel-shell p-4">
+                    <div className="ui-label">Priced Cost (USD)</div>
+                    <div className="ui-tabular mt-1 text-lg font-semibold">
+                      {formatUsd(totals.cost_usd)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">
+                      Priced runs {formatNumber(totals.priced_runs)} /{" "}
+                      {formatNumber(totals.runs)}
+                    </div>
+                  </div>
+                  <div className="panel-shell p-4">
+                    <div className="ui-label">Input Tokens</div>
+                    <div className="ui-tabular mt-1 text-lg font-semibold">
+                      {formatNumber(totals.input_tokens)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">
+                      Uncached {formatNumber(totals.input_uncached_tokens)}
+                    </div>
+                  </div>
+                  <div className="panel-shell p-4">
+                    <div className="ui-label">Cache Read</div>
+                    <div className="ui-tabular mt-1 text-lg font-semibold">
+                      {formatNumber(totals.input_cache_read_tokens)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">
+                      Cache Write{" "}
+                      {formatNumber(
+                        totals.input_cache_write_tokens_5m +
+                          totals.input_cache_write_tokens_1h +
+                          totals.input_cache_write_tokens_unknown,
+                      )}
+                    </div>
+                  </div>
+                  <div className="panel-shell p-4">
+                    <div className="ui-label">Output Tokens</div>
+                    <div className="ui-tabular mt-1 text-lg font-semibold">
+                      {formatNumber(totals.output_tokens)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">
+                      Reasoning {formatNumber(totals.reasoning_tokens)}
+                    </div>
+                  </div>
+                  <div className="panel-shell p-4">
+                    <div className="ui-label">Total / Tool Input</div>
+                    <div className="ui-tabular mt-1 text-lg font-semibold">
+                      {formatNumber(totals.total_tokens)} /{" "}
+                      {formatNumber(totals.tool_input_tokens)}
+                    </div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">
+                      Unpriced runs {formatNumber(totals.unpriced_runs)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="panel-shell">
           <div className="ui-panel-header">
             <h2 className="ui-panel-title">Token Trend</h2>
-            <Badge tone="neutral">{trendBuckets.length} buckets</Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="neutral">{trendBuckets.length} buckets</Badge>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                aria-expanded={sections.trend}
+                onClick={() => toggleSection("trend")}
+              >
+                {sections.trend ? "Collapse" : "Expand"}
+              </Button>
+            </div>
           </div>
-          <div className="p-4">
-            {loading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-32 w-full" />
-                <div className="flex flex-wrap gap-2">
-                  <Skeleton className="h-6 w-32" />
-                  <Skeleton className="h-6 w-32" />
-                  <Skeleton className="h-6 w-32" />
+          {sections.trend ? (
+            <div className="p-4">
+              {loading ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-32 w-full" />
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-6 w-32" />
+                    <Skeleton className="h-6 w-32" />
+                    <Skeleton className="h-6 w-32" />
+                  </div>
                 </div>
-              </div>
-            ) : trendBuckets.length === 0 ? (
-              <EmptyState
-                title="No Trend Data"
-                description="No token usage data is available for the selected filter."
-              />
-            ) : (
-              <>
-                <div className="h-32 w-full">
-                  <svg
-                    viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`}
-                    preserveAspectRatio="none"
-                    className="h-full w-full"
-                  >
-                    {trendBuckets.map((bucket, index) => {
-                      const height = (bucket.total_tokens / maxTrend) * 92;
-                      const y = 96 - height;
-                      return (
-                        <g key={`${bucket.label}-${index}`}>
-                          <rect
-                            x={index + 0.12}
-                            y={y}
-                            width={0.76}
-                            height={Math.max(2, height)}
-                            rx={0.1}
-                            fill="var(--accent)"
-                            opacity={0.85}
-                          />
-                        </g>
-                      );
-                    })}
-                  </svg>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
-                  {trendBuckets
-                    .slice(Math.max(0, trendBuckets.length - 6))
-                    .map((bucket) => (
-                      <span
-                        key={bucket.label}
-                        className="rounded border border-[var(--border)] px-2 py-0.5"
-                      >
-                        {bucket.label}: {formatNumber(bucket.total_tokens)} ({" "}
-                        {formatUsd(bucket.cost_usd)})
-                      </span>
-                    ))}
-                </div>
-              </>
-            )}
-          </div>
+              ) : trendBuckets.length === 0 ? (
+                <EmptyState
+                  title="No Trend Data"
+                  description="No token usage data is available for the selected filter."
+                />
+              ) : (
+                <>
+                  <div className="h-32 w-full">
+                    <svg
+                      viewBox={`0 0 ${Math.max(1, trendBuckets.length)} 100`}
+                      preserveAspectRatio="none"
+                      className="h-full w-full"
+                    >
+                      {trendBuckets.map((bucket, index) => {
+                        const height = (bucket.total_tokens / maxTrend) * 92;
+                        const y = 96 - height;
+                        return (
+                          <g key={`${bucket.label}-${index}`}>
+                            <rect
+                              x={index + 0.12}
+                              y={y}
+                              width={0.76}
+                              height={Math.max(2, height)}
+                              rx={0.1}
+                              fill="var(--accent)"
+                              opacity={0.85}
+                            />
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--muted)]">
+                    {trendBuckets
+                      .slice(Math.max(0, trendBuckets.length - 6))
+                      .map((bucket) => (
+                        <span
+                          key={bucket.label}
+                          className="rounded border border-[var(--border)] px-2 py-0.5"
+                        >
+                          {bucket.label}: {formatNumber(bucket.total_tokens)} ({" "}
+                          {formatUsd(bucket.cost_usd)})
+                        </span>
+                      ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="grid min-w-0 gap-3 md:grid-cols-2">
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">By Provider / Model</h2>
-              <Badge tone="neutral">{providerModelRows.length} rows</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="neutral">{providerModelRows.length} rows</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.provider_model}
+                  onClick={() => toggleSection("provider_model")}
+                >
+                  {sections.provider_model ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
+            {sections.provider_model ? <div className="p-3">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-9 w-full" />
@@ -647,7 +760,10 @@ export default function UsagePage() {
                   description="No model usage data for the selected filters."
                 />
               ) : (
-                <>
+                <div
+                  className={USAGE_DATA_PANEL_CLASS}
+                  data-testid="usage-provider-model-scroll"
+                >
                   <div className="space-y-2 md:hidden">
                     {providerModelRows.map((row) => (
                       <article
@@ -704,17 +820,28 @@ export default function UsagePage() {
                       </tbody>
                     </DataTable>
                   </TableWrap>
-                </>
+                </div>
               )}
-            </div>
+            </div> : null}
           </div>
 
           <div className="panel-shell min-w-0">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Recent Runs</h2>
-              <Badge tone="neutral">last {records.length}</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="neutral">last {records.length}</Badge>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  aria-expanded={sections.recent_runs}
+                  onClick={() => toggleSection("recent_runs")}
+                >
+                  {sections.recent_runs ? "Collapse" : "Expand"}
+                </Button>
+              </div>
             </div>
-            <div className="p-3">
+            {sections.recent_runs ? <div className="p-3">
               {loading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-10 w-full" />
@@ -727,7 +854,10 @@ export default function UsagePage() {
                   description="No usage runs for the selected filters."
                 />
               ) : (
-                <>
+                <div
+                  className={USAGE_DATA_PANEL_CLASS}
+                  data-testid="usage-recent-runs-scroll"
+                >
                   <div className="space-y-2 md:hidden">
                     {records.map((row, index) => (
                       <article
@@ -847,9 +977,9 @@ export default function UsagePage() {
                       </tbody>
                     </DataTable>
                   </TableWrap>
-                </>
+                </div>
               )}
-            </div>
+            </div> : null}
           </div>
         </div>
         {selectedRun ? (
