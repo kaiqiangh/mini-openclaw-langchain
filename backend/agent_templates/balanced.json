@@ -1,17 +1,21 @@
 {
-  "description": "Balanced local profile with moderate retries and scheduler visibility defaults.",
+  "description": "General-purpose interactive profile aligned with the repo defaults and mild operator-friendly headroom.",
   "runtime_config": {
     "agent_runtime": {
-      "max_steps": 16,
+      "max_steps": 24,
       "max_retries": 1
     },
     "llm_runtime": {
       "temperature": 0.2,
-      "timeout_seconds": 60
+      "timeout_seconds": 75
     },
     "scheduler": {
       "api_enabled": true,
-      "runs_query_default_limit": 200
+      "runs_query_default_limit": 150
+    },
+    "cron": {
+      "enabled": true,
+      "max_failures": 2
     }
   }
 }

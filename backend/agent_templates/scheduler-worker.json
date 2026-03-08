@@ -1,0 +1,57 @@
+{
+  "description": "Automation-oriented profile for heartbeat and cron agents with bounded retries and explicit autonomous tool lists.",
+  "runtime_config": {
+    "agent_runtime": {
+      "max_steps": 20,
+      "max_retries": 1
+    },
+    "autonomous_tools": {
+      "heartbeat_enabled_tools": [
+        "read_files",
+        "read_pdf",
+        "search_knowledge_base",
+        "sessions_list",
+        "session_history",
+        "scheduler_cron_jobs",
+        "scheduler_cron_runs",
+        "scheduler_heartbeat_status",
+        "scheduler_heartbeat_runs"
+      ],
+      "cron_enabled_tools": [
+        "web_search",
+        "fetch_url",
+        "read_files",
+        "read_pdf",
+        "search_knowledge_base",
+        "sessions_list",
+        "session_history",
+        "agents_list",
+        "scheduler_cron_jobs",
+        "scheduler_cron_runs",
+        "scheduler_heartbeat_status",
+        "scheduler_heartbeat_runs"
+      ]
+    },
+    "scheduler": {
+      "api_enabled": true,
+      "runs_query_default_limit": 200
+    },
+    "heartbeat": {
+      "enabled": true,
+      "interval_seconds": 600,
+      "timezone": "UTC",
+      "active_start_hour": 8,
+      "active_end_hour": 20,
+      "session_id": "__heartbeat__"
+    },
+    "cron": {
+      "enabled": true,
+      "poll_interval_seconds": 20,
+      "timezone": "UTC",
+      "max_failures": 3,
+      "retry_base_seconds": 30,
+      "retry_max_seconds": 1800,
+      "failure_retention": 200
+    }
+  }
+}

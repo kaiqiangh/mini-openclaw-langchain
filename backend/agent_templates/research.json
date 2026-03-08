@@ -1,0 +1,31 @@
+{
+  "description": "Research-oriented profile with retrieval and web access enabled for chat while keeping mutation tools disabled.",
+  "runtime_config": {
+    "agent_runtime": {
+      "max_steps": 32,
+      "max_retries": 1
+    },
+    "llm_runtime": {
+      "temperature": 0.15,
+      "timeout_seconds": 90
+    },
+    "chat_enabled_tools": [
+      "fetch_url",
+      "read_files",
+      "read_pdf",
+      "search_knowledge_base",
+      "sessions_list",
+      "session_history",
+      "web_search"
+    ],
+    "chat_blocked_tools": [
+      "terminal",
+      "python_repl",
+      "apply_patch"
+    ],
+    "scheduler": {
+      "api_enabled": true,
+      "runs_query_default_limit": 200
+    }
+  }
+}

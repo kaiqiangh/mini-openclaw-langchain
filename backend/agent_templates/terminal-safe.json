@@ -1,0 +1,52 @@
+{
+  "description": "Code-editing profile for sandboxed local terminal work without outbound network access.",
+  "runtime_config": {
+    "agent_runtime": {
+      "max_steps": 18,
+      "max_retries": 1
+    },
+    "tool_execution": {
+      "terminal": {
+        "sandbox_mode": "hybrid_auto",
+        "require_sandbox": true,
+        "allowed_command_prefixes": [
+          "pwd",
+          "ls",
+          "find",
+          "cat",
+          "sed",
+          "rg",
+          "git status",
+          "git diff",
+          "git log",
+          "pytest",
+          "python -m pytest",
+          "npm run",
+          "node"
+        ],
+        "allow_network": false,
+        "allow_shell_syntax": false,
+        "max_args": 24,
+        "max_arg_length": 256
+      }
+    },
+    "chat_enabled_tools": [
+      "terminal",
+      "apply_patch",
+      "read_files",
+      "read_pdf",
+      "sessions_list",
+      "session_history",
+      "agents_list"
+    ],
+    "chat_blocked_tools": [
+      "python_repl",
+      "fetch_url",
+      "web_search"
+    ],
+    "scheduler": {
+      "api_enabled": true,
+      "runs_query_default_limit": 100
+    }
+  }
+}

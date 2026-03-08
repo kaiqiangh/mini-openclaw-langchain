@@ -1,24 +1,43 @@
 {
-  "description": "Local-safe template with tighter tool controls and conservative retries.",
+  "description": "Conservative local profile with read-heavy chat tools and strict terminal and network guardrails.",
   "runtime_config": {
     "agent_runtime": {
       "max_steps": 12,
       "max_retries": 0
     },
-    "tool_execution": {
-      "terminal": {
-        "require_sandbox": true,
-        "allow_network": false,
-        "allow_shell_syntax": false
-      }
-    },
     "tool_network": {
       "block_private_networks": true,
-      "max_redirects": 2
+      "max_redirects": 2,
+      "max_content_bytes": 1000000
     },
+    "tool_execution": {
+      "terminal": {
+        "sandbox_mode": "hybrid_auto",
+        "require_sandbox": true,
+        "allowed_command_prefixes": [],
+        "allow_network": false,
+        "allow_shell_syntax": false,
+        "max_args": 16,
+        "max_arg_length": 160
+      }
+    },
+    "chat_enabled_tools": [
+      "read_files",
+      "read_pdf",
+      "search_knowledge_base",
+      "sessions_list",
+      "session_history"
+    ],
+    "chat_blocked_tools": [
+      "terminal",
+      "python_repl",
+      "apply_patch",
+      "web_search",
+      "fetch_url"
+    ],
     "scheduler": {
       "api_enabled": true,
-      "runs_query_default_limit": 150
+      "runs_query_default_limit": 120
     }
   }
 }

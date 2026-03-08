@@ -274,6 +274,14 @@ Effective route resolution uses this order:
 - Saving `skills/...` through the agent file API refreshes that same agent's `SKILLS_SNAPSHOT.md`.
 - `backend/SKILLS_SNAPSHOT.md` is no longer part of runtime behavior.
 
+## Agent Templates
+
+- Runtime templates live in `backend/agent_templates/*.json`.
+- Each template is a JSON object with `description` and `runtime_config`.
+- `runtime_config` is validated through the same runtime parser used for agent config updates, so unknown keys and unsupported legacy fields are rejected consistently.
+- Template defaults and supported runtime keys should be derived from `backend/config.json`, not copied from stale per-workspace configs.
+- See `backend/agent_templates/README.md` for the catalog contract, inheritance rules, and extension guidance.
+
 ## API Reference
 
 ### Chat / Sessions / Agents
