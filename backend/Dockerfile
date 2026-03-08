@@ -38,6 +38,15 @@ CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
 FROM python-base AS runtime
 
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends \
+    curl \
+    ca-certificates \
+    jq \
+    procps \
+    netcat-openbsd \
+ && rm -rf /var/lib/apt/lists/*
+ 
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/app --shell /usr/sbin/nologin app
 
