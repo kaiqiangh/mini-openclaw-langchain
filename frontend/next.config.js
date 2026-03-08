@@ -4,6 +4,7 @@ const devApiProxyTarget = (process.env.NEXT_DEV_API_PROXY_URL || "http://127.0.0
   .replace(/\/$/, "");
 
 const nextConfig = {
+  output: "standalone",
   reactStrictMode: true,
   async rewrites() {
     if (process.env.NODE_ENV !== "development") {

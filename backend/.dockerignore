@@ -1,0 +1,17 @@
+.env
+.venv
+.pytest_cache
+__pycache__/
+*.py[cod]
+tests/
+workspaces/
+storage/__pycache__/
+storage/*.db
+storage/*.db-*
+storage/*.jsonl
+storage/runtime_state.json
+storage/usage/
+storage/audit/
+htmlcov/
+coverage.xml
+*.log
