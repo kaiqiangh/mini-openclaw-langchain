@@ -14,7 +14,7 @@ Run powerful multi-agent systems with hardened tooling, a built-in scheduler, an
 [![Next.js](https://img.shields.io/badge/next.js-15-black)](#architecture)
 ![LangChain](https://img.shields.io/badge/LangChain-1.2.10-15803d)
 
-[Getting Started](#quickstart) · [Architecture](#architecture) · [Features](#features) · [API Highlights](#api-highlights) · [Contributing](#contributing)
+[Getting Started](#quickstart) · [Docker](#docker) · [Architecture](#architecture) · [Features](#features) · [API Highlights](#api-highlights) · [Contributing](#contributing)
 
 </div>
 
@@ -102,7 +102,8 @@ Stack: Python 3.13 · FastAPI · LangChain 1.2 · SQLite · Next.js 15 · React
 
 ### Prerequisites
 
-- `bash`, `uv`, `node` + `npm`, `curl`
+- For local CLI/manual runs: `bash`, `uv`, `node`, `npm`, `curl`
+- For containerized runs: Docker Engine/Desktop with Docker Compose v2
 
 ### Option A — One command (recommended)
 
@@ -112,7 +113,17 @@ Stack: Python 3.13 · FastAPI · LangChain 1.2 · SQLite · Next.js 15 · React
 
 This starts both backend and frontend, runs health checks, and serves the app at **http://{YOUR_URL}:8000**.
 
-### Option B — Manual split-server
+### Option B — Docker (production-like)
+
+```bash
+cp .env.example .env
+docker compose --profile prod up --build -d
+```
+
+This serves the app at **http://localhost:8080** through Nginx, with the backend and frontend isolated on the internal Compose network.
+Compose loads the root `.env` directly into the backend and frontend containers.
+
+### Option C — Manual split-server
 
 #### Backend
 
@@ -136,13 +147,66 @@ Next.js rewrites `/api/v1/*` → `http://127.0.0.1:8000/api/v1/*` automatically.
 
 ### Required environment variables
 
-| Variable                                                        | Required | Description                               |
-| --------------------------------------------------------------- | -------- | ----------------------------------------- |
-| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for all `/api/v1/*` routes   |
-| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for your active `DEFAULT_LLM_PROFILE` |
-| `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                  |
+For local backend runs, copy `backend/.env.example` to `backend/.env`.
+For Docker runs, copy `.env.example` to `.env`.
+
+| Variable                                                        | Required | Description                                                   |
+| --------------------------------------------------------------- | -------- | ------------------------------------------------------------- |
+| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for browser cookie bootstrap and `/api/v1/*`     |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for the active LLM route defined in `backend/config.json` |
+| `APP_ALLOWED_ORIGINS`                                           | Optional | CORS origins for backend requests                             |
+| `APP_TRUSTED_HOSTS`                                             | Optional | Trusted host allowlist for backend requests; include `backend-dev` for Docker dev |
+| `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                                      |
 
 > **PDF extraction support:** `uv pip install --python .venv/bin/python -r requirements-pdf.txt`
+
+---
+
+## Docker
+
+Mini-OpenClaw ships one root `docker-compose.yml` with two profiles.
+
+### Production-like profile
+
+```bash
+cp .env.example .env
+docker compose --profile prod up --build -d
+```
+
+- Public entrypoint: `http://localhost:8080`
+- Public edge: `nginx`
+- Internal-only services: `backend`, `frontend`
+- Same-origin routing:
+  `/api/v1/*` goes to FastAPI
+  all other requests go to Next.js
+
+### Development profile
+
+```bash
+cp .env.example .env
+docker compose --profile dev up --build -d
+```
+
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- Services: `backend-dev`, `frontend-dev`
+- Uses bind mounts and hot reload
+- Browser requests still go to `http://localhost:3000/api/v1/*`; Next.js rewrites them to `backend-dev:8000` inside the dev stack.
+- Use `http://localhost:8000/api/v1/*` only for direct host-side API calls such as `curl` or Postman.
+
+Optional: set `COMPOSE_ENV_FILE=/path/to/file` if you want Compose to inject a different env file instead of the default root `.env`.
+
+### Why Nginx is included
+
+The production-like profile needs one public origin so browser auth cookie bootstrap and relative `/api/v1/*` requests keep working outside Next.js development rewrites. Nginx provides that same-origin edge without exposing backend and frontend directly.
+
+### Container security notes
+
+- Backend and frontend images use multi-stage builds and do not bake secrets into image layers.
+- Runtime containers use non-root users where possible.
+- The production-like profile exposes only Nginx to the host.
+- Health checks are defined for Nginx, backend, and frontend.
+- This is production-minded hardening for local and small deployments, not a substitute for a full production orchestrator or external TLS termination.
 
 ---
 
@@ -156,6 +220,7 @@ Mini-OpenClaw applies a defense-in-depth approach:
 - **Network controls:** `fetch_url` blocks private/loopback/link-local addresses by default.
 - **Terminal sandboxing:** Environment is scrubbed of secret-like variables before execution.
 - **Middleware:** CORS + trusted hosts + rate limiting enabled by default.
+- **Docker prod profile:** Nginx is the only public service; backend and frontend stay on the internal Compose network.
 
 ---
 
@@ -305,9 +370,26 @@ GET              /api/v1/agents/{agent_id}/traces/events/{event_id}
 .
 ├── backend/        # FastAPI app, AgentManager, tools, scheduler, retrieval engine
 ├── frontend/       # Next.js app router UI, API client, store, scheduler/usage pages
+├── docker/         # Nginx config for the production-like Docker profile
 ├── oml             # Bash CLI (Linux/macOS)
 └── oml.ps1         # PowerShell CLI (Windows)
 ```
+
+---
+
+## Documentation
+
+- [CONTRIBUTING.md](./CONTRIBUTING.md): local setup, Docker workflow, tests, PR expectations
+- [AGENTS.md](./AGENTS.md): repository guidance for coding agents and automation
+- [backend/agent_templates/README.md](./backend/agent_templates/README.md): template structure, loading, and extension rules
+
+Recommended follow-on docs:
+
+- `SECURITY.md` for coordinated vulnerability reporting and security contact guidance
+- `docs/architecture.md` for deeper backend/frontend/runtime flow documentation
+- `docs/deployment.md` for non-local deployment patterns and reverse-proxy/TLS guidance
+- `SUPPORT.md` for issue-routing and help channels
+- `CODE_OF_CONDUCT.md` for contributor norms
 
 ---
 
@@ -332,14 +414,8 @@ npm run build
 
 ## Contributing
 
-Contributions are welcome! Here’s how to get started:
-
-1. Fork the repo and create a feature branch: `git checkout -b feat/your-feature`
-1. Make your changes and add tests where applicable
-1. Run the test suite (backend + frontend) to confirm nothing is broken
-1. Open a pull request with a clear description of what changed and why
-
-For larger changes, opening an issue first to discuss the approach is appreciated.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, workflow, tests, and PR expectations.
+Repository-specific automation guidance lives in [AGENTS.md](./AGENTS.md).
 
 ---
 
