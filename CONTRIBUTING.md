@@ -40,14 +40,14 @@ npm run dev
 
 ```bash
 cp .env.example .env
-docker compose --profile prod up --build
+docker compose --profile prod up --build -d
 ```
 
 Production-like Docker serves the app at `http://localhost:8080` through Nginx.
 For live reload, use:
 
 ```bash
-docker compose --profile dev up --build
+docker compose --profile dev up --build -d
 ```
 
 That exposes the frontend at `http://localhost:3000` and the backend at `http://localhost:8000`.

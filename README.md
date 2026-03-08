@@ -120,7 +120,7 @@ cp .env.example .env
 docker compose --profile prod up --build -d
 ```
 
-This serves the app at **http://localhost:8080** through Nginx, with the backend and frontend isolated on the internal Compose network.
+This serves the app at **http://{YOUR_URL}:8080** through Nginx, with the backend and frontend isolated on the internal Compose network.
 Compose loads the root `.env` directly into the backend and frontend containers.
 
 ### Option C — Manual split-server
@@ -150,13 +150,13 @@ Next.js rewrites `/api/v1/*` → `http://127.0.0.1:8000/api/v1/*` automatically.
 For local backend runs, copy `backend/.env.example` to `backend/.env`.
 For Docker runs, copy `.env.example` to `.env`.
 
-| Variable                                                        | Required | Description                                                   |
-| --------------------------------------------------------------- | -------- | ------------------------------------------------------------- |
-| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for browser cookie bootstrap and `/api/v1/*`     |
-| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for the active LLM route defined in `backend/config.json` |
-| `APP_ALLOWED_ORIGINS`                                           | Optional | CORS origins for backend requests                             |
+| Variable                                                        | Required | Description                                                                       |
+| --------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
+| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for browser cookie bootstrap and `/api/v1/*`                         |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for the active LLM route defined in `backend/config.json`                     |
+| `APP_ALLOWED_ORIGINS`                                           | Optional | CORS origins for backend requests                                                 |
 | `APP_TRUSTED_HOSTS`                                             | Optional | Trusted host allowlist for backend requests; include `backend-dev` for Docker dev |
-| `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                                      |
+| `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                                                          |
 
 > **PDF extraction support:** `uv pip install --python .venv/bin/python -r requirements-pdf.txt`
 
@@ -171,6 +171,9 @@ Mini-OpenClaw ships one root `docker-compose.yml` with two profiles.
 ```bash
 cp .env.example .env
 docker compose --profile prod up --build -d
+
+# Stop
+docker compose --profile prod down
 ```
 
 - Public entrypoint: `http://localhost:8080`
@@ -185,6 +188,9 @@ docker compose --profile prod up --build -d
 ```bash
 cp .env.example .env
 docker compose --profile dev up --build -d
+
+# Stop the containers.
+docker compose --profile dev down
 ```
 
 - Frontend: `http://localhost:3000`

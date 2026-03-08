@@ -55,8 +55,13 @@ npm run build
 
 ```bash
 cp .env.example .env
-docker compose --profile prod up --build
-docker compose --profile dev up --build
+docker compose --profile prod up --build -d
+docker compose --profile dev up --build -d
+
+# Stop the containers.
+# Do NOT add "-v" unless explicitly removing volumes and reset all persisted data by user's prompt.
+docker compose --profile prod down
+docker compose --profile dev down
 ```
 
 ## Change boundaries
