@@ -75,6 +75,22 @@ Bulk delete, bulk export, bulk runtime patch, template-driven config creation, a
 
 ---
 
+## Frontend Preview
+
+### Agents Console
+
+The root workspace page gives operators a split-pane console for agent lifecycle management, runtime controls, and file inspection.
+
+![Agents console](assets/agents-page.png)
+
+### Sessions Hub
+
+The sessions page is the message inbox for active and archived work, with transcript review and resume flows built into the operator UI.
+
+![Sessions hub](assets/sessions-page.png)
+
+---
+
 ## Architecture
 
 ```mermaid

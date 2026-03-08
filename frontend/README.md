@@ -16,6 +16,44 @@ Next.js App Router frontend for Mini-OpenClaw.
 Live app routes now live directly under `src/app/<route>/page.tsx`.
 The remaining `src/app/(console)/` directory is not part of the public URL map anymore; it only holds colocated tests from the earlier route-group layout.
 
+## Page Gallery
+
+### `/` Agents Console
+
+Agent creation, switching, runtime controls, and workspace inspection all land on the root console.
+
+![Agents console](../assets/agents-page.png)
+
+### `/sessions`
+
+The sessions page is the inbox for active and archived conversations, with resume and transcript-review flows.
+
+![Sessions page](../assets/sessions-page.png)
+
+### `/runs`
+
+Run history gives operators a cross-cutting ledger for chat, cron, and heartbeat executions.
+
+![Runs page](../assets/runs-page.png)
+
+### `/traces`
+
+Trace Explorer focuses on persisted run events and debugging detail for investigation workflows.
+
+![Trace Explorer page](../assets/trace-page.png)
+
+### `/scheduler`
+
+The scheduler page combines cron controls, heartbeat management, metrics, and recent run visibility.
+
+![Scheduler page](../assets/scheduler-page.png)
+
+### `/usage`
+
+Usage analytics surfaces token trends, cost summaries, provider/model breakdowns, and recent run records.
+
+![Usage page](../assets/usage-page.png)
+
 ## UI Model
 
 - Desktop agents console: draggable split panes (`Sidebar | Inspector`) with localStorage persistence.
