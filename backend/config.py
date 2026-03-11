@@ -702,7 +702,7 @@ def _runtime_from_payload(
     def _terminal_command_policy_mode(
         value: Any,
         *,
-        allowed_prefixes: list[str],
+        has_allowed_prefix_field: bool,
         is_explicit: bool,
     ) -> TerminalCommandPolicyMode:
         if is_explicit:
@@ -714,7 +714,7 @@ def _runtime_from_payload(
                 return TerminalCommandPolicyMode(raw)
             except ValueError:
                 return TerminalCommandPolicyMode.AUTO
-        if allowed_prefixes:
+        if has_allowed_prefix_field:
             return TerminalCommandPolicyMode.ALLOWLIST
         return TerminalCommandPolicyMode.AUTO
 
@@ -805,9 +805,8 @@ def _runtime_from_payload(
                 ),
                 command_policy_mode=_terminal_command_policy_mode(
                     terminal_execution.get("command_policy_mode"),
-                    allowed_prefixes=_normalized_tool_list(
-                        terminal_execution.get("allowed_command_prefixes"),
-                        (),
+                    has_allowed_prefix_field=(
+                        "allowed_command_prefixes" in terminal_execution
                     ),
                     is_explicit="command_policy_mode" in terminal_execution,
                 ),

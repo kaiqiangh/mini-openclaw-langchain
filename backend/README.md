@@ -349,6 +349,7 @@ resolved default profile, fallback profiles, warnings, and errors.
 - Workspace path escape prevention in file tools/endpoints.
 - URL fetch restrictions (scheme, host policy, content bounds, redirect cap).
 - Terminal command policy modes (`auto`, `allowlist`, `denylist`) + process sandbox backend + environment secret scrubbing.
+  Explicit `allowed_command_prefixes` entries keep legacy allowlist behavior, even when the list is empty.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)

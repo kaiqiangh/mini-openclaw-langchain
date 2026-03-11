@@ -229,6 +229,18 @@ def test_runtime_from_payload_infers_terminal_policy_mode_from_allowlist_presenc
     )
     assert (
         automatic.tool_execution.terminal.command_policy_mode
+        == TerminalCommandPolicyMode.ALLOWLIST
+    )
+
+    inferred_auto = runtime_from_payload(
+        {
+            "tool_execution": {
+                "terminal": {}
+            }
+        }
+    )
+    assert (
+        inferred_auto.tool_execution.terminal.command_policy_mode
         == TerminalCommandPolicyMode.AUTO
     )
 
