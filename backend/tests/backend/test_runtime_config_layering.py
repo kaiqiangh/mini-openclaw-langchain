@@ -9,6 +9,7 @@ from config import (
     LlmRoutePatch,
     RetrievalConfig,
     RuntimeConfig,
+    TerminalCommandPolicyMode,
     TerminalSandboxMode,
     load_effective_runtime_config,
     merge_runtime_configs,
@@ -163,8 +164,12 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
         tool_loop_model_overrides={"gpt-5-mini": "gpt-4.1-mini"},
     )
     runtime.tool_execution.terminal.sandbox_mode = TerminalSandboxMode.UNSAFE_NONE
+    runtime.tool_execution.terminal.command_policy_mode = (
+        TerminalCommandPolicyMode.DENYLIST
+    )
     runtime.tool_execution.terminal.require_sandbox = False
     runtime.tool_execution.terminal.allowed_command_prefixes = ["echo", "python3 -c"]
+    runtime.tool_execution.terminal.denied_command_prefixes = ["date"]
     runtime.tool_execution.terminal.allow_network = True
     runtime.tool_execution.terminal.allow_shell_syntax = True
     runtime.tool_execution.terminal.max_args = 12
@@ -182,15 +187,50 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
         "gpt-5-mini": "gpt-4.1-mini"
     }
     assert loaded.tool_execution.terminal.sandbox_mode == TerminalSandboxMode.UNSAFE_NONE
+    assert (
+        loaded.tool_execution.terminal.command_policy_mode
+        == TerminalCommandPolicyMode.DENYLIST
+    )
     assert loaded.tool_execution.terminal.require_sandbox is False
     assert loaded.tool_execution.terminal.allowed_command_prefixes == [
         "echo",
         "python3 -c",
     ]
+    assert loaded.tool_execution.terminal.denied_command_prefixes == ["date"]
     assert loaded.tool_execution.terminal.allow_network is True
     assert loaded.tool_execution.terminal.allow_shell_syntax is True
     assert loaded.tool_execution.terminal.max_args == 12
     assert loaded.tool_execution.terminal.max_arg_length == 64
+
+
+def test_runtime_from_payload_infers_terminal_policy_mode_from_allowlist_presence():
+    allowlisted = runtime_from_payload(
+        {
+            "tool_execution": {
+                "terminal": {
+                    "allowed_command_prefixes": ["echo"],
+                }
+            }
+        }
+    )
+    assert (
+        allowlisted.tool_execution.terminal.command_policy_mode
+        == TerminalCommandPolicyMode.ALLOWLIST
+    )
+
+    automatic = runtime_from_payload(
+        {
+            "tool_execution": {
+                "terminal": {
+                    "allowed_command_prefixes": [],
+                }
+            }
+        }
+    )
+    assert (
+        automatic.tool_execution.terminal.command_policy_mode
+        == TerminalCommandPolicyMode.AUTO
+    )
 
 
 def test_runtime_from_payload_rejects_legacy_llm_profile():
