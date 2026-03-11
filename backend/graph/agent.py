@@ -27,6 +27,7 @@ from graph.agent_loop_types import StreamLoopState
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
 from graph.retrieval_orchestrator import RetrievalOrchestrator
+from graph.skill_selector import SelectedSkill, SkillSelector
 from graph.session_manager import SessionManager
 from graph.stream_orchestrator import StreamOrchestrator
 from graph.tool_orchestrator import ToolOrchestrator
@@ -77,6 +78,7 @@ class AgentManager:
         self.audit_store: AuditStore | None = None
         self.usage_store: UsageStore | None = None
         self.prompt_builder = PromptBuilder()
+        self.skill_selector = SkillSelector()
         self.usage_orchestrator = UsageOrchestrator()
         self.default_agent_id = "default"
         self._runtimes: dict[str, AgentRuntime] = {}
@@ -940,6 +942,15 @@ class AgentManager:
         )
         return pack.prompt
 
+    @staticmethod
+    def _augment_system_prompt(
+        system_prompt: str, selected_skills: list[SelectedSkill]
+    ) -> str:
+        selected_section = SkillSelector.render_prompt_section(selected_skills)
+        if not selected_section:
+            return system_prompt
+        return f"{selected_section}\n\n{system_prompt}"
+
     async def run_once(
         self,
         *,
@@ -968,10 +979,18 @@ class AgentManager:
         messages = self._build_messages(
             history=history, message=message, rag_context=retrieval_envelope.rag_context
         )
-        system_prompt = self.build_system_prompt(
+        base_system_prompt = self.build_system_prompt(
             rag_mode=effective_runtime.rag_mode,
             is_first_turn=is_first_turn,
             agent_id=agent_id,
+        )
+        selected_skills = self.skill_selector.select(
+            base_dir=runtime_state.root_dir,
+            message=message,
+            history=history,
+        )
+        system_prompt = self._augment_system_prompt(
+            base_system_prompt, selected_skills
         )
 
         response_schema = None
@@ -1122,6 +1141,7 @@ class AgentManager:
                         return {
                             "structured_response": result.get("structured_response"),
                             "messages": result.get("messages", []),
+                            "selected_skills": [item.name for item in selected_skills],
                             "usage": usage_payload or {},
                         }
                     text = ""
@@ -1132,6 +1152,7 @@ class AgentManager:
                     return {
                         "text": text,
                         "messages": output_messages,
+                        "selected_skills": [item.name for item in selected_skills],
                         "usage": usage_payload or {},
                     }
                 except Exception as exc:  # noqa: BLE001
@@ -1215,8 +1236,16 @@ class AgentManager:
         if rag_mode:
             yield {"type": "retrieval", "data": {"query": message, "results": results}}
 
-        system_prompt = self.build_system_prompt(
+        base_system_prompt = self.build_system_prompt(
             rag_mode=rag_mode, is_first_turn=is_first_turn, agent_id=agent_id
+        )
+        selected_skills = self.skill_selector.select(
+            base_dir=runtime_state.root_dir,
+            message=message,
+            history=history,
+        )
+        system_prompt = self._augment_system_prompt(
+            base_system_prompt, selected_skills
         )
         messages = self._build_messages(
             history=history,
@@ -1238,6 +1267,21 @@ class AgentManager:
         usage_sources: dict[str, dict[str, int]] = {}
         usage_signature = ""
         attempt_number = 0
+
+        if selected_skills:
+            yield {
+                "type": "selected_skills",
+                "data": {
+                    "skills": [
+                        {
+                            "name": item.name,
+                            "location": item.location,
+                            "reason": item.reason,
+                        }
+                        for item in selected_skills
+                    ]
+                },
+            }
 
         for candidate_index, candidate in enumerate(route.candidates):
             availability = inspect_profile_availability(candidate.profile)

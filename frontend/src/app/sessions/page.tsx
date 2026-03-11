@@ -11,6 +11,7 @@ import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "
 
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
+import { SessionUsageSummary } from "@/components/chat/SessionUsageSummary";
 import {
   Badge,
   Button,
@@ -40,6 +41,7 @@ import {
   RetrievalItem,
   useAppStore,
 } from "@/lib/store";
+import { sessionScopeTone } from "@/lib/badge-tones";
 
 const LIVE_EDGE_THRESHOLD_PX = 80;
 const detailTimestampFormatter = new Intl.DateTimeFormat(undefined, {
@@ -58,6 +60,8 @@ type SessionMessageView = {
   content: string;
   timestampMs: number | null;
   toolCalls: ChatToolCall[];
+  selectedSkills: string[];
+  skillUses: string[];
   retrievals: RetrievalItem[];
   debugEvents: ChatDebugEvent[];
 };
@@ -101,6 +105,8 @@ function mapHistoryMessages(history: ChatHistoryResponse): SessionMessageView[] 
       content: message.content,
       timestampMs: normalizeTimestampMs(message.timestamp_ms),
       toolCalls: message.tool_calls ?? [],
+      selectedSkills: message.selected_skills ?? [],
+      skillUses: message.skill_uses ?? [],
       retrievals: [],
       debugEvents,
     };
@@ -182,6 +188,8 @@ function TranscriptFeed({
                 content={message.content}
                 timestampMs={message.timestampMs}
                 toolCalls={message.toolCalls}
+                selectedSkills={message.selectedSkills}
+                skillUses={message.skillUses}
                 retrievals={message.retrievals}
                 debugEvents={message.debugEvents}
               />
@@ -316,7 +324,7 @@ function SessionDetail({
         <div className="min-w-0">
           <h2 className="ui-panel-title truncate">{session.title || "New Session"}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <Badge tone={scope === "archived" ? "warn" : "success"}>
+            <Badge tone={sessionScopeTone(scope)}>
               {scope === "archived" ? "Archived" : "Active"}
             </Badge>
             <Badge tone="neutral" className="ui-mono">
@@ -423,6 +431,70 @@ function SessionDetail({
 
         {children}
       </div>
+    </>
+  );
+}
+
+type SessionDetailShellProps = SessionDetailProps & {
+  messages: Array<SessionMessageView | StoreChatMessage>;
+};
+
+function SessionDetailShell({
+  messages,
+  ...props
+}: SessionDetailShellProps) {
+  const {
+    agentId,
+    scope,
+    session,
+    history,
+    busyAction,
+    status,
+    onArchive,
+    onRestore,
+    onDelete,
+    onClose,
+    children,
+  } = props;
+
+  if (!session) {
+    return (
+      <SessionDetail
+        agentId={agentId}
+        scope={scope}
+        session={session}
+        history={history}
+        busyAction={busyAction}
+        status={status}
+        onArchive={onArchive}
+        onRestore={onRestore}
+        onDelete={onDelete}
+        onClose={onClose}
+      >
+        {children}
+      </SessionDetail>
+    );
+  }
+
+  return (
+    <>
+      <SessionDetail
+        agentId={agentId}
+        scope={scope}
+        session={session}
+        history={history}
+        busyAction={busyAction}
+        status={status}
+        onArchive={onArchive}
+        onRestore={onRestore}
+        onDelete={onDelete}
+        onClose={onClose}
+      >
+        <div className="border-b border-[var(--border)] px-4 py-4">
+          <SessionUsageSummary messages={messages} />
+        </div>
+        {children}
+      </SessionDetail>
     </>
   );
 }
@@ -797,10 +869,16 @@ function SessionsPageContent() {
         emptyDescription="This session is read-only in the operator console."
       />
     );
+  const detailMessages =
+    scope === "active"
+      ? liveSessionReady
+        ? liveMessages
+        : []
+      : archivedMessages;
 
   return (
     <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(320px,420px)_minmax(0,1fr)]">
+      <section className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
         <section className="panel-shell flex min-h-0 flex-col">
           <div className="ui-panel-header">
             <div>
@@ -935,7 +1013,7 @@ function SessionsPageContent() {
                               {session.session_id}
                             </div>
                           </div>
-                          <Badge tone={scope === "archived" ? "warn" : "neutral"}>
+                          <Badge tone={sessionScopeTone(scope)}>
                             {scope === "archived" ? "Archived" : "Live"}
                           </Badge>
                         </div>
@@ -953,11 +1031,12 @@ function SessionsPageContent() {
         </section>
 
         <section className="panel-shell hidden min-h-0 flex-col md:flex">
-          <SessionDetail
+          <SessionDetailShell
             agentId={agentId}
             scope={scope}
             session={selectedSession}
             history={history}
+            messages={detailMessages}
             busyAction={busyAction}
             status={status}
             onArchive={handleArchiveSession}
@@ -965,17 +1044,18 @@ function SessionsPageContent() {
             onDelete={handleDeleteSession}
           >
             {detailContent}
-          </SessionDetail>
+          </SessionDetailShell>
         </section>
       </section>
 
       {selectedSession ? (
         <aside className="panel-shell fixed inset-3 z-50 flex min-h-0 flex-col md:hidden">
-          <SessionDetail
+          <SessionDetailShell
             agentId={agentId}
             scope={scope}
             session={selectedSession}
             history={history}
+            messages={detailMessages}
             busyAction={busyAction}
             status={status}
             onArchive={handleArchiveSession}
@@ -984,7 +1064,7 @@ function SessionsPageContent() {
             onClose={() => navigateWithUpdates({ session: undefined })}
           >
             {detailContent}
-          </SessionDetail>
+          </SessionDetailShell>
         </aside>
       ) : null}
     </main>

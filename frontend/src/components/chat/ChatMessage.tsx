@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 
 import { ChatDebugEvent, ChatToolCall, RetrievalItem } from "@/lib/store";
 import { Badge } from "@/components/ui/primitives";
+import { debugBadgeTone } from "@/lib/badge-tones";
 
 const RetrievalCard = dynamic(
   () => import("./RetrievalCard").then((mod) => mod.RetrievalCard),
@@ -28,6 +29,8 @@ type Props = {
   content: string;
   timestampMs: number | null;
   toolCalls: ChatToolCall[];
+  selectedSkills: string[];
+  skillUses: string[];
   retrievals: RetrievalItem[];
   debugEvents: ChatDebugEvent[];
 };
@@ -160,17 +163,22 @@ function ChatMessageComponent({
   content,
   timestampMs,
   toolCalls,
+  selectedSkills,
+  skillUses,
   retrievals,
   debugEvents,
 }: Props) {
   const timestampLabel = formatTimestamp(timestampMs);
+  const uniqueTools = [...new Set(toolCalls.map((call) => call.tool).filter(Boolean))];
+  const uniqueSelectedSkills = [...new Set(selectedSkills.filter(Boolean))];
+  const uniqueSkills = [...new Set(skillUses.filter(Boolean))];
 
   return (
     <article
       className={`mb-3 rounded-md border p-3 text-sm sm:p-4 ${
         role === "user"
-          ? "ml-8 border-[var(--accent-strong)] bg-[var(--accent-soft)]"
-          : "mr-8 border-[var(--border)] bg-[var(--surface-3)]"
+          ? "ml-4 border-[var(--accent-strong)] bg-[var(--accent-soft)] md:ml-6"
+          : "mr-4 border-[var(--border)] bg-[var(--surface-3)] md:mr-6"
       }`}
     >
       <div className="mb-2 flex items-center gap-2">
@@ -194,6 +202,42 @@ function ChatMessageComponent({
           <div className="whitespace-pre-wrap">{content}</div>
         )}
       </div>
+      {uniqueTools.length > 0 ||
+      uniqueSelectedSkills.length > 0 ||
+      uniqueSkills.length > 0 ? (
+        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
+          <div className="ui-label">Debug Summary</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {uniqueTools.map((tool) => (
+              <Badge
+                key={`tool-${tool}`}
+                tone={debugBadgeTone("tool")}
+                className="ui-mono"
+              >
+                tool:{tool}
+              </Badge>
+            ))}
+            {uniqueSelectedSkills.map((skill) => (
+              <Badge
+                key={`skill-selected-${skill}`}
+                tone={debugBadgeTone("skill_selected")}
+                className="ui-mono"
+              >
+                selected:{skill}
+              </Badge>
+            ))}
+            {uniqueSkills.map((skill) => (
+              <Badge
+                key={`skill-${skill}`}
+                tone={debugBadgeTone("skill_used")}
+                className="ui-mono"
+              >
+                used:{skill}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {retrievals.length > 0 ? <RetrievalCard retrievals={retrievals} /> : null}
       {toolCalls.length > 0 ? <ThoughtChain calls={toolCalls} /> : null}
       {role === "assistant" && debugEvents.length > 0 ? (

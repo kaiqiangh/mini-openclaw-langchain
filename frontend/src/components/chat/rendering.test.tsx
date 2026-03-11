@@ -62,6 +62,8 @@ describe("chat rendering components", () => {
         content={markdown}
         timestampMs={Date.UTC(2026, 2, 5, 12, 34, 56)}
         toolCalls={[]}
+        selectedSkills={["weather_helper"]}
+        skillUses={["get_weather"]}
         retrievals={[]}
         debugEvents={[]}
       />,
@@ -72,6 +74,8 @@ describe("chat rendering components", () => {
     expect(link).toHaveAttribute("href", "https://example.com");
     expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
     expect(screen.getByText(/2026/)).toBeInTheDocument();
+    expect(screen.getByText("selected:weather_helper")).toBeInTheDocument();
+    expect(screen.getByText("used:get_weather")).toBeInTheDocument();
     expect(container.querySelector("script")).toBeNull();
   });
 });

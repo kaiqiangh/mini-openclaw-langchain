@@ -9,9 +9,11 @@ const mockStore = vi.hoisted(() => ({
     role: "user" | "assistant";
     content: string;
     timestampMs: number | null;
-    toolCalls: [];
-    retrievals: [];
-    debugEvents: [];
+    toolCalls: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    selectedSkills: string[];
+    skillUses: string[];
+    retrievals: Array<unknown>;
+    debugEvents: Array<unknown>;
   }>,
   error: null as string | null,
   isStreaming: false,
@@ -62,6 +64,8 @@ describe("ChatPanel", () => {
         content: "first",
         timestampMs: 0,
         toolCalls: [],
+        selectedSkills: ["weather_helper"],
+        skillUses: ["get_weather"],
         retrievals: [],
         debugEvents: [],
       },
@@ -95,6 +99,8 @@ describe("ChatPanel", () => {
         content: "second",
         timestampMs: 1,
         toolCalls: [],
+        selectedSkills: [],
+        skillUses: [],
         retrievals: [],
         debugEvents: [],
       },
@@ -136,6 +142,8 @@ describe("ChatPanel", () => {
         content: "second",
         timestampMs: 1,
         toolCalls: [],
+        selectedSkills: [],
+        skillUses: [],
         retrievals: [],
         debugEvents: [],
       },
@@ -152,5 +160,30 @@ describe("ChatPanel", () => {
     expect(
       screen.queryByRole("button", { name: "Jump to latest" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows session tool and skill summary badges", () => {
+    mockStore.messages = [
+      {
+        id: "m1",
+        role: "assistant",
+        content: "first",
+        timestampMs: 0,
+        toolCalls: [{ tool: "read_files" }],
+        selectedSkills: ["weather_helper"],
+        skillUses: ["get_weather"],
+        retrievals: [],
+        debugEvents: [],
+      },
+    ];
+
+    render(<ChatPanel />);
+
+    expect(screen.getByText("Tools Used")).toBeInTheDocument();
+    expect(screen.getByText("Skills Selected")).toBeInTheDocument();
+    expect(screen.getByText("Skills Used")).toBeInTheDocument();
+    expect(screen.getByText("read_files (1)")).toBeInTheDocument();
+    expect(screen.getByText("weather_helper (1)")).toBeInTheDocument();
+    expect(screen.getByText("get_weather (1)")).toBeInTheDocument();
   });
 });

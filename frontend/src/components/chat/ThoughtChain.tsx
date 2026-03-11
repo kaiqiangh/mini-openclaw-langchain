@@ -18,7 +18,7 @@ export function ThoughtChain({ calls }: Props) {
             className="rounded border border-[var(--border)] bg-[var(--surface-2)] p-2"
           >
             <div className="flex items-center gap-2">
-              <Badge tone="accent">{call.tool}</Badge>
+              <Badge tone="neutral">{call.tool}</Badge>
             </div>
             <div className="ui-mono mt-1 break-all text-[var(--muted)]">
               input: {JSON.stringify(call.input ?? {}, null, 0)}

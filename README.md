@@ -52,7 +52,7 @@ Security-conscious defaults across all tools:
 
 - **`fetch_url`**: allowed schemes (`http`/`https`), private/loopback blocking, redirect and content-size caps.
 - **`terminal`**: sanitized environment with secret-like vars stripped plus sandbox-aware command policy modes.
-- **`web_search`**: policy-gated autonomous triggers for cron/heartbeat contexts.
+- **`web_search`**: policy-gated autonomous triggers for cron/heartbeat contexts plus repeated-search churn guards inside a single run.
 
 ### 🧰 Rich Tool Surface
 
@@ -85,7 +85,7 @@ The root workspace page gives operators a split-pane console for agent lifecycle
 
 ### Sessions Hub
 
-The sessions page is the message inbox for active and archived work, with transcript review and resume flows built into the operator UI.
+The sessions page is the message inbox for active and archived work, with transcript review, resume flows, and per-session debug summaries for tools used, skills selected, and skills actually used.
 
 ![Sessions hub](assets/sessions-page.png)
 
@@ -321,6 +321,7 @@ PUT              /api/v1/agents/{agent_id}/tools/selection
 ### Sessions and Chat
 
 Conversation execution, session lifecycle, transcript history, compression, and title generation.
+Session history responses also surface assistant debug metadata such as tool calls and tracked skill usage for operator-facing inspection.
 
 ```text
 POST             /api/v1/agents/{agent_id}/chat

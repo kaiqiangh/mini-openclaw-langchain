@@ -208,6 +208,8 @@ Behavior notes:
 - LLM routing is agent-scoped and resolved at runtime from config precedence.
 - Provider credentials are validated lazily when a selected agent actually needs them.
 - Skills are workspace-local once an agent exists; snapshots are regenerated from local `skills/`.
+- Each chat run now performs a deterministic skill-selection pass before model execution.
+- Selected skills are advisory only, but they are injected into the system prompt and tracked separately from actual skill usage.
 - Scheduler workers are started per agent rather than only for the default workspace.
 
 ## Runtime Config Matrix
@@ -303,6 +305,8 @@ Effective route resolution uses this order:
 - `GET /api/v1/agents/templates/{template_name}`
 - `GET /api/v1/agents/{agent_id}/runtime-diff`
 - `GET /api/v1/agents/{agent_id}/tools`
+- Session history/message payloads may include assistant-side debug metadata such as
+  `tool_calls`, `selected_skills`, and `skill_uses` for operator inspection in the sessions UI.
 - `PUT /api/v1/agents/{agent_id}/tools/selection`
 
 `GET /api/v1/agents` includes per-agent `llm_status` with route validity, runnability,

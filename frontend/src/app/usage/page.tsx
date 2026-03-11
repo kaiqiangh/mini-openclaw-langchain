@@ -546,7 +546,7 @@ export default function UsagePage() {
                   {loading ? (
                     <Badge tone="accent">Loading…</Badge>
                   ) : (
-                    <Badge tone="neutral">Loaded</Badge>
+                    <Badge tone="success">Loaded</Badge>
                   )}
                   {error ? (
                     <span className="truncate text-sm text-[var(--danger)]">

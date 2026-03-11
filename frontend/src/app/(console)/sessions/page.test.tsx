@@ -33,9 +33,11 @@ const storeState = vi.hoisted(() => ({
     role: "user" | "assistant";
     content: string;
     timestampMs: number | null;
-    toolCalls: [];
-    retrievals: [];
-    debugEvents: [];
+    toolCalls: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    selectedSkills: string[];
+    skillUses: string[];
+    retrievals: Array<unknown>;
+    debugEvents: Array<unknown>;
   }>,
   isStreaming: false,
   error: null as string | null,
@@ -108,6 +110,7 @@ const {
           content: `history:${agentId}:${archived ? "archived" : "active"}:${sessionId}`,
           timestamp_ms: 1_700_000_000_000,
           tool_calls: [],
+          skill_uses: ["history_skill"],
         },
       ],
     }),
@@ -170,7 +173,9 @@ const {
         role: "assistant",
         content: `live:${sessionId}`,
         timestampMs: 1_710_000_000_000,
-        toolCalls: [],
+        toolCalls: [{ tool: "read_files" }],
+        selectedSkills: ["weather_helper"],
+        skillUses: ["get_weather"],
         retrievals: [],
         debugEvents: [],
       },
@@ -344,6 +349,8 @@ describe("SessionsPage", () => {
 
     await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith("s-2"));
     expect(screen.getAllByText("live:s-2").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("read_files (1)").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("get_weather (1)").length).toBeGreaterThan(0);
   });
 
   it("archives and deletes sessions through the detail actions", async () => {

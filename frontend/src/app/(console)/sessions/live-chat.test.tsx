@@ -22,9 +22,11 @@ const storeState = vi.hoisted(() => ({
     role: "user" | "assistant";
     content: string;
     timestampMs: number | null;
-    toolCalls: [];
-    retrievals: [];
-    debugEvents: [];
+    toolCalls: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    selectedSkills: string[];
+    skillUses: string[];
+    retrievals: Array<unknown>;
+    debugEvents: Array<unknown>;
   }>,
   isStreaming: false,
   error: null as string | null,
@@ -74,6 +76,8 @@ const {
         content,
         timestampMs: 1_710_000_000_000,
         toolCalls: [],
+        selectedSkills: [],
+        skillUses: [],
         retrievals: [],
         debugEvents: [],
       },
@@ -82,7 +86,9 @@ const {
         role: "assistant",
         content: `echo:${content}`,
         timestampMs: 1_710_000_000_100,
-        toolCalls: [],
+        toolCalls: [{ tool: "read_files" }],
+        selectedSkills: ["weather_helper"],
+        skillUses: ["get_weather"],
         retrievals: [],
         debugEvents: [],
       },
@@ -98,7 +104,9 @@ const {
         role: "assistant",
         content: "Live session ready",
         timestampMs: 1_710_000_000_000,
-        toolCalls: [],
+        toolCalls: [{ tool: "read_files" }],
+        selectedSkills: ["weather_helper"],
+        skillUses: ["get_weather"],
         retrievals: [],
         debugEvents: [],
       },
