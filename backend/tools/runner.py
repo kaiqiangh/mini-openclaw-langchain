@@ -87,8 +87,17 @@ class ToolRunner:
         host = (parsed.hostname or "").lower().strip(".")
         if not host:
             return raw_url.strip()
+        try:
+            port = parsed.port
+        except ValueError:
+            return raw_url.strip()
+        host_token = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        default_port = 80 if scheme == "http" else 443 if scheme == "https" else None
+        netloc = host_token
+        if port is not None and port != default_port:
+            netloc = f"{host_token}:{port}"
         path = parsed.path or "/"
-        return urlunparse((scheme, host, path, "", "", ""))
+        return urlunparse((scheme, netloc, path, "", "", ""))
 
     @staticmethod
     def _jaccard_similarity(left: frozenset[str], right: frozenset[str]) -> float:

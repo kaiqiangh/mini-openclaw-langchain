@@ -201,3 +201,26 @@ def test_tool_runner_blocks_repeated_fetch_url_calls(tmp_path: Path):
     assert second.error is not None
     assert second.error.code == "E_POLICY_DENIED"
     assert "same page" in second.error.message.lower()
+
+
+def test_tool_runner_allows_fetch_url_calls_to_different_ports(tmp_path: Path):
+    runner = ToolRunner(
+        policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl"
+    )
+    context = ToolContext(
+        workspace_root=tmp_path,
+        trigger_type="chat",
+        run_id="run-search-4",
+        session_id="session-search-4",
+    )
+    tool = _SearchTool(name="fetch_url")
+
+    first = runner.run_tool(
+        tool, args={"url": "https://example.com:8443/path?x=1"}, context=context
+    )
+    second = runner.run_tool(
+        tool, args={"url": "https://example.com:9443/path?x=2"}, context=context
+    )
+
+    assert first.ok is True
+    assert second.ok is True
