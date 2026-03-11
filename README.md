@@ -51,7 +51,7 @@ Hybrid semantic + lexical retrieval powered by SQLite FTS5 prefiltering. Automat
 Security-conscious defaults across all tools:
 
 - **`fetch_url`**: allowed schemes (`http`/`https`), private/loopback blocking, redirect and content-size caps.
-- **`terminal`**: sanitized environment with secret-like vars stripped.
+- **`terminal`**: sanitized environment with secret-like vars stripped plus sandbox-aware command policy modes.
 - **`web_search`**: policy-gated autonomous triggers for cron/heartbeat contexts.
 
 ### 🧰 Rich Tool Surface
