@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.skills_scanner import SkillMeta, scan_skills
+from tools.skills_scanner import scan_skills
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}")
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
@@ -132,7 +132,8 @@ class SkillSelector:
         entries: list[str] = []
         for path in sorted(skills_dir.glob("*/SKILL.md")):
             try:
-                entries.append(f"{path.name}:{path.stat().st_mtime_ns}")
+                relative_path = path.relative_to(base_dir).as_posix()
+                entries.append(f"{relative_path}:{path.stat().st_mtime_ns}")
             except FileNotFoundError:
                 continue
         return "|".join(entries)

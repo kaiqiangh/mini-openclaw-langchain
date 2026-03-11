@@ -104,3 +104,34 @@ def test_skill_selector_prioritizes_explicitly_named_skills(tmp_path: Path):
     assert selected
     assert selected[0].name == "crypto-market-rank"
     assert "explicitly named" in selected[0].reason
+
+
+def test_skill_selector_refreshes_cache_when_skill_folder_moves(tmp_path: Path):
+    _write_skill(
+        tmp_path,
+        "meme-rush",
+        "Meme token discovery for BSC and launchpads, including trending meme narratives.",
+        "# Meme Rush\nUse for BSC meme tokens, launchpads, and fast meme trading.",
+    )
+
+    selector = SkillSelector()
+    first = selector.select(
+        base_dir=tmp_path,
+        message="which meme token is trending on BSC?",
+        history=[],
+    )
+    assert first
+    assert first[0].location == "./skills/meme-rush/SKILL.md"
+
+    source_dir = tmp_path / "skills" / "meme-rush"
+    renamed_dir = tmp_path / "skills" / "meme-rush-v2"
+    source_dir.rename(renamed_dir)
+
+    second = selector.select(
+        base_dir=tmp_path,
+        message="which meme token is trending on BSC?",
+        history=[],
+    )
+
+    assert second
+    assert second[0].location == "./skills/meme-rush-v2/SKILL.md"
