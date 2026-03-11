@@ -222,7 +222,7 @@ Behavior notes:
 | `runtime.tool_network.max_redirects`          | Redirect safety cap.                         |
 | `runtime.tool_network.max_content_bytes`      | Maximum fetched response size.               |
 | `runtime.chat_enabled_tools`                  | Explicit chat-trigger high-risk tools.       |
-| `runtime.tool_execution.terminal.*`           | Terminal sandbox, allowlist, and limits.     |
+| `runtime.tool_execution.terminal.*`           | Terminal sandbox, command policy, and limits. |
 | `runtime.scheduler.api_enabled`               | Enable/disable scheduler API routes.         |
 | `runtime.scheduler.runs_query_default_limit`  | Default limit for runs/failures queries.     |
 | `runtime.heartbeat.*`                         | Heartbeat schedule + execution window.       |
@@ -348,7 +348,8 @@ resolved default profile, fallback profiles, warnings, and errors.
 
 - Workspace path escape prevention in file tools/endpoints.
 - URL fetch restrictions (scheme, host policy, content bounds, redirect cap).
-- Terminal command allowlist + process sandbox backend + environment secret scrubbing.
+- Terminal command policy modes (`auto`, `allowlist`, `denylist`) + process sandbox backend + environment secret scrubbing.
+  Explicit `allowed_command_prefixes` entries keep legacy allowlist behavior, even when the list is empty.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)

@@ -22,8 +22,10 @@ class TerminalTool:
     max_timeout_seconds: int = 300
     output_char_limit: int = 5000
     sandbox_mode: str = "hybrid_auto"
+    command_policy_mode: str = "auto"
     require_sandbox: bool = True
     allowed_command_prefixes: tuple[str, ...] = ()
+    denied_command_prefixes: tuple[str, ...] = ()
     allow_network: bool = False
     allow_shell_syntax: bool = False
     max_args: int = 32
@@ -35,11 +37,65 @@ class TerminalTool:
         "reboot",
         ":(){ :|:& };:",
     )
+    builtin_denied_command_prefixes: tuple[str, ...] = (
+        "rm",
+        "mkfs",
+        "dd",
+        "shutdown",
+        "reboot",
+        "halt",
+        "poweroff",
+        "systemctl",
+        "launchctl",
+        "sudo",
+        "su",
+        "doas",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "dash",
+        "python -c",
+        "python3 -c",
+        "python -m pip",
+        "python3 -m pip",
+        "node -e",
+        "node --eval",
+        "perl -e",
+        "ruby -e",
+        "php -r",
+        "osascript -e",
+        "apt",
+        "apt-get",
+        "yum",
+        "dnf",
+        "brew",
+        "pip install",
+        "pip3 install",
+        "npm install",
+        "npm exec",
+        "npx",
+    )
+    network_denied_command_prefixes: tuple[str, ...] = (
+        "curl",
+        "wget",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "ssh",
+        "scp",
+        "rsync",
+        "ftp",
+        "telnet",
+        "git clone",
+        "git fetch",
+        "git pull",
+        "git push",
+    )
 
     name: str = "terminal"
-    description: str = (
-        "Execute allowlisted commands in a constrained process sandbox"
-    )
+    description: str = "Execute terminal commands under sandbox and policy controls"
     permission_level: PermissionLevel = PermissionLevel.L3_SYSTEM
 
     @staticmethod
@@ -88,29 +144,68 @@ class TerminalTool:
         return any(token in forbidden_operators for token in lexer)
 
     @staticmethod
-    def _normalize_prefix_tokens(prefixes: tuple[str, ...]) -> list[list[str]]:
-        normalized: list[list[str]] = []
+    def _normalize_prefix_tokens(
+        prefixes: tuple[str, ...],
+    ) -> list[tuple[str, list[str]]]:
+        normalized: list[tuple[str, list[str]]] = []
         for prefix in prefixes:
+            raw_prefix = str(prefix).strip()
             try:
-                tokens = shlex.split(str(prefix))
+                tokens = shlex.split(raw_prefix)
             except ValueError:
                 continue
             if tokens:
-                normalized.append(tokens)
+                normalized.append((raw_prefix, [token.lower() for token in tokens]))
         return normalized
 
     @staticmethod
-    def _matches_allowlist(
-        argv: list[str], allowed_prefixes: list[list[str]]
-    ) -> bool:
-        if not allowed_prefixes:
-            return False
-        for prefix in allowed_prefixes:
+    def _match_prefix(
+        argv: list[str], prefixes: list[tuple[str, list[str]]]
+    ) -> str | None:
+        lowered_argv = [part.lower() for part in argv]
+        for raw_prefix, prefix in prefixes:
             if len(argv) < len(prefix):
                 continue
-            if argv[: len(prefix)] == prefix:
-                return True
-        return False
+            if lowered_argv[: len(prefix)] == prefix:
+                return raw_prefix
+        return None
+
+    @staticmethod
+    def _normalize_policy_mode(value: str) -> str:
+        normalized = str(value).strip().lower() or "auto"
+        if normalized in {"allowlist", "denylist"}:
+            return normalized
+        return "auto"
+
+    def _effective_policy_mode(self, sandbox_backend_id: str) -> str:
+        mode = self._normalize_policy_mode(self.command_policy_mode)
+        if mode != "auto":
+            return mode
+        if sandbox_backend_id == "unsafe_none":
+            return "allowlist"
+        return "denylist"
+
+    def _policy_failure(
+        self,
+        *,
+        started: float,
+        message: str,
+        command: str,
+        effective_policy_mode: str | None = None,
+        matched_policy_rule: str | None = None,
+    ) -> ToolResult:
+        details: dict[str, Any] = {"command": command}
+        if effective_policy_mode is not None:
+            details["effective_policy_mode"] = effective_policy_mode
+        if matched_policy_rule is not None:
+            details["matched_policy_rule"] = matched_policy_rule
+        return ToolResult.failure(
+            tool_name=self.name,
+            code="E_POLICY_DENIED",
+            message=message,
+            duration_ms=int((time.monotonic() - started) * 1000),
+            details=details,
+        )
 
     @staticmethod
     def _kill_process_group(process: subprocess.Popen[str]) -> None:
@@ -125,6 +220,9 @@ class TerminalTool:
     def audit_metadata(self) -> dict[str, Any]:
         return {
             "sandbox_mode": self.sandbox_mode,
+            "command_policy_mode": self._normalize_policy_mode(
+                self.command_policy_mode
+            ),
             "require_sandbox": self.require_sandbox,
             "allow_network": self.allow_network,
             "allow_shell_syntax": self.allow_shell_syntax,
@@ -144,21 +242,17 @@ class TerminalTool:
 
         lowered = raw_command.lower()
         if any(fragment in lowered for fragment in self.deny_fragments):
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_POLICY_DENIED",
+            return self._policy_failure(
+                started=started,
                 message="Command contains denied fragment",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                details={"command": raw_command},
+                command=raw_command,
             )
 
         if not self.allow_shell_syntax and self._contains_shell_syntax(raw_command):
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_POLICY_DENIED",
+            return self._policy_failure(
+                started=started,
                 message="Shell syntax is not allowed for terminal commands",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                details={"command": raw_command},
+                command=raw_command,
             )
 
         try:
@@ -193,16 +287,6 @@ class TerminalTool:
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        allowed_prefixes = self._normalize_prefix_tokens(self.allowed_command_prefixes)
-        if not self._matches_allowlist(argv, allowed_prefixes):
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_POLICY_DENIED",
-                message="Command is not allowlisted",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                details={"command": raw_command},
-            )
-
         requested_timeout = args.get("timeout")
         effective_timeout = self.timeout_seconds
         if requested_timeout is not None:
@@ -231,6 +315,60 @@ class TerminalTool:
                 message=str(exc),
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
+
+        effective_policy_mode = self._effective_policy_mode(sandbox.backend_id)
+        built_in_denied_prefixes = self._normalize_prefix_tokens(
+            self.builtin_denied_command_prefixes
+        )
+        matched_prefix = self._match_prefix(argv, built_in_denied_prefixes)
+        if matched_prefix is not None:
+            return self._policy_failure(
+                started=started,
+                message="Command prefix is denied by terminal policy",
+                command=raw_command,
+                effective_policy_mode=effective_policy_mode,
+                matched_policy_rule=matched_prefix,
+            )
+
+        custom_denied_prefixes = self._normalize_prefix_tokens(
+            self.denied_command_prefixes
+        )
+        matched_prefix = self._match_prefix(argv, custom_denied_prefixes)
+        if matched_prefix is not None:
+            return self._policy_failure(
+                started=started,
+                message="Command prefix is denied by runtime configuration",
+                command=raw_command,
+                effective_policy_mode=effective_policy_mode,
+                matched_policy_rule=matched_prefix,
+            )
+
+        if not self.allow_network:
+            network_denied_prefixes = self._normalize_prefix_tokens(
+                self.network_denied_command_prefixes
+            )
+            matched_prefix = self._match_prefix(argv, network_denied_prefixes)
+            if matched_prefix is not None:
+                return self._policy_failure(
+                    started=started,
+                    message="Network-capable command is denied when terminal network access is disabled",
+                    command=raw_command,
+                    effective_policy_mode=effective_policy_mode,
+                    matched_policy_rule=matched_prefix,
+                )
+
+        if effective_policy_mode == "allowlist":
+            allowed_prefixes = self._normalize_prefix_tokens(
+                self.allowed_command_prefixes
+            )
+            matched_prefix = self._match_prefix(argv, allowed_prefixes)
+            if matched_prefix is None:
+                return self._policy_failure(
+                    started=started,
+                    message="Command is not allowlisted",
+                    command=raw_command,
+                    effective_policy_mode=effective_policy_mode,
+                )
 
         command = sandbox.wrap_command(argv)
         try:
@@ -311,6 +449,7 @@ class TerminalTool:
                 "timeout_seconds": effective_timeout,
                 "sandbox_backend": sandbox.backend_id,
                 "sandbox_mode": sandbox.mode,
+                "effective_policy_mode": effective_policy_mode,
             },
             duration_ms=int((time.monotonic() - started) * 1000),
             truncated=truncated,

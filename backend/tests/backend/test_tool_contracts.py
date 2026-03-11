@@ -21,6 +21,9 @@ def test_toolresult_success_and_failure_shapes():
 
 
 def test_terminal_timeout_contract(tmp_path):
+    script_path = tmp_path / "sleep.py"
+    script_path.write_text("import time\ntime.sleep(2)\n", encoding="utf-8")
+
     tool = TerminalTool(
         root_dir=tmp_path,
         timeout_seconds=1,
@@ -29,7 +32,10 @@ def test_terminal_timeout_contract(tmp_path):
         require_sandbox=False,
         allowed_command_prefixes=("python3",),
     )
-    result = tool.run({"command": 'python3 -c "import time; time.sleep(2)"'}, context=None)  # type: ignore[arg-type]
+    result = tool.run(
+        {"command": f"python3 {script_path.name}"},
+        context=None,  # type: ignore[arg-type]
+    )
 
     assert result.ok is False
     assert result.error is not None
