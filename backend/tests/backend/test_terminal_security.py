@@ -87,8 +87,6 @@ def test_terminal_allows_safe_command_in_denylist_mode(tmp_path: Path):
 def test_terminal_auto_mode_uses_allowlist_without_sandbox(
     monkeypatch, tmp_path: Path
 ):
-    import tools.terminal_tool as terminal_module
-
     class _UnsafeSandbox:
         backend_id = "unsafe_none"
         mode = "hybrid_auto"
@@ -98,7 +96,8 @@ def test_terminal_auto_mode_uses_allowlist_without_sandbox(
             return argv
 
     monkeypatch.setattr(
-        terminal_module, "resolve_sandbox", lambda **kwargs: _UnsafeSandbox()
+        "tools.terminal_tool.resolve_sandbox",
+        lambda **kwargs: _UnsafeSandbox(),
     )
 
     tool = TerminalTool(
@@ -119,8 +118,6 @@ def test_terminal_auto_mode_uses_allowlist_without_sandbox(
 def test_terminal_auto_mode_uses_denylist_with_active_sandbox(
     monkeypatch, tmp_path: Path
 ):
-    import tools.terminal_tool as terminal_module
-
     class _Sandboxed:
         backend_id = "linux_bwrap"
         mode = "hybrid_auto"
@@ -129,7 +126,10 @@ def test_terminal_auto_mode_uses_denylist_with_active_sandbox(
         def wrap_command(argv: list[str]) -> list[str]:
             return argv
 
-    monkeypatch.setattr(terminal_module, "resolve_sandbox", lambda **kwargs: _Sandboxed())
+    monkeypatch.setattr(
+        "tools.terminal_tool.resolve_sandbox",
+        lambda **kwargs: _Sandboxed(),
+    )
 
     tool = TerminalTool(
         root_dir=tmp_path,
@@ -179,14 +179,13 @@ def test_terminal_blocks_network_command_when_network_disabled(tmp_path: Path):
 
 
 def test_terminal_fails_closed_when_sandbox_unavailable(monkeypatch, tmp_path: Path):
-    import tools.terminal_tool as terminal_module
     from tools.sandbox import SandboxUnavailableError
 
     def _raise_unavailable(**kwargs):  # type: ignore[no-untyped-def]
         _ = kwargs
         raise SandboxUnavailableError("sandbox backend unavailable")
 
-    monkeypatch.setattr(terminal_module, "resolve_sandbox", _raise_unavailable)
+    monkeypatch.setattr("tools.terminal_tool.resolve_sandbox", _raise_unavailable)
 
     tool = TerminalTool(
         root_dir=tmp_path,
@@ -203,8 +202,6 @@ def test_terminal_fails_closed_when_sandbox_unavailable(monkeypatch, tmp_path: P
 
 
 def test_terminal_fails_when_sandbox_enforcement_errors(monkeypatch, tmp_path: Path):
-    import tools.terminal_tool as terminal_module
-
     class _FakeSandbox:
         backend_id = "darwin_sandbox_exec"
         mode = "hybrid_auto"
@@ -222,7 +219,10 @@ def test_terminal_fails_when_sandbox_enforcement_errors(monkeypatch, tmp_path: P
                 ),
             ]
 
-    monkeypatch.setattr(terminal_module, "resolve_sandbox", lambda **kwargs: _FakeSandbox())
+    monkeypatch.setattr(
+        "tools.terminal_tool.resolve_sandbox",
+        lambda **kwargs: _FakeSandbox(),
+    )
 
     tool = TerminalTool(
         root_dir=tmp_path,
