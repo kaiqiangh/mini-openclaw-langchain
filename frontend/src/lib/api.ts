@@ -108,6 +108,8 @@ export type ChatHistoryResponse = {
     content: string;
     timestamp_ms?: number;
     tool_calls?: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    selected_skills?: string[];
+    skill_uses?: string[];
     streaming?: boolean;
     run_id?: string;
   }>;

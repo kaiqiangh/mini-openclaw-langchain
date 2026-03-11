@@ -61,6 +61,8 @@ export type ChatMessage = {
   content: string;
   timestampMs: number | null;
   toolCalls: ChatToolCall[];
+  selectedSkills: string[];
+  skillUses: string[];
   retrievals: RetrievalItem[];
   debugEvents: ChatDebugEvent[];
 };
@@ -147,6 +149,8 @@ function mapHistoryMessage(
     content: string;
     timestamp_ms?: number;
     tool_calls?: Array<{ tool: string; input?: unknown; output?: unknown }>;
+    selected_skills?: string[];
+    skill_uses?: string[];
     streaming?: boolean;
     run_id?: string;
   },
@@ -158,6 +162,8 @@ function mapHistoryMessage(
     content: msg.content,
     timestampMs: normalizeTimestampMs(msg.timestamp_ms),
     toolCalls: msg.tool_calls ?? [],
+    selectedSkills: msg.selected_skills ?? [],
+    skillUses: msg.skill_uses ?? [],
     retrievals: [],
     debugEvents: [],
   };
@@ -178,9 +184,28 @@ function createAssistantMessage(
     content: "",
     timestampMs,
     toolCalls: [],
+    selectedSkills: [],
+    skillUses: [],
     retrievals: [],
     debugEvents: [],
   };
+}
+
+function mergeUniqueStrings(existing: string[], additions: unknown): string[] {
+  if (!Array.isArray(additions) || additions.length === 0) {
+    return existing;
+  }
+  const seen = new Set(existing);
+  const next = [...existing];
+  for (const item of additions) {
+    const normalized = String(item ?? "").trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    next.push(normalized);
+    seen.add(normalized);
+  }
+  return next;
 }
 
 function appendDebugEvent(
@@ -671,6 +696,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             content: trimmed,
             timestampMs: Date.now(),
             toolCalls: [],
+            selectedSkills: [],
+            skillUses: [],
             retrievals: [],
             debugEvents: [],
           };
@@ -688,6 +715,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             const hasContent =
               Boolean(last.content.trim()) ||
               last.toolCalls.length > 0 ||
+              last.selectedSkills.length > 0 ||
               last.retrievals.length > 0 ||
               last.debugEvents.length > 0;
             if (hasContent) {
@@ -743,7 +771,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
               if (event === "tool_start") {
                 const payload =
-                  (parsed as { tool?: string; input?: unknown }) ?? {};
+                  (parsed as {
+                    tool?: string;
+                    input?: unknown;
+                    skill_uses?: string[];
+                  }) ?? {};
                 next[idx] = appendDebugEvent(
                   {
                     ...active,
@@ -751,6 +783,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                       ...active.toolCalls,
                       { tool: payload.tool ?? "tool", input: payload.input },
                     ],
+                    skillUses: mergeUniqueStrings(
+                      active.skillUses,
+                      payload.skill_uses,
+                    ),
                   },
                   "tool_start",
                   payload,
@@ -758,9 +794,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 return next;
               }
 
+              if (event === "selected_skills") {
+                const payload =
+                  (parsed as {
+                    skills?: Array<{ name?: string } | string>;
+                  }) ?? {};
+                const selectedSkills = mergeUniqueStrings(
+                  active.selectedSkills,
+                  Array.isArray(payload.skills)
+                    ? payload.skills.map((item) =>
+                        typeof item === "string" ? item : item?.name ?? "",
+                      )
+                    : [],
+                );
+                next[idx] = appendDebugEvent(
+                  {
+                    ...active,
+                    selectedSkills,
+                  },
+                  "selected_skills",
+                  payload,
+                );
+                return next;
+              }
+
               if (event === "tool_end") {
                 const payload =
-                  (parsed as { output?: unknown; tool?: string }) ?? {};
+                  (parsed as {
+                    output?: unknown;
+                    tool?: string;
+                    skill_uses?: string[];
+                  }) ?? {};
                 const toolCalls = [...active.toolCalls];
                 if (toolCalls.length > 0) {
                   toolCalls[toolCalls.length - 1] = {
@@ -769,7 +833,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                   };
                 }
                 next[idx] = appendDebugEvent(
-                  { ...active, toolCalls },
+                  {
+                    ...active,
+                    toolCalls,
+                    skillUses: mergeUniqueStrings(
+                      active.skillUses,
+                      payload.skill_uses,
+                    ),
+                  },
                   "tool_end",
                   payload,
                 );
@@ -790,6 +861,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 const hasContent =
                   Boolean(active.content.trim()) ||
                   active.toolCalls.length > 0 ||
+                  active.selectedSkills.length > 0 ||
                   active.retrievals.length > 0 ||
                   active.debugEvents.length > 0;
                 if (hasContent) {

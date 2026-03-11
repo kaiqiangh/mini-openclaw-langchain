@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAppStore } from "@/lib/store";
 import { Badge, Button, EmptyState } from "@/components/ui/primitives";
+import { activityTone } from "@/lib/badge-tones";
 
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
+import { SessionUsageSummary } from "./SessionUsageSummary";
 
 const LIVE_EDGE_THRESHOLD_PX = 80;
 
@@ -47,6 +49,8 @@ export function ChatPanel() {
           content={msg.content}
           timestampMs={msg.timestampMs}
           toolCalls={msg.toolCalls}
+          selectedSkills={msg.selectedSkills}
+          skillUses={msg.skillUses}
           retrievals={msg.retrievals}
           debugEvents={msg.debugEvents}
         />
@@ -66,9 +70,9 @@ export function ChatPanel() {
         <h2 className="ui-panel-title">Agent Log</h2>
         <div className="flex items-center gap-2">
           {isStreaming ? (
-            <Badge tone="accent">Running</Badge>
+            <Badge tone={activityTone("running")}>Running</Badge>
           ) : (
-            <Badge tone="success">Ready</Badge>
+            <Badge tone={activityTone("ready")}>Ready</Badge>
           )}
           <Button
             type="button"
@@ -88,6 +92,9 @@ export function ChatPanel() {
         hidden={!expanded}
         className="flex min-h-0 flex-1 flex-col"
       >
+        <div className="border-b border-[var(--border)] px-3 py-3 sm:px-4">
+          <SessionUsageSummary messages={messages} />
+        </div>
         <div
           ref={scrollRef}
           className="ui-scroll-area mb-3 flex-1 px-3 pt-3 sm:px-4 sm:pt-4"
