@@ -36,6 +36,12 @@ class TerminalSandboxMode(str, Enum):
     UNSAFE_NONE = "unsafe_none"
 
 
+class TerminalCommandPolicyMode(str, Enum):
+    AUTO = "auto"
+    ALLOWLIST = "allowlist"
+    DENYLIST = "denylist"
+
+
 @dataclass
 class ToolTimeouts:
     terminal_seconds: int = 30
@@ -150,8 +156,10 @@ class ToolNetworkConfig:
 @dataclass
 class TerminalExecutionConfig:
     sandbox_mode: TerminalSandboxMode = TerminalSandboxMode.HYBRID_AUTO
+    command_policy_mode: TerminalCommandPolicyMode = TerminalCommandPolicyMode.AUTO
     require_sandbox: bool = True
     allowed_command_prefixes: list[str] = field(default_factory=list)
+    denied_command_prefixes: list[str] = field(default_factory=list)
     allow_network: bool = False
     allow_shell_syntax: bool = False
     max_args: int = 32
@@ -523,6 +531,15 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         if isinstance(sandbox_mode, TerminalSandboxMode)
         else (str(sandbox_mode).strip() or TerminalSandboxMode.HYBRID_AUTO.value)
     )
+    command_policy_mode = runtime.tool_execution.terminal.command_policy_mode
+    command_policy_mode_value = (
+        command_policy_mode.value
+        if isinstance(command_policy_mode, TerminalCommandPolicyMode)
+        else (
+            str(command_policy_mode).strip()
+            or TerminalCommandPolicyMode.AUTO.value
+        )
+    )
     payload = {
         "rag_mode": runtime.rag_mode,
         "injection_mode": runtime.injection_mode.value,
@@ -579,9 +596,13 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
         "tool_execution": {
             "terminal": {
                 "sandbox_mode": sandbox_mode_value,
+                "command_policy_mode": command_policy_mode_value,
                 "require_sandbox": runtime.tool_execution.terminal.require_sandbox,
                 "allowed_command_prefixes": list(
                     runtime.tool_execution.terminal.allowed_command_prefixes
+                ),
+                "denied_command_prefixes": list(
+                    runtime.tool_execution.terminal.denied_command_prefixes
                 ),
                 "allow_network": runtime.tool_execution.terminal.allow_network,
                 "allow_shell_syntax": runtime.tool_execution.terminal.allow_shell_syntax,
@@ -678,6 +699,25 @@ def _runtime_from_payload(
         except ValueError:
             return TerminalSandboxMode.HYBRID_AUTO
 
+    def _terminal_command_policy_mode(
+        value: Any,
+        *,
+        allowed_prefixes: list[str],
+        is_explicit: bool,
+    ) -> TerminalCommandPolicyMode:
+        if is_explicit:
+            raw = (
+                str(value).strip().lower()
+                or TerminalCommandPolicyMode.AUTO.value
+            )
+            try:
+                return TerminalCommandPolicyMode(raw)
+            except ValueError:
+                return TerminalCommandPolicyMode.AUTO
+        if allowed_prefixes:
+            return TerminalCommandPolicyMode.ALLOWLIST
+        return TerminalCommandPolicyMode.AUTO
+
     if strict and isinstance(llm_runtime, dict) and "profile" in llm_runtime:
         raise ValueError(
             "llm_runtime.profile is no longer supported; use llm.default and llm.fallbacks"
@@ -763,9 +803,21 @@ def _runtime_from_payload(
                         "sandbox_mode", TerminalSandboxMode.HYBRID_AUTO.value
                     )
                 ),
+                command_policy_mode=_terminal_command_policy_mode(
+                    terminal_execution.get("command_policy_mode"),
+                    allowed_prefixes=_normalized_tool_list(
+                        terminal_execution.get("allowed_command_prefixes"),
+                        (),
+                    ),
+                    is_explicit="command_policy_mode" in terminal_execution,
+                ),
                 require_sandbox=bool(terminal_execution.get("require_sandbox", True)),
                 allowed_command_prefixes=_normalized_tool_list(
                     terminal_execution.get("allowed_command_prefixes"),
+                    (),
+                ),
+                denied_command_prefixes=_normalized_tool_list(
+                    terminal_execution.get("denied_command_prefixes"),
                     (),
                 ),
                 allow_network=bool(terminal_execution.get("allow_network", False)),
