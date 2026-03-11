@@ -43,6 +43,7 @@ Terminal templates can now select a command policy mode:
 - `auto`: use denylist mode when a real sandbox backend is active, otherwise fall back to allowlist mode
 - `allowlist`: only explicitly allowed command prefixes may run
 - `denylist`: allow most commands but block built-in dangerous prefixes, configured denied prefixes, and network-capable commands when terminal networking is disabled
+- compatibility note: if a template or runtime patch explicitly sets `allowed_command_prefixes`, the loader preserves legacy allowlist semantics even when that list is empty
 
 ## Authoring guidance
 
@@ -66,7 +67,7 @@ Avoid:
 - `safe-local`: conservative local preset with read-heavy chat tools and strict sandboxing
 - `research`: retrieval and web research preset for chat workflows
 - `terminal-safe`: sandboxed code-editing preset with explicit allowlist terminal rules
-- `terminal-sandbox`: sandbox-required terminal preset with denylist-based command policy
+- `terminal-sandbox`: sandbox-required terminal preset with denylist-based command policy and terminal networking disabled
 - `terminal-flex`: terminal preset with denylist-based policy that may fall back to unsandboxed execution
 - `scheduler-worker`: automation preset for heartbeat and cron-oriented agents
 

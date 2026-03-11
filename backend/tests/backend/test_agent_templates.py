@@ -119,6 +119,7 @@ def test_terminal_sandbox_template_uses_denylist_with_required_sandbox():
     terminal_payload = runtime_payload["tool_execution"]["terminal"]
     assert terminal_payload["command_policy_mode"] == "denylist"
     assert terminal_payload["require_sandbox"] is True
+    assert terminal_payload["allow_network"] is False
     assert terminal_payload["allowed_command_prefixes"] == []
     assert terminal_payload["denied_command_prefixes"]
 
