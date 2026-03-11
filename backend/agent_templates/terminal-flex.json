@@ -1,20 +1,15 @@
 {
-  "description": "Conservative local profile with read-heavy chat tools and strict terminal and network guardrails.",
+  "description": "Terminal profile with denylist-based policy that can fall back to unsandboxed execution if no local sandbox backend is available; use only when operator ergonomics outweigh strict containment.",
   "runtime_config": {
     "agent_runtime": {
-      "max_steps": 12,
-      "max_retries": 0
-    },
-    "tool_network": {
-      "block_private_networks": true,
-      "max_redirects": 2,
-      "max_content_bytes": 1000000
+      "max_steps": 18,
+      "max_retries": 1
     },
     "tool_execution": {
       "terminal": {
         "sandbox_mode": "hybrid_auto",
-        "command_policy_mode": "auto",
-        "require_sandbox": true,
+        "command_policy_mode": "denylist",
+        "require_sandbox": false,
         "allowed_command_prefixes": [],
         "denied_command_prefixes": [
           "git reset --hard",
@@ -37,29 +32,25 @@
           "chmod -R 777",
           "chown -R"
         ],
-        "allow_network": false,
-        "allow_shell_syntax": false,
-        "max_args": 16,
-        "max_arg_length": 160
+        "allow_network": true,
+        "allow_shell_syntax": true,
+        "max_args": 128,
+        "max_arg_length": 4096
       }
     },
     "chat_enabled_tools": [
+      "terminal",
+      "apply_patch",
       "read_files",
       "read_pdf",
-      "search_knowledge_base",
       "sessions_list",
-      "session_history"
+      "session_history",
+      "agents_list"
     ],
-    "chat_blocked_tools": [
-      "terminal",
-      "python_repl",
-      "apply_patch",
-      "web_search",
-      "fetch_url"
-    ],
+    "chat_blocked_tools": ["python_repl", "fetch_url", "web_search"],
     "scheduler": {
       "api_enabled": true,
-      "runs_query_default_limit": 120
+      "runs_query_default_limit": 100
     }
   }
 }
