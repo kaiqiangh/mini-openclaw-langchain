@@ -12,7 +12,9 @@ from .runner import ToolRunner
 
 
 class TerminalArgs(BaseModel):
-    command: str = Field(description="Allowlisted command to execute in terminal sandbox")
+    command: str = Field(
+        description="Command to execute under terminal sandbox and policy rules"
+    )
     timeout: int | None = Field(
         default=None, ge=1, le=300, description="Optional timeout in seconds"
     )
