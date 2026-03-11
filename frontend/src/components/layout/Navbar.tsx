@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { useAppStore } from "@/lib/store";
+import { activityTone } from "@/lib/badge-tones";
 import { Badge } from "@/components/ui/primitives";
 import { getTracingConfig, setTracingConfig } from "@/lib/api";
 
@@ -84,9 +85,9 @@ export function Navbar() {
               Agent: {currentAgentId}
             </Badge>
             {isStreaming ? (
-              <Badge tone="accent">Running</Badge>
+              <Badge tone={activityTone("running")}>Running</Badge>
             ) : (
-              <Badge tone="success">Idle</Badge>
+              <Badge tone={activityTone("idle")}>Idle</Badge>
             )}
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
