@@ -60,15 +60,25 @@ def _build_declared_tools(
     terminal_mode_value = (
         terminal_mode.value if hasattr(terminal_mode, "value") else str(terminal_mode)
     )
+    terminal_policy_mode = runtime.tool_execution.terminal.command_policy_mode
+    terminal_policy_mode_value = (
+        terminal_policy_mode.value
+        if hasattr(terminal_policy_mode, "value")
+        else str(terminal_policy_mode)
+    )
     return [
         TerminalTool(
             root_dir=base_dir,
             timeout_seconds=runtime.tool_timeouts.terminal_seconds,
             output_char_limit=runtime.tool_output_limits.terminal_chars,
             sandbox_mode=terminal_mode_value,
+            command_policy_mode=terminal_policy_mode_value,
             require_sandbox=runtime.tool_execution.terminal.require_sandbox,
             allowed_command_prefixes=tuple(
                 runtime.tool_execution.terminal.allowed_command_prefixes
+            ),
+            denied_command_prefixes=tuple(
+                runtime.tool_execution.terminal.denied_command_prefixes
             ),
             allow_network=runtime.tool_execution.terminal.allow_network,
             allow_shell_syntax=runtime.tool_execution.terminal.allow_shell_syntax,

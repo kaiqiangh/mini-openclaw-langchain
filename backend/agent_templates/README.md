@@ -38,6 +38,13 @@ That means templates inherit the current schema behavior automatically:
 - defaults from `RuntimeConfig` are applied where fields are omitted
 - list normalization, enum coercion, and numeric clamping stay consistent with live config writes
 
+Terminal templates can now select a command policy mode:
+
+- `auto`: use denylist mode when a real sandbox backend is active, otherwise fall back to allowlist mode
+- `allowlist`: only explicitly allowed command prefixes may run
+- `denylist`: allow most commands but block built-in dangerous prefixes, configured denied prefixes, and network-capable commands when terminal networking is disabled
+- compatibility note: if a template or runtime patch explicitly sets `allowed_command_prefixes`, the loader preserves legacy allowlist semantics even when that list is empty
+
 ## Authoring guidance
 
 Prefer small patches over full expanded runtime payloads.
@@ -59,7 +66,9 @@ Avoid:
 - `balanced`: general-purpose interactive preset close to the repo defaults
 - `safe-local`: conservative local preset with read-heavy chat tools and strict sandboxing
 - `research`: retrieval and web research preset for chat workflows
-- `terminal-safe`: sandboxed code-editing preset without outbound network access
+- `terminal-safe`: sandboxed code-editing preset with explicit allowlist terminal rules
+- `terminal-sandbox`: sandbox-required terminal preset with denylist-based command policy and terminal networking disabled
+- `terminal-flex`: terminal preset with denylist-based policy that may fall back to unsandboxed execution
 - `scheduler-worker`: automation preset for heartbeat and cron-oriented agents
 
 ## Extending the catalog

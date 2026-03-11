@@ -4,11 +4,11 @@
   "bootstrap_max_chars": 20000,
   "bootstrap_total_max_chars": 150000,
   "agent_runtime": {
-    "max_steps": 20,
+    "max_steps": 50,
     "max_retries": 1
   },
   "llm_runtime": {
-    "temperature": 0.2,
+    "temperature": 1,
     "timeout_seconds": 60
   },
   "llm_profiles": {
@@ -128,12 +128,34 @@
   "tool_execution": {
     "terminal": {
       "sandbox_mode": "hybrid_auto",
+      "command_policy_mode": "auto",
       "require_sandbox": true,
       "allowed_command_prefixes": [],
-      "allow_network": false,
-      "allow_shell_syntax": false,
-      "max_args": 32,
-      "max_arg_length": 256
+      "denied_command_prefixes": [
+        "git reset --hard",
+        "git clean -fd",
+        "git clean -fdx",
+        "git checkout --",
+        "docker compose down -v",
+        "docker system prune",
+        "docker volume prune",
+        "rm -rf",
+        "sudo rm -rf",
+        "rm -rf /",
+        "rm -rf --no-preserve-root",
+        "dd if=",
+        "shutdown",
+        "reboot",
+        "poweroff",
+        "pkill -9",
+        "killall -9",
+        "chmod -R 777",
+        "chown -R"
+      ],
+      "allow_network": true,
+      "allow_shell_syntax": true,
+      "max_args": 128,
+      "max_arg_length": 4096
     }
   },
   "chat_enabled_tools": [],

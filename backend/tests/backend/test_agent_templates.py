@@ -21,7 +21,9 @@ def test_shipped_templates_match_expected_catalog():
         "research",
         "safe-local",
         "scheduler-worker",
+        "terminal-flex",
         "terminal-safe",
+        "terminal-sandbox",
     ]
 
 
@@ -102,7 +104,33 @@ def test_terminal_safe_template_exposes_allowlisted_terminal_runtime():
     assert isinstance(runtime_payload, dict)
 
     terminal_payload = runtime_payload["tool_execution"]["terminal"]
+    assert terminal_payload["command_policy_mode"] == "allowlist"
     assert terminal_payload["require_sandbox"] is True
     assert terminal_payload["allow_network"] is False
     assert terminal_payload["allow_shell_syntax"] is False
     assert "rg" in terminal_payload["allowed_command_prefixes"]
+
+
+def test_terminal_sandbox_template_uses_denylist_with_required_sandbox():
+    payload = _load_template("terminal-sandbox")
+    runtime_payload = payload["runtime_config"]
+    assert isinstance(runtime_payload, dict)
+
+    terminal_payload = runtime_payload["tool_execution"]["terminal"]
+    assert terminal_payload["command_policy_mode"] == "denylist"
+    assert terminal_payload["require_sandbox"] is True
+    assert terminal_payload["allow_network"] is False
+    assert terminal_payload["allowed_command_prefixes"] == []
+    assert terminal_payload["denied_command_prefixes"]
+
+
+def test_terminal_flex_template_uses_unsandboxed_denylist_profile():
+    payload = _load_template("terminal-flex")
+    runtime_payload = payload["runtime_config"]
+    assert isinstance(runtime_payload, dict)
+
+    terminal_payload = runtime_payload["tool_execution"]["terminal"]
+    assert terminal_payload["command_policy_mode"] == "denylist"
+    assert terminal_payload["require_sandbox"] is False
+    assert terminal_payload["allowed_command_prefixes"] == []
+    assert terminal_payload["denied_command_prefixes"]
