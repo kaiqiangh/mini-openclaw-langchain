@@ -200,6 +200,8 @@ class SessionManager:
         role: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        skill_uses: list[str] | None = None,
+        selected_skills: list[str] | None = None,
     ) -> None:
         with self._lock:
             session = self.load_session(session_id)
@@ -210,6 +212,10 @@ class SessionManager:
             }
             if tool_calls:
                 entry["tool_calls"] = tool_calls
+            if skill_uses:
+                entry["skill_uses"] = list(dict.fromkeys(skill_uses))
+            if selected_skills:
+                entry["selected_skills"] = list(dict.fromkeys(selected_skills))
             session.setdefault("messages", []).append(entry)
             self.save_session(session_id, session)
 
@@ -220,6 +226,8 @@ class SessionManager:
         run_id: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        skill_uses: list[str] | None = None,
+        selected_skills: list[str] | None = None,
     ) -> None:
         with self._lock:
             session = self.load_session(session_id)
@@ -238,6 +246,10 @@ class SessionManager:
             }
             if tool_calls:
                 payload["tool_calls"] = tool_calls
+            if skill_uses:
+                payload["skill_uses"] = list(dict.fromkeys(skill_uses))
+            if selected_skills:
+                payload["selected_skills"] = list(dict.fromkeys(selected_skills))
             session["live_response"] = payload
             self.save_session(session_id, session)
 
@@ -262,7 +274,14 @@ class SessionManager:
             return merged
         content = str(live.get("content", "")).strip()
         tool_calls = live.get("tool_calls")
-        if not content and not (isinstance(tool_calls, list) and len(tool_calls) > 0):
+        skill_uses = live.get("skill_uses")
+        selected_skills = live.get("selected_skills")
+        if (
+            not content
+            and not (isinstance(tool_calls, list) and len(tool_calls) > 0)
+            and not (isinstance(skill_uses, list) and len(skill_uses) > 0)
+            and not (isinstance(selected_skills, list) and len(selected_skills) > 0)
+        ):
             return merged
 
         entry: dict[str, Any] = {
@@ -275,6 +294,12 @@ class SessionManager:
             entry["timestamp_ms"] = timestamp_ms
         if isinstance(tool_calls, list) and tool_calls:
             entry["tool_calls"] = tool_calls
+        if isinstance(skill_uses, list) and skill_uses:
+            entry["skill_uses"] = list(dict.fromkeys(str(item) for item in skill_uses))
+        if isinstance(selected_skills, list) and selected_skills:
+            entry["selected_skills"] = list(
+                dict.fromkeys(str(item) for item in selected_skills)
+            )
         run_id = str(live.get("run_id", "")).strip()
         if run_id:
             entry["run_id"] = run_id

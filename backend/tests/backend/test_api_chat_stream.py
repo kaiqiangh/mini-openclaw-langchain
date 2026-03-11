@@ -13,6 +13,36 @@ def _parse_sse_events(payload: str) -> list[str]:
     return events
 
 
+def _parse_sse_records(payload: str) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    current_event = ""
+    current_data = ""
+    for line in payload.splitlines():
+        if not line.strip():
+            if current_event:
+                parsed_data: object
+                if current_data.strip():
+                    parsed_data = json.loads(current_data)
+                else:
+                    parsed_data = {}
+                records.append({"event": current_event, "data": parsed_data})
+            current_event = ""
+            current_data = ""
+            continue
+        if line.startswith("event:"):
+            current_event = line.replace("event:", "").strip()
+        elif line.startswith("data:"):
+            current_data = line.replace("data:", "", 1).strip()
+    if current_event:
+        records.append(
+            {
+                "event": current_event,
+                "data": json.loads(current_data) if current_data.strip() else {},
+            }
+        )
+    return records
+
+
 def test_chat_sse_order_and_segment_persistence(client, api_app):
     created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
@@ -185,3 +215,73 @@ def test_chat_stream_hides_backend_exception_text(client, api_app):
     assert "Stream failed. Check server logs for details." in response.text
     assert "provider failed" not in response.text
     assert "/tmp/secret-config" not in response.text
+
+
+def test_chat_stream_tracks_skill_usage_in_events_and_history(client, api_app):
+    AppStatus.should_exit = False
+    if hasattr(AppStatus, "should_exit_event"):
+        setattr(AppStatus, "should_exit_event", None)
+
+    manager = api_app["agent_manager"]
+
+    async def scripted_stream(
+        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
+    ):
+        _ = self, history, kwargs
+        yield {"type": "run_start", "data": {"run_id": "run-skill", "attempt": 1}}
+        yield {
+            "type": "selected_skills",
+            "data": {
+                "skills": [
+                    {
+                        "name": "weather_helper",
+                        "location": "./skills/weather_helper/SKILL.md",
+                        "reason": "matched terms: weather",
+                    }
+                ]
+            },
+        }
+        yield {
+            "type": "tool_start",
+            "data": {
+                "tool": "read_files",
+                "input": {"path": "skills/get_weather/SKILL.md"},
+            },
+        }
+        yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
+        yield {
+            "type": "done",
+            "data": {
+                "content": f"{message}-done",
+                "session_id": session_id,
+                "run_id": "run-skill",
+            },
+        }
+
+    manager.astream = scripted_stream.__get__(manager, type(manager))
+
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
+        "session_id"
+    ]
+    response = client.post(
+        "/api/v1/agents/default/chat",
+        json={"message": "hello", "session_id": session_id, "stream": True},
+    )
+
+    assert response.status_code == 200
+    records = _parse_sse_records(response.text)
+    selected_skills = next(
+        record for record in records if record["event"] == "selected_skills"
+    )
+    assert selected_skills["data"]["skills"][0]["name"] == "weather_helper"  # type: ignore[index]
+    tool_start = next(record for record in records if record["event"] == "tool_start")
+    assert tool_start["data"]["skill_uses"] == ["get_weather"]  # type: ignore[index]
+
+    history = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/history"
+    ).json()["data"]["messages"]
+    assistant_messages = [row for row in history if row.get("role") == "assistant"]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["selected_skills"] == ["weather_helper"]
+    assert assistant_messages[0]["skill_uses"] == ["get_weather"]
+    assert assistant_messages[0]["tool_calls"][0]["tool"] == "read_files"

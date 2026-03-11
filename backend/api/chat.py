@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from graph.agent import AgentManager
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
+_SKILL_PATH_PATTERN = re.compile(r"(?:^|[^A-Za-z0-9._-])(?:\./)?skills/([A-Za-z0-9._-]+)(?=/)")
 
 
 class ChatRequest(BaseModel):
@@ -43,6 +45,9 @@ class _StreamRunState:
     assistant_segments: list[dict[str, Any]] = field(default_factory=list)
     current_content: str = ""
     current_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    current_skill_uses: list[str] = field(default_factory=list)
+    selected_skills: list[str] = field(default_factory=list)
+    selected_skills_pending: bool = False
     last_live_sync_ms: int = 0
     lock_owner: str = ""
 
@@ -89,17 +94,60 @@ def _snapshot_live_content(state: _StreamRunState) -> str:
     return "\n\n".join(content_parts).strip()
 
 
+def _merge_unique_names(existing: list[str], additions: list[str]) -> list[str]:
+    if not additions:
+        return existing
+    seen = {item for item in existing if item}
+    merged = list(existing)
+    for item in additions:
+        normalized = str(item).strip()
+        if not normalized or normalized in seen:
+            continue
+        merged.append(normalized)
+        seen.add(normalized)
+    return merged
+
+
+def _extract_skill_uses(value: Any) -> list[str]:
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if isinstance(node, str):
+            for match in _SKILL_PATH_PATTERN.finditer(node):
+                skill_name = str(match.group(1)).strip()
+                if not skill_name or skill_name in seen:
+                    continue
+                seen.add(skill_name)
+                found.append(skill_name)
+            return
+        if isinstance(node, dict):
+            for child in node.values():
+                visit(child)
+            return
+        if isinstance(node, (list, tuple, set)):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return found
+
+
 def _flush_current_segment(state: _StreamRunState, fallback_content: str = "") -> None:
     content = state.current_content.strip() or fallback_content.strip()
-    if content or state.current_tool_calls:
-        state.assistant_segments.append(
-            {
-                "content": content,
-                "tool_calls": list(state.current_tool_calls),
-            }
-        )
+    if content or state.current_tool_calls or state.current_skill_uses:
+        segment = {
+            "content": content,
+            "tool_calls": list(state.current_tool_calls),
+            "skill_uses": list(state.current_skill_uses),
+        }
+        if state.selected_skills_pending and state.selected_skills:
+            segment["selected_skills"] = list(state.selected_skills)
+            state.selected_skills_pending = False
+        state.assistant_segments.append(segment)
     state.current_content = ""
     state.current_tool_calls = []
+    state.current_skill_uses = []
 
 
 def _persist_live_snapshot(
@@ -111,7 +159,9 @@ def _persist_live_snapshot(
 
     content = _snapshot_live_content(state)
     tool_calls = list(state.current_tool_calls)
-    if not content and not tool_calls:
+    skill_uses = list(state.current_skill_uses)
+    selected_skills = list(state.selected_skills)
+    if not content and not tool_calls and not skill_uses and not selected_skills:
         return
 
     session_manager.set_live_response(
@@ -119,6 +169,8 @@ def _persist_live_snapshot(
         run_id=state.run_id or "__pending__",
         content=content,
         tool_calls=tool_calls or None,
+        skill_uses=skill_uses or None,
+        selected_skills=selected_skills or None,
     )
     state.last_live_sync_ms = now_ms
 
@@ -183,11 +235,15 @@ async def _persist_final_segments(state: _StreamRunState, runtime: Any) -> None:
         if not content:
             continue
         tool_calls = segment.get("tool_calls") or None
+        skill_uses = segment.get("skill_uses") or None
+        selected_skills = segment.get("selected_skills") or None
         session_manager.save_message(
             state.session_id,
             "assistant",
             content,
             tool_calls=tool_calls,
+            skill_uses=skill_uses,
+            selected_skills=selected_skills,
         )
         if runtime.audit_store is not None:
             runtime.audit_store.append_message_link(
@@ -243,11 +299,33 @@ async def _run_stream_task(
                     state.run_id = run_id
                     _persist_live_snapshot(session_manager, state, force=True)
 
+            if event_type == "selected_skills":
+                payload_skills = data.get("skills", [])
+                selected_names: list[str] = []
+                if isinstance(payload_skills, list):
+                    for item in payload_skills:
+                        if isinstance(item, dict):
+                            name = str(item.get("name", "")).strip()
+                        else:
+                            name = str(item).strip()
+                        if name:
+                            selected_names.append(name)
+                state.selected_skills = _merge_unique_names([], selected_names)
+                state.selected_skills_pending = bool(state.selected_skills)
+                _persist_live_snapshot(session_manager, state, force=True)
+
             if event_type == "token":
                 state.current_content += str(data.get("content", ""))
                 _persist_live_snapshot(session_manager, state, force=False)
 
             if event_type == "tool_start":
+                skill_uses = _extract_skill_uses(data.get("input", {}))
+                state.current_skill_uses = _merge_unique_names(
+                    state.current_skill_uses,
+                    skill_uses,
+                )
+                if skill_uses:
+                    data = {**data, "skill_uses": skill_uses}
                 state.current_tool_calls.append(
                     {
                         "tool": data.get("tool", "tool"),
@@ -377,12 +455,43 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
         text = str(result.get("text", ""))
         usage = result.get("usage", {})
         session_manager.save_message(request.session_id, "user", request.message)
-        session_manager.save_message(request.session_id, "assistant", text)
+        tool_calls: list[dict[str, Any]] = []
+        skill_uses: list[str] = []
+        selected_skills = [
+            str(item).strip()
+            for item in result.get("selected_skills", [])
+            if str(item).strip()
+        ]
+        for output_message in result.get("messages", []):
+            message_tool_calls = getattr(output_message, "tool_calls", None)
+            if isinstance(message_tool_calls, list):
+                for call in message_tool_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    tool_calls.append(
+                        {
+                            "tool": call.get("name", "tool"),
+                            "input": call.get("args", {}),
+                        }
+                    )
+                    skill_uses = _merge_unique_names(
+                        skill_uses,
+                        _extract_skill_uses(call.get("args", {})),
+                    )
+        session_manager.save_message(
+            request.session_id,
+            "assistant",
+            text,
+            tool_calls=tool_calls or None,
+            skill_uses=skill_uses or None,
+            selected_skills=selected_skills or None,
+        )
         return {
             "data": {
                 "content": text,
                 "session_id": request.session_id,
                 "agent_id": agent_id,
+                "selected_skills": selected_skills,
                 "usage": usage,
             }
         }
