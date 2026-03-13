@@ -199,4 +199,35 @@ describe("SessionsPage live chat", () => {
       expect(mockSendMessage).toHaveBeenCalledWith("Hello operator"),
     );
   });
+
+  it("recovers the current live session when the route omits the session id", async () => {
+    navigationState.searchParams = new URLSearchParams("agent=default&scope=active");
+    storeState.currentSessionId = "s-1";
+    storeState.sessionsScope = "active";
+    storeState.isStreaming = true;
+    storeState.messages = [
+      {
+        id: "assistant-running",
+        role: "assistant",
+        content: "Recovered live output",
+        timestampMs: 1_710_000_000_000,
+        toolCalls: [],
+        selectedSkills: [],
+        skillUses: [],
+        retrievals: [],
+        debugEvents: [],
+      },
+    ];
+
+    render(<SessionsPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Recovered live output").length).toBeGreaterThan(0),
+    );
+    expect(navigationState.replace).toHaveBeenCalledWith(
+      expect.stringContaining("session=s-1"),
+      { scroll: false },
+    );
+    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
+  });
 });
