@@ -45,6 +45,8 @@ flowchart TB
 ## Workspace Layout
 
 Each agent workspace is self-contained under `backend/workspaces/<agent_id>/`.
+That layout is mandatory for runtime operation; older root-level default-agent layouts
+are no longer auto-upgraded on startup.
 
 - `workspace/`: prompt files such as `AGENTS.md`, `SOUL.md`, `USER.md`, `BOOTSTRAP.md`
 - `memory/`: long-lived memory files and retrieval source material
@@ -66,6 +68,10 @@ SQLite checkpoints, while session JSON files remain the metadata/catalog store
 for titles, archive state, and compressed summaries. The API layer is limited to
 SSE adaptation and locking. Active `live_response`, assistant segments, and
 canonical session messages are checkpoint-backed as well.
+
+Checkpoint-backed sessions are mandatory. Embedded session JSON message history and
+other pre-migration conversation payloads are no longer imported or tolerated; the
+backend now fails explicitly on that legacy state.
 
 ### Loop Module Responsibilities
 
@@ -150,6 +156,9 @@ Embedding behavior:
 - Provider/model come from runtime/global config and environment keys.
 - If embedding calls fail, query embedding becomes empty and retrieval continues with
   lexical scoring (no agent-loop crash).
+- Legacy JSON retrieval indexes under `storage/memory_index/` and
+  `storage/knowledge_index/` are no longer auto-imported into SQLite. When SQLite
+  storage is enabled, indexes are rebuilt from current source files instead.
 
 ### Observability and Accounting
 

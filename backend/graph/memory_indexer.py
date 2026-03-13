@@ -177,87 +177,6 @@ class MemoryIndexer:
         )
         self._last_digest = digest
 
-    @staticmethod
-    def _safe_int(value: object, fallback: int) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return fallback
-            try:
-                return int(raw)
-            except ValueError:
-                return fallback
-        return fallback
-
-    def _migrate_json_to_sqlite(
-        self,
-        *,
-        store: SQLiteRetrievalStore,
-        payload: dict[str, object],
-        settings: RetrievalDomainConfig,
-    ) -> bool:
-        chunks = payload.get("chunks")
-        embeddings = payload.get("embeddings")
-        if not isinstance(chunks, list):
-            return False
-        vectors = embeddings if isinstance(embeddings, list) else []
-        source = str(payload.get("source", "memory/MEMORY.md"))
-        digest = str(payload.get("digest", ""))
-        chunk_size = max(
-            64, self._safe_int(payload.get("chunk_size"), settings.chunk_size)
-        )
-        chunk_overlap = max(
-            0, self._safe_int(payload.get("chunk_overlap"), settings.chunk_overlap)
-        )
-        provider = str(payload.get("embedding_provider", "openai"))
-        model = str(payload.get("embedding_model", "text-embedding-3-small"))
-        if not digest:
-            text = (
-                self.memory_file.read_text(encoding="utf-8")
-                if self.memory_file.exists()
-                else ""
-            )
-            digest = self._memory_digest(
-                text, chunk_size=chunk_size, chunk_overlap=chunk_overlap
-            )
-
-        rows: list[RetrievalChunk] = []
-        for idx, chunk in enumerate(chunks):
-            chunk_text = str(chunk)
-            embedding = (
-                vectors[idx]
-                if idx < len(vectors) and isinstance(vectors[idx], list)
-                else []
-            )
-            parsed_embedding: list[float] = []
-            for item in embedding:
-                try:
-                    parsed_embedding.append(float(item))
-                except Exception:
-                    continue
-            rows.append(
-                RetrievalChunk(
-                    source=source, text=chunk_text, embedding=parsed_embedding
-                )
-            )
-
-        store.replace_domain_index(
-            domain="memory",
-            digest=digest,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            embedding_provider=provider,
-            embedding_model=model,
-            chunks=rows,
-        )
-        return True
-
     def _ensure_sqlite_index(
         self,
         *,
@@ -278,17 +197,6 @@ class MemoryIndexer:
             text, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
         )
         meta = store.get_meta("memory")
-        if meta is None and self.index_file.exists():
-            try:
-                payload = json.loads(self.index_file.read_text(encoding="utf-8"))
-                if isinstance(payload, dict):
-                    self._migrate_json_to_sqlite(
-                        store=store, payload=payload, settings=settings
-                    )
-                    meta = store.get_meta("memory")
-            except Exception:
-                meta = None
-
         if meta is None or str(meta.get("digest", "")) != digest:
             self.rebuild_index(settings=settings)
             meta = store.get_meta("memory")
@@ -307,14 +215,8 @@ class MemoryIndexer:
             return
         if store.get_meta("memory") is not None:
             return
-        if not self.index_file.exists():
-            return
         try:
-            payload = json.loads(self.index_file.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                self._migrate_json_to_sqlite(
-                    store=store, payload=payload, settings=effective
-                )
+            self.rebuild_index(settings=effective)
         except Exception:
             return
 

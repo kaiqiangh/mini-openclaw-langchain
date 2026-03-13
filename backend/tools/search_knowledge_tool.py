@@ -137,75 +137,6 @@ class SearchKnowledgeTool:
     def _sqlite_store(self, storage: RetrievalStorageConfig) -> SQLiteRetrievalStore:
         return SQLiteRetrievalStore(root_dir=self.root_dir, db_path=storage.db_path)
 
-    @staticmethod
-    def _safe_int(value: object, fallback: int) -> int:
-        if isinstance(value, bool):
-            return int(value)
-        if isinstance(value, int):
-            return value
-        if isinstance(value, float):
-            return int(value)
-        if isinstance(value, str):
-            raw = value.strip()
-            if not raw:
-                return fallback
-            try:
-                return int(raw)
-            except ValueError:
-                return fallback
-        return fallback
-
-    def _migrate_json_to_sqlite(
-        self,
-        *,
-        store: SQLiteRetrievalStore,
-        payload: dict[str, Any],
-        digest_fallback: str,
-        chunk_size_fallback: int,
-        chunk_overlap_fallback: int,
-    ) -> bool:
-        rows = payload.get("rows")
-        if not isinstance(rows, list):
-            return False
-        digest = str(payload.get("digest", digest_fallback))
-        chunk_size = max(
-            64, self._safe_int(payload.get("chunk_size"), chunk_size_fallback)
-        )
-        chunk_overlap = max(
-            0, self._safe_int(payload.get("chunk_overlap"), chunk_overlap_fallback)
-        )
-        provider = str(payload.get("embedding_provider", "openai"))
-        model = str(payload.get("embedding_model", "text-embedding-3-small"))
-
-        chunks: list[RetrievalChunk] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            source = str(row.get("source", "knowledge/unknown"))
-            text = str(row.get("text", ""))
-            embedding = row.get("embedding", [])
-            parsed_embedding: list[float] = []
-            if isinstance(embedding, list):
-                for item in embedding:
-                    try:
-                        parsed_embedding.append(float(item))
-                    except Exception:
-                        continue
-            chunks.append(
-                RetrievalChunk(source=source, text=text, embedding=parsed_embedding)
-            )
-
-        store.replace_domain_index(
-            domain="knowledge",
-            digest=digest,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            embedding_provider=provider,
-            embedding_model=model,
-            chunks=chunks,
-        )
-        return True
-
     def _ensure_sqlite_index(
         self,
         *,
@@ -223,21 +154,6 @@ class SearchKnowledgeTool:
             files, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
         meta = store.get_meta("knowledge")
-        if meta is None and self._index_file.exists():
-            try:
-                payload = json.loads(self._index_file.read_text(encoding="utf-8"))
-                if isinstance(payload, dict):
-                    self._migrate_json_to_sqlite(
-                        store=store,
-                        payload=payload,
-                        digest_fallback=digest,
-                        chunk_size_fallback=chunk_size,
-                        chunk_overlap_fallback=chunk_overlap,
-                    )
-                    meta = store.get_meta("knowledge")
-            except Exception:
-                meta = None
-
         if meta is not None and str(meta.get("digest", "")) == digest:
             return store
 
