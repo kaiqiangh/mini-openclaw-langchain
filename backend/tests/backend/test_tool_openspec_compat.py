@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import shutil
 import time
@@ -18,27 +19,35 @@ from tools.langchain_tools import build_langchain_tools
 from tools.web_search_tool import WebSearchTool
 
 
-def _write_session(path: Path, title: str, messages: list[dict[str, Any]]) -> None:
+def _write_session_metadata(path: Path, title: str) -> None:
     now = time.time()
     payload = {
         "title": title,
         "created_at": now,
         "updated_at": now,
         "compressed_context": "",
-        "messages": messages,
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _seed_workspace(root: Path) -> None:
+    default_root = root / "workspaces" / "default"
+    elon_root = root / "workspaces" / "elon"
     for rel in [
         "workspace",
         "memory",
         "knowledge",
         "storage",
-        "sessions",
-        "sessions/archived_sessions",
+        "workspaces/default/workspace",
+        "workspaces/default/memory",
+        "workspaces/default/knowledge",
+        "workspaces/default/storage",
+        "workspaces/default/sessions",
+        "workspaces/default/sessions/archived_sessions",
         "workspaces/elon/workspace",
+        "workspaces/elon/memory",
+        "workspaces/elon/knowledge",
+        "workspaces/elon/storage",
         "workspaces/elon/sessions",
         "workspaces/elon/sessions/archived_sessions",
     ]:
@@ -48,22 +57,29 @@ def _seed_workspace(root: Path) -> None:
     (root / "knowledge" / "note.md").write_text("knowledge alpha beta\n", encoding="utf-8")
     (root / "workspace" / "HEARTBEAT.md").write_text("ping heartbeat", encoding="utf-8")
     (root / "config.json").write_text("{}\n", encoding="utf-8")
-
-    _write_session(
-        root / "sessions" / "sess-alpha.json",
-        "Alpha Session",
-        [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ],
+    (default_root / "memory" / "MEMORY.md").write_text(
+        "memory alpha line\n", encoding="utf-8"
     )
-    _write_session(
-        root / "workspaces" / "elon" / "sessions" / "sess-elon.json",
-        "Elon Session",
-        [{"role": "user", "content": "status?"}],
+    (default_root / "knowledge" / "note.md").write_text(
+        "knowledge alpha beta\n", encoding="utf-8"
     )
+    (default_root / "workspace" / "HEARTBEAT.md").write_text(
+        "ping heartbeat", encoding="utf-8"
+    )
+    (elon_root / "workspace" / "HEARTBEAT.md").write_text(
+        "ping heartbeat", encoding="utf-8"
+    )
+    (elon_root / "memory" / "MEMORY.md").write_text("memory elon\n", encoding="utf-8")
+    (elon_root / "knowledge" / "note.md").write_text(
+        "knowledge elon\n", encoding="utf-8"
+    )
+    (default_root / "config.json").write_text("{}\n", encoding="utf-8")
+    (elon_root / "config.json").write_text("{}\n", encoding="utf-8")
 
-    (root / "storage" / "cron_jobs.json").write_text(
+    _write_session_metadata(default_root / "sessions" / "sess-alpha.json", "Alpha Session")
+    _write_session_metadata(elon_root / "sessions" / "sess-elon.json", "Elon Session")
+
+    (default_root / "storage" / "cron_jobs.json").write_text(
         json.dumps(
             {
                 "jobs": [
@@ -84,16 +100,41 @@ def _seed_workspace(root: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    (root / "storage" / "cron_runs.jsonl").write_text(
+    (default_root / "storage" / "cron_runs.jsonl").write_text(
         json.dumps({"job_id": "job-1", "status": "ok", "duration_ms": 23}) + "\n",
         encoding="utf-8",
     )
-    (root / "storage" / "heartbeat_runs.jsonl").write_text(
+    (default_root / "storage" / "heartbeat_runs.jsonl").write_text(
         json.dumps({"status": "ok", "duration_ms": 12}) + "\n",
         encoding="utf-8",
     )
 
-    (root / "sample.pdf").write_bytes(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
+    (default_root / "sample.pdf").write_bytes(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
+
+
+def _seed_checkpoint_history(root: Path) -> Path:
+    manager = AgentManager()
+    manager.initialize(root)
+    default_root = manager.get_runtime("default").root_dir
+    repository = manager.get_session_repository("default")
+    snapshot = asyncio.run(
+        repository.load_snapshot(
+            agent_id="default",
+            session_id="sess-alpha",
+            include_live=False,
+        )
+    )
+    if not snapshot.messages:
+        for role, content in [("user", "hello"), ("assistant", "hi")]:
+            asyncio.run(
+                repository.append_message(
+                    agent_id="default",
+                    session_id="sess-alpha",
+                    role=role,
+                    content=content,
+                )
+            )
+    return default_root
 
 
 class _InvokableTool(Protocol):
@@ -103,6 +144,7 @@ class _InvokableTool(Protocol):
 
 
 def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniTool]]:
+    default_root = _seed_checkpoint_history(root)
     runtime = RuntimeConfig(
         tool_timeouts=ToolTimeouts(
             terminal_seconds=5, python_repl_seconds=2, fetch_url_seconds=5
@@ -119,10 +161,15 @@ def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniToo
         "printf",
         "python3",
     ]
-    mini_tools = get_all_tools(root, runtime, trigger_type="chat", config_base_dir=root)
-    runner = get_tool_runner(root)
+    mini_tools = get_all_tools(
+        default_root,
+        runtime,
+        trigger_type="chat",
+        config_base_dir=root,
+    )
+    runner = get_tool_runner(default_root)
     context = ToolContext(
-        workspace_root=root,
+        workspace_root=default_root,
         trigger_type="chat",
         explicit_enabled_tools=tuple(runtime.chat_enabled_tools),
         run_id="run-test",
@@ -223,11 +270,6 @@ def test_read_files_single_and_multi_path_modes(tmp_path):
 
 def test_management_tools_return_workspace_state(tmp_path):
     _seed_workspace(tmp_path)
-    manager = AgentManager()
-    manager.initialize(tmp_path)
-    default_root = manager.get_runtime("default").root_dir
-    for name in ("cron_jobs.json", "cron_runs.jsonl", "heartbeat_runs.jsonl"):
-        shutil.copy2(tmp_path / "storage" / name, default_root / "storage" / name)
     tool_map, _ = _build_tool_map(tmp_path)
 
     sessions = _parse_result(
