@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from graph.agent import AgentManager
+from graph.usage_orchestrator import UsageOrchestrator
 from usage.normalization import extract_usage_from_message
 from usage.pricing import calculate_cost_breakdown
 
@@ -160,7 +161,7 @@ def test_cost_breakdown_unpriced_unknown_model():
 
 
 def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
-    manager = AgentManager()
+    orchestrator = UsageOrchestrator()
     usage_state = {
         "provider": "deepseek",
         "model": "deepseek-chat",
@@ -193,7 +194,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     replay_of_call_a = dict(call_a)
     call_b = dict(call_a)
 
-    changed = manager._accumulate_usage_candidate(
+    changed = orchestrator.accumulate_usage_candidate(
         usage_state=usage_state,
         usage_sources=usage_sources,
         source_id="call-a",
@@ -202,7 +203,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     assert changed is True
 
     # Same source + same usage should not inflate totals.
-    changed = manager._accumulate_usage_candidate(
+    changed = orchestrator.accumulate_usage_candidate(
         usage_state=usage_state,
         usage_sources=usage_sources,
         source_id="call-a",
@@ -211,7 +212,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     assert changed is False
 
     # Same shape of usage from a different call should be counted.
-    changed = manager._accumulate_usage_candidate(
+    changed = orchestrator.accumulate_usage_candidate(
         usage_state=usage_state,
         usage_sources=usage_sources,
         source_id="call-b",
@@ -227,7 +228,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
 
 
 def test_tool_loop_model_keeps_configured_model_when_no_override():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
         provider_id="deepseek",
@@ -237,7 +238,7 @@ def test_tool_loop_model_keeps_configured_model_when_no_override():
 
 
 def test_tool_loop_model_respects_llm_route_override():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
         provider_id="deepseek",
@@ -248,7 +249,7 @@ def test_tool_loop_model_respects_llm_route_override():
 
 
 def test_tool_loop_model_respects_llm_route_override_map():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
         provider_id="deepseek",
@@ -262,7 +263,7 @@ def test_tool_loop_model_respects_llm_route_override_map():
 
 
 def test_tool_loop_model_respects_llm_route_override_map_exact_key():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="deepseek-reasoner",
         has_tools=True,
         provider_id="deepseek",
@@ -273,7 +274,7 @@ def test_tool_loop_model_respects_llm_route_override_map_exact_key():
 
 
 def test_tool_loop_model_ignores_cross_provider_llm_route_override():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="gpt-4o-mini",
         has_tools=True,
         provider_id="openai",
@@ -284,7 +285,7 @@ def test_tool_loop_model_ignores_cross_provider_llm_route_override():
 
 
 def test_tool_loop_model_ignores_cross_provider_llm_route_map_override():
-    selected = AgentManager._resolve_tool_loop_model(
+    selected = AgentManager().runtime_services.resolve_tool_loop_model(
         configured_model="gpt-4o-mini",
         has_tools=True,
         provider_id="openai",
