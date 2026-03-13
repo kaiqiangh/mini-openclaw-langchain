@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.session_manager import LegacySessionStateError
 
 router = APIRouter(tags=["compress"])
 
@@ -27,6 +28,14 @@ def _require_agent_manager() -> AgentManager:
     return _AGENT_MANAGER
 
 
+def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="unsupported_legacy_state",
+        message=str(exc),
+    )
+
+
 @router.post("/agents/{agent_id}/sessions/{session_id}/compress")
 async def compress_session(
     agent_id: str,
@@ -34,7 +43,7 @@ async def compress_session(
 ) -> dict[str, Any]:
     agent_manager = _require_agent_manager()
     try:
-        session_manager = agent_manager.get_session_manager(agent_id)
+        agent_manager.get_runtime(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -48,6 +57,8 @@ async def compress_session(
         )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     messages = list(snapshot.messages)
 
     if len(messages) < 4:
