@@ -4,6 +4,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -62,6 +63,75 @@ class FakeRuntime:
     runtime_config: RuntimeConfig
 
 
+class FakeSessionRepository:
+    def __init__(self, manager: SessionManager) -> None:
+        self.manager = manager
+
+    async def load_snapshot(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool = False,
+        include_live: bool = True,
+        create_if_missing: bool = False,
+        graph_name: str = "default",
+    ):
+        _ = agent_id, graph_name
+        session = (
+            self.manager.load_session(session_id, archived=archived)
+            if create_if_missing
+            else self.manager.load_existing_session(session_id, archived=archived)
+        )
+        messages = list(session.get("messages", []))
+        if include_live and not archived:
+            messages = self.manager.with_live_response(messages, session)
+        return SimpleNamespace(
+            session_id=session_id,
+            agent_id=agent_id,
+            archived=archived,
+            messages=messages,
+            compressed_context=str(session.get("compressed_context", "")),
+            live_response=session.get("live_response"),
+        )
+
+    async def load_history_for_agent(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool = False,
+        create_if_missing: bool = False,
+        graph_name: str = "default",
+    ) -> list[dict[str, object]]:
+        _ = agent_id, graph_name
+        if create_if_missing:
+            self.manager.load_session(session_id, archived=archived)
+        return self.manager.load_session_for_agent(session_id)
+
+    async def delete_session(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool = False,
+    ) -> bool:
+        _ = agent_id
+        return self.manager.delete_session(session_id, archived=archived)
+
+    async def compress_history(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        summary: str,
+        n: int,
+        graph_name: str = "default",
+    ) -> dict[str, int]:
+        _ = agent_id, graph_name
+        return self.manager.compress_history(session_id=session_id, summary=summary, n=n)
+
+
 class FakeAgentManager:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -72,6 +142,7 @@ class FakeAgentManager:
         self.memory_indexer = runtime.memory_indexer
         self.audit_store = runtime.audit_store
         self.usage_store = runtime.usage_store
+        self.session_repository = FakeSessionRepository(runtime.session_manager)
 
     def _agent_root(self, agent_id: str) -> Path:
         if agent_id == "default":
@@ -139,6 +210,9 @@ class FakeAgentManager:
 
     def get_session_manager(self, agent_id: str = "default") -> SessionManager:
         return self.get_runtime(agent_id).session_manager
+
+    def get_session_repository(self, agent_id: str = "default") -> FakeSessionRepository:
+        return FakeSessionRepository(self.get_runtime(agent_id).session_manager)
 
     def get_memory_indexer(self, agent_id: str = "default") -> MemoryIndexer:
         return self.get_runtime(agent_id).memory_indexer
@@ -216,14 +290,30 @@ class FakeAgentManager:
         return "Compressed Summary"
 
     async def run_once(self, *, message: str, **kwargs):
-        return {
-            "text": f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"
-        }
+        runtime = self.get_runtime(str(kwargs.get("agent_id", "default")))
+        session_id = str(kwargs.get("session_id", ""))
+        if session_id and not bool(kwargs.get("resume_same_turn", False)):
+            runtime.session_manager.save_message(session_id, "user", message)
+        text = f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"
+        if session_id:
+            runtime.session_manager.save_message(session_id, "assistant", text)
+        return {"text": text}
 
     async def astream(
         self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
     ):
-        _ = history, kwargs
+        _ = history
+        runtime = self.get_runtime(str(kwargs.get("agent_id", "default")))
+        if not bool(kwargs.get("resume_same_turn", False)):
+            runtime.session_manager.save_message(session_id, "user", message)
+            runtime.audit_store.append_message_link(
+                run_id=None,
+                session_id=session_id,
+                role="user",
+                segment_index=0,
+                content=message,
+                details={"source": "fake_chat_stream"},
+            )
         yield {"type": "run_start", "data": {"run_id": "run-test", "attempt": 1}}
         yield {
             "type": "agent_update",
@@ -241,12 +331,35 @@ class FakeAgentManager:
             "data": {"tool": "read_files", "input": {"path": "memory/MEMORY.md"}},
         }
         yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
+        runtime.session_manager.save_message(
+            session_id,
+            "assistant",
+            f"[{session_id}]A",
+            tool_calls=[{"tool": "read_files", "input": {"path": "memory/MEMORY.md"}, "output": "ok"}],
+        )
+        runtime.audit_store.append_message_link(
+            run_id="run-test",
+            session_id=session_id,
+            role="assistant",
+            segment_index=0,
+            content=f"[{session_id}]A",
+            details={"tool_call_count": 1},
+        )
         yield {"type": "new_response", "data": {}}
         yield {
             "type": "reasoning",
             "data": {"run_id": "run-test", "content": "reasoning sample"},
         }
         yield {"type": "token", "data": {"content": "B"}}
+        runtime.session_manager.save_message(session_id, "assistant", "B")
+        runtime.audit_store.append_message_link(
+            run_id="run-test",
+            session_id=session_id,
+            role="assistant",
+            segment_index=1,
+            content="B",
+            details={"tool_call_count": 0},
+        )
         yield {
             "type": "done",
             "data": {
