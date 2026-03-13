@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Coroutine, TypeVar
 from .base import ToolContext
 from .contracts import ToolResult
 from .policy import PermissionLevel
-from .workspace_resolver import resolve_agent_root
+from .workspace_resolver import resolve_agent_root, resolve_project_root
 
 if TYPE_CHECKING:
     from graph.agent import AgentManager
@@ -61,7 +61,9 @@ class SessionHistoryTool:
             from graph.agent import AgentManager
 
             manager = AgentManager()
-            manager.initialize(self.runtime_root)
+            manager.initialize(
+                resolve_project_root(self.runtime_root, self.config_base_dir)
+            )
             self._manager = manager
         return self._manager
 
