@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+from graph.checkpoint_serde import build_checkpoint_serializer
 from graph.session_manager import SessionManager
 
 from .base import ToolContext
@@ -15,6 +19,36 @@ from .workspace_resolver import resolve_agent_root
 
 
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+def _load_checkpoint_messages(
+    agent_root: Path, session_id: str
+) -> tuple[list[dict[str, Any]], str, dict[str, Any] | None]:
+    db_path = agent_root / "storage" / "langgraph_checkpoints.sqlite"
+    if not db_path.exists():
+        return [], "", None
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    try:
+        saver = SqliteSaver(conn, serde=build_checkpoint_serializer())
+        checkpoint = saver.get_tuple({"configurable": {"thread_id": session_id}})
+        if checkpoint is None or not isinstance(checkpoint.checkpoint, dict):
+            return [], "", None
+        channel_values = checkpoint.checkpoint.get("channel_values", {})
+        if not isinstance(channel_values, dict):
+            return [], "", None
+        messages = channel_values.get("messages", [])
+        compressed_context = str(channel_values.get("compressed_context", "")).strip()
+        live_response = (
+            dict(channel_values.get("live_response"))
+            if isinstance(channel_values.get("live_response"), dict)
+            else None
+        )
+        normalized_messages = [
+            dict(item) for item in messages if isinstance(item, dict)
+        ]
+        return normalized_messages, compressed_context, live_response
+    finally:
+        conn.close()
 
 
 @dataclass
@@ -85,9 +119,19 @@ class SessionHistoryTool:
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        raw_messages = list(session.get("messages", []))
+        (
+            checkpoint_messages,
+            checkpoint_compressed_context,
+            checkpoint_live_response,
+        ) = _load_checkpoint_messages(agent_root, session_id)
+        raw_messages = checkpoint_messages
         messages = (
-            manager.with_live_response(raw_messages, session) if include_live else raw_messages
+            manager.with_live_response(
+                raw_messages,
+                {"live_response": checkpoint_live_response},
+            )
+            if include_live
+            else raw_messages
         )
         truncated = False
         if len(messages) > max_messages:
@@ -102,7 +146,8 @@ class SessionHistoryTool:
                 "archived": archived,
                 "message_count": len(messages),
                 "messages": messages,
-                "compressed_context": str(session.get("compressed_context", "")),
+                "compressed_context": checkpoint_compressed_context
+                or str(session.get("compressed_context", "")),
                 "truncated": truncated,
             },
             duration_ms=int((time.monotonic() - started) * 1000),

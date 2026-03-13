@@ -142,8 +142,13 @@ async def delete_session(
     session_id: str,
     archived: bool = False,
 ) -> Response:
-    _, manager = _resolve_session_manager(agent_id)
-    deleted = manager.delete_session(session_id, archived=archived)
+    agent_manager, _ = _resolve_session_manager(agent_id)
+    repository = agent_manager.get_session_repository(agent_id)
+    deleted = await repository.delete_session(
+        agent_id=agent_id,
+        session_id=session_id,
+        archived=archived,
+    )
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Session not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -182,11 +187,19 @@ async def get_messages(
     archived: bool = False,
 ) -> dict[str, Any]:
     agent, manager = _resolve_session_manager(agent_id)
-
+    repository = agent.get_session_repository(agent_id)
     try:
-        session = manager.load_existing_session(session_id, archived=archived)
+        canonical = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            archived=archived,
+            include_live=not archived,
+        )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    canonical_messages = canonical.messages
+    compressed_context = canonical.compressed_context
+    is_first_turn = len(canonical.messages) == 0
     if agent.config is None:
         raise ApiError(
             status_code=500,
@@ -197,7 +210,7 @@ async def get_messages(
 
     system_prompt = agent.build_system_prompt(
         rag_mode=runtime.runtime_config.rag_mode,
-        is_first_turn=len(session.get("messages", [])) == 0,
+        is_first_turn=is_first_turn,
         agent_id=agent_id,
     )
     return {
@@ -206,11 +219,8 @@ async def get_messages(
             "agent_id": agent_id,
             "archived": archived,
             "system_prompt": system_prompt,
-            "messages": manager.with_live_response(
-                list(session.get("messages", [])),
-                session,
-            ),
-            "compressed_context": session.get("compressed_context", ""),
+            "messages": canonical_messages,
+            "compressed_context": compressed_context,
         }
     }
 
@@ -221,21 +231,26 @@ async def get_history(
     session_id: str,
     archived: bool = False,
 ) -> dict[str, Any]:
-    _, manager = _resolve_session_manager(agent_id)
+    agent, manager = _resolve_session_manager(agent_id)
+    repository = agent.get_session_repository(agent_id)
     try:
-        session = manager.load_existing_session(session_id, archived=archived)
+        canonical = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            archived=archived,
+            include_live=not archived,
+        )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    messages = canonical.messages
+    compressed_context = canonical.compressed_context
     return {
         "data": {
             "session_id": session_id,
             "agent_id": agent_id,
             "archived": archived,
-            "messages": manager.with_live_response(
-                list(session.get("messages", [])),
-                session,
-            ),
-            "compressed_context": session.get("compressed_context", ""),
+            "messages": messages,
+            "compressed_context": compressed_context,
         }
     }
 
@@ -246,12 +261,17 @@ async def generate_title(
     session_id: str,
 ) -> dict[str, Any]:
     agent, manager = _resolve_session_manager(agent_id)
+    repository = agent.get_session_repository(agent_id)
     try:
-        session = manager.load_existing_session(session_id)
+        snapshot = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=False,
+        )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
-
-    messages = session.get("messages", [])
+    messages = snapshot.messages
+    compressed_context = snapshot.compressed_context.strip()
     seed = ""
     if messages:
         for msg in messages:
@@ -263,7 +283,7 @@ async def generate_title(
             seed = str(messages[0].get("content", "")).strip()
 
     if not seed:
-        seed = str(session.get("compressed_context", "")).strip()
+        seed = compressed_context
 
     if not seed:
         raise ApiError(
