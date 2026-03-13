@@ -8,7 +8,7 @@ Next.js App Router frontend for Mini-OpenClaw.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | `/`          | Agents console and config workspace: agent switching, tool controls, RAG/tracing toggles, and inspector editing.                |
 | `/sessions`  | Sessions hub and live chat home for opening active threads, reviewing archived transcripts, and resuming work in the workspace. |
-| `/runs`      | Unified run ledger across chat usage, cron jobs, and heartbeat executions, with links back to sessions and traces.              |
+| `/runs`      | Unified run ledger across chat usage, cron jobs, and heartbeat executions, with scheduler token/cost enrichment and links back to sessions and traces. |
 | `/traces`    | Trace explorer route for persisted run/audit events, with typed trace event list/detail API integration in the frontend client. |
 | `/usage`     | Usage analytics, trend chart, CSV export.                                                                                       |
 | `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history.                                                      |
@@ -26,13 +26,13 @@ Agent creation, switching, runtime controls, and workspace inspection all land o
 
 ### `/sessions`
 
-The sessions page is the inbox for active and archived conversations, with resume and transcript-review flows.
+The sessions page is the inbox for active and archived conversations, with resume and transcript-review flows. The route now preserves the active agent/session in navigation, restores the live thread when operators return from other pages, and shows runtime-aware badges (`Running`, `Syncing`, `Ready`) in the detail header.
 
 ![Sessions page](../assets/sessions-page.png)
 
 ### `/runs`
 
-Run history gives operators a cross-cutting ledger for chat, cron, and heartbeat executions.
+Run history gives operators a cross-cutting ledger for chat, cron, and heartbeat executions. Cron rows now merge matching usage accounting, so scheduler-triggered runs can show tokens, cost, provider, and model details without duplicating raw usage rows.
 
 ![Runs page](../assets/runs-page.png)
 
@@ -44,7 +44,7 @@ Trace Explorer focuses on persisted run events and debugging detail for investig
 
 ### `/scheduler`
 
-The scheduler page combines cron controls, heartbeat management, metrics, and recent run visibility.
+The scheduler page combines list-first cron operations, heartbeat management, metrics, and recent run visibility. Cron jobs show derived runtime states (`Scheduled`, `Retrying`, `Paused`, `Completed`, `Failed`) and open in a create/edit drawer instead of an always-open raw form.
 
 ![Scheduler page](../assets/scheduler-page.png)
 
@@ -59,7 +59,9 @@ Usage analytics surfaces token trends, cost summaries, provider/model breakdowns
 - Desktop agents console: draggable split panes (`Sidebar | Inspector`) with localStorage persistence.
 - Mobile workspace: tab-switched panels.
 - `/` is the operator-facing agent console: the sidebar manages agents and tool policy, while the inspector handles workspace files and runtime config.
-- `/sessions` is the sessions inbox and live chat home for the product: active/archived filtering, transcript review, archive/restore, and active-session messaging.
+- `/sessions` is the sessions inbox and live chat home for the product: active/archived filtering, transcript review, archive/restore, active-session messaging, and recovery of the in-flight live thread when navigating away and back.
+- `/runs` keeps chat usage as the canonical usage ledger row type while enriching cron and heartbeat operational rows with matching usage records when available.
+- `/scheduler` is list-first for cron operations: quick actions live on job rows, while create/edit uses a drawer so the job list stays visible during maintenance.
 - Inspector modes:
   - workspace file editing
   - per-agent runtime config editing (`/api/v1/agents/{agent_id}/config/runtime`)

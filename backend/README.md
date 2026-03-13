@@ -5,7 +5,7 @@ FastAPI backend for Mini-OpenClaw LangChain.
 ## Core Responsibilities
 
 - Multi-agent runtime management (`AgentManager`).
-- Chat execution (sync + SSE stream) with LangChain `create_agent`.
+- Chat execution (sync + SSE stream) with an explicit LangGraph `StateGraph` runtime.
 - Tool execution with policy gates and audit trails.
 - Scheduler runtime (cron + heartbeat) with API control.
 - Retrieval over memory/knowledge using SQLite-first indexes.
@@ -29,11 +29,15 @@ Aliases were removed in favor of one canonical name per capability.
 ```mermaid
 flowchart TB
   API["FastAPI /api/v1/*"] --> AM["AgentManager"]
-  AM --> PROMPT["PromptBuilder"]
-  AM --> TOOLS["ToolRunner + policy"]
-  AM --> RETR["MemoryIndexer + knowledge tool"]
+  AM --> REG["GraphRuntimeRegistry"]
+  REG --> GRT["DefaultGraphRuntime (StateGraph)"]
+  GRT --> LCEL["LCEL pipelines"]
+  GRT --> REPO["CheckpointSessionRepository"]
+  GRT --> TOOLS["ToolExecutionService + ToolRunner"]
+  GRT --> RETR["MemoryIndexer + knowledge tool"]
   RETR --> DB["storage/retrieval.db (SQLite/FTS5)"]
-  AM --> SESS["SessionManager + Compression"]
+  REPO --> CKPT["storage/langgraph_checkpoints.sqlite"]
+  AM --> SESS["SessionMetadataStore"]
   AM --> USAGE["UsageStore"]
   API --> SCH["CronScheduler + HeartbeatScheduler"]
 ```
@@ -52,66 +56,50 @@ Each agent workspace is self-contained under `backend/workspaces/<agent_id>/`.
 Root `backend/skills/` acts as the seed source for new workspaces only. Existing
 agent workspaces are not re-synced from root on backend restart.
 
-## Agent Loop Architecture
+## Agent Runtime Architecture
 
-The backend keeps one public orchestrator (`AgentManager`) and now separates
-loop concerns into dedicated graph modules:
-
-- `graph/retrieval_orchestrator.py`
-- `graph/tool_orchestrator.py`
-- `graph/usage_orchestrator.py`
-- `graph/stream_orchestrator.py`
-- `graph/agent_loop_types.py`
-
-This separation is structural only; request/response and stream behavior are unchanged.
+`AgentManager` remains the public facade, but request execution now resolves through
+`GraphRuntimeRegistry` into an explicit default `StateGraph`. That graph owns
+request preparation, retrieval, skill selection, message composition, model/tool
+looping, and finalization. Canonical conversation history now lives in LangGraph
+SQLite checkpoints, while session JSON files remain the metadata/catalog store
+for titles, archive state, and compressed summaries. The API layer is limited to
+SSE adaptation and locking. Active `live_response`, assistant segments, and
+canonical session messages are checkpoint-backed as well.
 
 ### Loop Module Responsibilities
 
 | Module                      | Responsibility                                                                          | Side Effects                                                    |
 | --------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | `retrieval_orchestrator.py` | Decide whether RAG is active and build retrieval envelope (`results`, `rag_context`).   | None (pure orchestration around `MemoryIndexer`).               |
-| `tool_orchestrator.py`      | Build policy-filtered LangChain tools and create loop agent (`create_agent`).           | Creates tool runner and may switch to tool-loop model override. |
+| `tool_execution.py`         | Build policy-filtered tools and execute tool calls into normalized result envelopes.    | Runs tools, records audit/tool metadata, returns `ToolMessage`s. |
 | `stream_orchestrator.py`    | Token/reasoning extraction and incremental token diff logic for stream updates.         | None (pure content parsing helpers).                            |
 | `usage_orchestrator.py`     | Normalize usage payloads, dedupe by source, compute signatures, and persist usage rows. | Writes to `UsageStore` when usage is finalized.                 |
-| `agent_loop_types.py`       | Typed state containers for streaming and retrieval stages.                              | None.                                                           |
+| `runtime_types.py`          | Typed request/result/event/state contracts for the graph runtime.                       | None.                                                           |
+| `default_graph_runtime.py`  | Default `StateGraph` execution path and runtime event emission.                         | Coordinates model/tool loop and final result assembly.          |
+| `lcel_pipelines.py`         | Reusable prompt/model/parser chains for model calls, titles, and summaries.            | None.                                                           |
 
-### Run-Once Loop (`AgentManager.run_once`)
+### Default Graph Shape
 
-1. Resolve runtime and model profile
-   - Load agent-effective runtime config (global + workspace config).
-   - Resolve active LLM profile and instantiate/reuse `ChatOpenAI`.
+`prepare_request -> retrieve_context -> select_skills -> compose_inputs -> model_step`
 
-2. Build retrieval envelope
-   - `RetrievalOrchestrator.build_envelope(...)` checks `runtime.rag_mode`.
-   - If enabled, run memory retrieval through `MemoryIndexer.retrieve(...)`.
-   - Build transient request context in this exact format:
-     - `"[Memory Retrieval Results]\n- (score) text ..."`
+`model_step` routes with `Command` to:
 
-3. Build prompt and message list
-   - `PromptBuilder` assembles system prompt from workspace files.
-   - Conversation history is converted into LangChain messages.
-   - Retrieval context (if any) is appended as a system message.
+- `tool_step` when the model emitted tool calls
+- `finalize_success` when the run completed
+- `finalize_error` when routing/model/tool constraints terminated the run
 
-4. Build tool-enabled agent
-   - `ToolOrchestrator.build_agent(...)` wires:
-     - available mini tools
-     - explicit trigger allowlist (`chat`, `cron`, `heartbeat`)
-     - tool runner with retry-guard
-     - LangChain structured tools
-   - Optional tool-loop model overrides come from the resolved agent `llm` config.
+`tool_step` appends tool results as `ToolMessage`s and routes back through
+`compose_inputs` before the next `model_step`, so tool outputs are always part
+of the next model input.
 
-5. Execute agent
-   - Invoke with recursion limit and callbacks.
-   - Callback stack includes internal audit + usage capture + optional tracing callbacks.
+### Run-Once And Streaming Execution
 
-6. Aggregate and persist usage
-   - `UsageOrchestrator` normalizes callback usage payloads, dedupes repeated message IDs,
-     computes prices, and writes `UsageStore` records.
-   - Response payload is unchanged (`text` or `structured_response` + `messages` + `usage`).
+The graph emits a canonical runtime event stream. `AgentManager.astream` forwards
+those events to the API layer, while `AgentManager.run_once` invokes the same graph
+and returns the final assembled result. Public response shapes stay unchanged.
 
-### Streaming Loop (`AgentManager.astream`)
-
-The stream path follows the same build stages and then emits SSE-aligned events:
+The event model remains SSE-aligned:
 
 - `run_start`
 - `agent_update`
@@ -125,26 +113,24 @@ The stream path follows the same build stages and then emits SSE-aligned events:
 - `done`
 - `error`
 
-`stream_orchestrator` utilities preserve token extraction, incremental diffing, and
-reasoning extraction logic so event ordering/content remains stable.
+`stream_orchestrator` utilities still own token extraction and reasoning parsing so
+event ordering/content remain stable across providers.
 
-`StreamLoopState` keeps stream-only mutable state isolated from orchestration steps:
+Checkpoint session state keeps stream/runtime fields explicit:
 
-- `pending_new_response`: flips true when a tool result finishes and a new model segment should begin.
-- `final_tokens`: linear token buffer used to assemble final `done.content`.
-- `fallback_final_text`: model-update fallback when message token stream is absent.
-- `token_source`: tracks `messages` vs `updates` for deterministic stream metadata.
-- `latest_model_snapshot`: previous update snapshot for incremental token diff.
-- `emitted_reasoning`: dedupe set for reasoning snippets.
-- `emitted_agent_update`: ensures at least one model progress event is emitted.
+- `messages`: committed canonical conversation history.
+- `live_response`: current in-flight assistant view used by session/message reads.
+- `assistant_segments`: per-response segment assembly during streaming.
+- `pending_new_response`, `fallback_final_text`, `token_source`, and loop counters:
+  runtime control fields for deterministic stream behavior and recovery.
 
 ### Tool Calling Flow
 
-1. Agent chooses tool call in the model node.
-2. Tool call is routed through `ToolRunner`.
+1. `model_step` emits tool call requests.
+2. `tool_execution.py` resolves available tools and executes calls through `ToolRunner`.
 3. Policy checks and retry-guard are enforced before execution.
-4. Tool outputs are emitted into stream events and fed back into the agent loop.
-5. Audit callbacks capture tool start/end and associate them with `run_id`/`session_id`.
+4. Tool results are normalized into `ToolExecutionEnvelope` values and `ToolMessage`s.
+5. `tool_step` appends those messages back into graph state, recomposes model input, and emits tool lifecycle events.
 
 ### Memory, Embeddings, and Retrieval Flow
 
@@ -153,7 +139,7 @@ reasoning extraction logic so event ordering/content remains stable.
 1. Resolve retrieval runtime settings (`top_k`, chunking, blend weights).
 2. Resolve storage engine:
    - SQLite (default) with FTS prefilter and vector similarity.
-   - JSON fallback maintained for compatibility/migration safety.
+   - Optional JSON retrieval index fallback only when that retrieval engine is explicitly configured.
 
 3. Generate query embedding (if embedding credentials/provider are available).
 4. Retrieve chunks and blend lexical + semantic scores.
@@ -211,6 +197,7 @@ Behavior notes:
 - Each chat run now performs a deterministic skill-selection pass before model execution.
 - Selected skills are advisory only, but they are injected into the system prompt and tracked separately from actual skill usage.
 - Scheduler workers are started per agent rather than only for the default workspace.
+- Broken in-flight checkpoint state from the older tool-loop bug is automatically repaired on next active access instead of requiring manual session cleanup.
 
 ## Runtime Config Matrix
 
@@ -395,12 +382,12 @@ Known limitations:
 - `index_meta` stores digest + schema version.
 - `chunks_fts` provides lexical prefilter.
 - Semantic + lexical blending is preserved from previous scoring.
-- Legacy JSON index is imported on first SQLite use, and JSON read fallback remains available.
+- Legacy JSON index is imported on first SQLite use. JSON reads are only used when the retrieval engine is explicitly set to `json`.
 
 ## Operations
 
 - Scheduler run/failure logs are JSONL in each workspace `storage/`.
-- Cron and heartbeat records now include `started_at_ms`, `finished_at_ms`, `duration_ms`, and schedule lag where applicable.
+- Cron and heartbeat records now include `run_id` / `session_id` identifiers plus `started_at_ms`, `finished_at_ms`, `duration_ms`, and schedule lag where applicable.
 - Metrics endpoints aggregate these records into windowed percentiles (`p50/p90/p99`) and bucketed trends.
 - Heartbeat skip states include `skipped_no_prompt` for empty/comment-only prompts.
 - Cron and heartbeat write paths are lock-protected.
