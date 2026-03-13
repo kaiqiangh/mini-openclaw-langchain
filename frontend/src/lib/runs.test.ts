@@ -9,7 +9,7 @@ import {
 } from "@/lib/runs";
 
 describe("runs normalization", () => {
-  it("keeps chat usage rows and drops duplicate scheduler-backed usage triggers", () => {
+  it("keeps chat usage rows and enriches scheduler history with matching usage", () => {
     const rows = buildRunLedgerRows({
       usageRecords: [
         {
@@ -55,7 +55,7 @@ describe("runs normalization", () => {
           agent_id: "default",
           provider: "openai",
           run_id: "run-cron-usage",
-          session_id: "session-cron",
+          session_id: "__cron__:cron-1",
           trigger_type: "cron",
           model: "gpt-5",
           model_source: "catalog",
@@ -93,6 +93,8 @@ describe("runs normalization", () => {
           job_id: "cron-1",
           name: "Digest",
           status: "ok",
+          run_id: "run-cron-usage",
+          session_id: "__cron__:cron-1",
           duration_ms: 120,
         },
       ],
@@ -120,6 +122,14 @@ describe("runs normalization", () => {
       ["cron", "ok", "Digest"],
       ["usage", "recorded", "run-chat"],
     ]);
+
+    const cronRow = rows.find((row) => row.label === "Digest");
+    expect(cronRow?.runId).toBe("run-cron-usage");
+    expect(cronRow?.sessionId).toBe("__cron__:cron-1");
+    expect(cronRow?.totalTokens).toBe(2);
+    expect(cronRow?.costUsd).toBe(0.02);
+    expect(cronRow?.provider).toBe("openai");
+    expect(cronRow?.model).toBe("gpt-5");
   });
 
   it("normalizes usage rows with conservative status semantics", () => {
