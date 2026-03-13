@@ -86,7 +86,7 @@ def test_existing_agent_gets_retrieval_db_on_initialize(tmp_path: Path):
     assert (base / "workspaces" / "elon" / "storage" / "retrieval.db").exists()
 
 
-def test_existing_agent_root_memory_is_migrated_to_canonical_path(tmp_path: Path):
+def test_existing_agent_root_memory_is_not_migrated_to_canonical_path(tmp_path: Path):
     base = tmp_path
     for rel in [
         "workspace",
@@ -131,4 +131,7 @@ def test_existing_agent_root_memory_is_migrated_to_canonical_path(tmp_path: Path
     manager.initialize(base)
 
     canonical = base / "workspaces" / "elon" / "memory" / "MEMORY.md"
-    assert canonical.read_text(encoding="utf-8") == legacy_text
+    assert canonical.read_text(encoding="utf-8") != legacy_text
+    assert (base / "workspaces" / "elon" / "MEMORY.md").read_text(
+        encoding="utf-8"
+    ) == legacy_text

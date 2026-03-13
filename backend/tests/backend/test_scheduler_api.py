@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 from api import scheduler_api
 
@@ -55,8 +54,8 @@ def test_scheduler_cron_lifecycle(client):
 
 
 def test_heartbeat_comment_only_prompt_is_skipped(client, api_app):
-    base_dir = Path(api_app["base_dir"])
-    prompt_path = base_dir / "workspace" / "HEARTBEAT.md"
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
+    prompt_path = runtime_root / "workspace" / "HEARTBEAT.md"
     prompt_path.write_text("# comment only\n\n   # still comment\n", encoding="utf-8")
 
     heartbeat_scheduler = api_app["heartbeat_scheduler"]

@@ -4,10 +4,12 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from graph.agent import AgentManager
 from graph.runtime_types import RuntimeRequest
+from graph.session_manager import LegacySessionStateError
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -63,34 +65,32 @@ def test_graph_state_wrappers_create_sqlite_checkpoint(tmp_path: Path):
     assert history
 
 
-def test_checkpoint_repository_migrates_legacy_session_json(tmp_path: Path):
+def test_checkpoint_repository_rejects_legacy_session_json_messages(tmp_path: Path):
     _seed_base(tmp_path)
     manager = AgentManager()
     manager.initialize(tmp_path)
 
-    session_manager = manager.get_session_manager("default")
+    session_manager = manager.get_runtime("default").session_manager
     session_manager.create_session("legacy-session", title="Legacy")
-    session_manager.save_message("legacy-session", "user", "first")
-    session_manager.save_message("legacy-session", "assistant", "second")
     session = session_manager.load_session("legacy-session")
+    session["messages"] = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+    ]
     session["compressed_context"] = "older summary"
     session_manager.save_session("legacy-session", session)
 
-    snapshot = asyncio.run(
-        manager.get_session_repository("default").load_snapshot(
-            agent_id="default",
-            session_id="legacy-session",
-            include_live=False,
+    with pytest.raises(
+        LegacySessionStateError,
+        match="unsupported legacy conversation messages",
+    ):
+        asyncio.run(
+            manager.get_session_repository("default").load_snapshot(
+                agent_id="default",
+                session_id="legacy-session",
+                include_live=False,
+            )
         )
-    )
-    state = asyncio.run(manager.get_graph_state(session_id="legacy-session"))
-    migrated_session = session_manager.load_session("legacy-session")
-
-    assert [row["content"] for row in snapshot.messages] == ["first", "second"]
-    assert [row["content"] for row in state["messages"]] == ["first", "second"]
-    assert state["compressed_context"] == "older summary"
-    assert migrated_session["messages"] == []
-    assert migrated_session["checkpoint_imported_message_count"] == 2
 
 
 def test_prepare_runtime_request_uses_checkpoint_history_for_resume(tmp_path: Path):
@@ -131,7 +131,7 @@ def test_delete_session_removes_checkpoint_thread(tmp_path: Path):
     manager = AgentManager()
     manager.initialize(tmp_path)
 
-    session_manager = manager.get_session_manager("default")
+    session_manager = manager.get_runtime("default").session_manager
     session_manager.create_session("delete-session", title="Delete Me")
     asyncio.run(
         manager.update_graph_state(
@@ -160,7 +160,7 @@ def test_repository_repairs_broken_tool_loop_state_on_access(tmp_path: Path):
     manager = AgentManager()
     manager.initialize(tmp_path)
 
-    session_manager = manager.get_session_manager("default")
+    session_manager = manager.get_runtime("default").session_manager
     session_manager.create_session("broken-session", title="Broken")
     asyncio.run(
         manager.update_graph_state(

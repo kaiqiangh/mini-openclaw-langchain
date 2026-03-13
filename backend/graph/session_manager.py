@@ -7,6 +7,10 @@ from pathlib import Path
 from typing import Any
 
 
+class LegacySessionStateError(RuntimeError):
+    pass
+
+
 class SessionManager:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -42,7 +46,6 @@ class SessionManager:
             "created_at": now,
             "updated_at": now,
             "compressed_context": "",
-            "messages": [],
         }
 
     def _write_json_file(self, path: Path, payload: Any) -> None:
@@ -63,10 +66,21 @@ class SessionManager:
 
         raw = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(raw, list):
-            payload = self._default_payload()
-            payload["messages"] = raw
-            self._write_json_file(path, payload)
-            return payload
+            raise LegacySessionStateError(
+                f"Session uses unsupported legacy conversation format: {session_id}"
+            )
+        if not isinstance(raw, dict):
+            raise LegacySessionStateError(
+                f"Session metadata is invalid or unsupported: {session_id}"
+            )
+        if isinstance(raw.get("messages"), list) and raw.get("messages"):
+            raise LegacySessionStateError(
+                f"Session metadata contains unsupported legacy conversation messages: {session_id}"
+            )
+        if raw.get("live_response") is not None:
+            raise LegacySessionStateError(
+                f"Session metadata contains unsupported legacy live response state: {session_id}"
+            )
         return raw
 
     def create_session(
@@ -121,7 +135,9 @@ class SessionManager:
         if include_active:
             for path in self._iter_session_paths(archived=False):
                 session_id = path.stem
-                payload = self.load_session(session_id, archived=False)
+                payload = self._read_session_payload(
+                    path, session_id=session_id, archived=False
+                )
                 items.append(
                     {
                         "session_id": session_id,
@@ -134,7 +150,9 @@ class SessionManager:
         if include_archived:
             for path in self._iter_session_paths(archived=True):
                 session_id = path.stem
-                payload = self.load_session(session_id, archived=True)
+                payload = self._read_session_payload(
+                    path, session_id=session_id, archived=True
+                )
                 items.append(
                     {
                         "session_id": session_id,
@@ -194,172 +212,6 @@ class SessionManager:
             source.unlink()
             return True
 
-    def save_message(
-        self,
-        session_id: str,
-        role: str,
-        content: str,
-        tool_calls: list[dict[str, Any]] | None = None,
-        skill_uses: list[str] | None = None,
-        selected_skills: list[str] | None = None,
-    ) -> None:
-        with self._lock:
-            session = self.load_session(session_id)
-            entry: dict[str, Any] = {
-                "role": role,
-                "content": content,
-                "timestamp_ms": int(self._now() * 1000),
-            }
-            if tool_calls:
-                entry["tool_calls"] = tool_calls
-            if skill_uses:
-                entry["skill_uses"] = list(dict.fromkeys(skill_uses))
-            if selected_skills:
-                entry["selected_skills"] = list(dict.fromkeys(selected_skills))
-            session.setdefault("messages", []).append(entry)
-            self.save_session(session_id, session)
-
-    def set_live_response(
-        self,
-        session_id: str,
-        *,
-        run_id: str,
-        content: str,
-        tool_calls: list[dict[str, Any]] | None = None,
-        skill_uses: list[str] | None = None,
-        selected_skills: list[str] | None = None,
-    ) -> None:
-        with self._lock:
-            session = self.load_session(session_id)
-            existing = session.get("live_response")
-            existing_ts = 0
-            if isinstance(existing, dict):
-                try:
-                    existing_ts = int(existing.get("timestamp_ms", 0))
-                except Exception:
-                    existing_ts = 0
-            payload: dict[str, Any] = {
-                "run_id": run_id,
-                "content": content,
-                "timestamp_ms": existing_ts or int(self._now() * 1000),
-                "updated_at": self._now(),
-            }
-            if tool_calls:
-                payload["tool_calls"] = tool_calls
-            if skill_uses:
-                payload["skill_uses"] = list(dict.fromkeys(skill_uses))
-            if selected_skills:
-                payload["selected_skills"] = list(dict.fromkeys(selected_skills))
-            session["live_response"] = payload
-            self.save_session(session_id, session)
-
-    def clear_live_response(self, session_id: str, run_id: str | None = None) -> None:
-        with self._lock:
-            session = self.load_session(session_id)
-            live = session.get("live_response")
-            if not isinstance(live, dict):
-                return
-            if run_id and str(live.get("run_id", "")).strip() != run_id.strip():
-                return
-            session.pop("live_response", None)
-            self.save_session(session_id, session)
-
-    @staticmethod
-    def with_live_response(
-        messages: list[dict[str, Any]], session: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        merged = [dict(message) for message in messages]
-        live = session.get("live_response")
-        if not isinstance(live, dict):
-            return merged
-        content = str(live.get("content", "")).strip()
-        tool_calls = live.get("tool_calls")
-        skill_uses = live.get("skill_uses")
-        selected_skills = live.get("selected_skills")
-        if (
-            not content
-            and not (isinstance(tool_calls, list) and len(tool_calls) > 0)
-            and not (isinstance(skill_uses, list) and len(skill_uses) > 0)
-            and not (isinstance(selected_skills, list) and len(selected_skills) > 0)
-        ):
-            return merged
-
-        entry: dict[str, Any] = {
-            "role": "assistant",
-            "content": content,
-            "streaming": True,
-        }
-        timestamp_ms = live.get("timestamp_ms")
-        if timestamp_ms is not None:
-            entry["timestamp_ms"] = timestamp_ms
-        if isinstance(tool_calls, list) and tool_calls:
-            entry["tool_calls"] = tool_calls
-        if isinstance(skill_uses, list) and skill_uses:
-            entry["skill_uses"] = list(dict.fromkeys(str(item) for item in skill_uses))
-        if isinstance(selected_skills, list) and selected_skills:
-            entry["selected_skills"] = list(
-                dict.fromkeys(str(item) for item in selected_skills)
-            )
-        run_id = str(live.get("run_id", "")).strip()
-        if run_id:
-            entry["run_id"] = run_id
-        merged.append(entry)
-        return merged
-
     def get_compressed_context(self, session_id: str) -> str:
         session = self.load_session(session_id)
         return str(session.get("compressed_context", "")).strip()
-
-    def load_session_for_agent(self, session_id: str) -> list[dict[str, Any]]:
-        session = self.load_session(session_id)
-        messages: list[dict[str, Any]] = list(session.get("messages", []))
-
-        merged: list[dict[str, Any]] = []
-        for msg in messages:
-            if (
-                merged
-                and msg.get("role") == "assistant"
-                and merged[-1].get("role") == "assistant"
-            ):
-                merged[-1]["content"] = (
-                    str(merged[-1].get("content", ""))
-                    + "\n"
-                    + str(msg.get("content", ""))
-                ).strip()
-                continue
-            merged.append(dict(msg))
-
-        compressed = self.get_compressed_context(session_id)
-        if compressed:
-            merged.insert(
-                0,
-                {
-                    "role": "assistant",
-                    "content": f"[Summary of Earlier Conversation]\n{compressed}",
-                },
-            )
-
-        return merged
-
-    def compress_history(self, session_id: str, summary: str, n: int) -> dict[str, int]:
-        session = self.load_session(session_id)
-        messages = session.get("messages", [])
-        archive_count = min(max(0, n), len(messages))
-
-        to_archive = messages[:archive_count]
-        remain = messages[archive_count:]
-
-        if archive_count > 0:
-            archive_path = self.archive_dir / f"{session_id}_{int(self._now())}.json"
-            self._write_json_file(archive_path, to_archive)
-
-        prior = str(session.get("compressed_context", "")).strip()
-        if prior and summary.strip():
-            session["compressed_context"] = f"{prior}\n---\n{summary.strip()}"
-        elif summary.strip():
-            session["compressed_context"] = summary.strip()
-
-        session["messages"] = remain
-        self.save_session(session_id, session)
-
-        return {"archived_count": archive_count, "remaining_count": len(remain)}

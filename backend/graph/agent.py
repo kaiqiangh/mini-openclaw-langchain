@@ -54,11 +54,6 @@ class AgentManager:
         self.workspaces_dir: Path | None = None
         self.workspace_template_dir: Path | None = None
         self.config: AppConfig | None = None
-        # Compatibility handles (default agent).
-        self.session_manager: SessionManager | None = None
-        self.memory_indexer: MemoryIndexer | None = None
-        self.audit_store: AuditStore | None = None
-        self.usage_store: UsageStore | None = None
         self.prompt_builder = PromptBuilder()
         self.skill_selector = SkillSelector()
         self.usage_orchestrator = UsageOrchestrator()
@@ -78,7 +73,7 @@ class AgentManager:
         self.runtime_checkpointer = SQLiteRuntimeCheckpointer(
             runtime_getter=self.get_runtime
         )
-        self.graph_registry = GraphRuntimeRegistry(checkpointer=self.runtime_checkpointer)
+        self.graph_registry = GraphRuntimeRegistry()
         self.graph_registry.register(
             "default",
             lambda: DefaultGraphRuntime(
@@ -109,11 +104,6 @@ class AgentManager:
         self._app_config_mtime_ns = self._config_mtime_ns(base_dir / "config.json")
         self._ensure_workspace_template()
         self._ensure_workspace(self.default_agent_id)
-        default_runtime = self.get_runtime(self.default_agent_id)
-        self.session_manager = default_runtime.session_manager
-        self.memory_indexer = default_runtime.memory_indexer
-        self.audit_store = default_runtime.audit_store
-        self.usage_store = default_runtime.usage_store
         self._provision_retrieval_storage_for_all_agents()
 
     def _require_initialized(self) -> tuple[Path, Path]:
@@ -188,51 +178,6 @@ class AgentManager:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(item, target)
 
-    @staticmethod
-    def _is_memory_placeholder(content: str) -> bool:
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if not lines:
-            return True
-        if lines[0].lower() != "# memory":
-            return False
-        if len(lines) == 1:
-            return True
-        placeholder_prefixes = (
-            "- keep this file concise",
-            "- store stable preferences and long-lived context only",
-        )
-        for line in lines[1:]:
-            if not any(
-                line.lower().startswith(prefix) for prefix in placeholder_prefixes
-            ):
-                return False
-        return True
-
-    def _migrate_legacy_root_memory(self, workspace_root: Path) -> None:
-        legacy_memory = workspace_root / "MEMORY.md"
-        if not legacy_memory.exists() or not legacy_memory.is_file():
-            return
-        try:
-            legacy_text = legacy_memory.read_text(encoding="utf-8")
-        except Exception:
-            return
-        if not legacy_text.strip():
-            return
-
-        canonical_memory = workspace_root / "memory" / "MEMORY.md"
-        canonical_text = ""
-        if canonical_memory.exists() and canonical_memory.is_file():
-            try:
-                canonical_text = canonical_memory.read_text(encoding="utf-8")
-            except Exception:
-                return
-
-        if canonical_text.strip() and not self._is_memory_placeholder(canonical_text):
-            return
-
-        canonical_memory.parent.mkdir(parents=True, exist_ok=True)
-        canonical_memory.write_text(legacy_text, encoding="utf-8")
-
     def _ensure_workspace_template(self) -> None:
         base_dir, _ = self._require_initialized()
         assert self.workspace_template_dir is not None
@@ -292,29 +237,6 @@ class AgentManager:
 
         for rel in ("sessions/archive", "sessions/archived_sessions", "storage"):
             (root / rel).mkdir(parents=True, exist_ok=True)
-
-        # One-time migration path for legacy single-workspace layout.
-        if agent_id == self.default_agent_id and self.base_dir is not None:
-            legacy_sessions = self.base_dir / "sessions"
-            default_sessions = root / "sessions"
-            has_default_sessions = any(default_sessions.rglob("*.json"))
-            if legacy_sessions.exists() and not has_default_sessions:
-                shutil.copytree(legacy_sessions, default_sessions, dirs_exist_ok=True)
-
-            legacy_usage = self.base_dir / "storage" / "usage" / "llm_usage.jsonl"
-            default_usage = root / "storage" / "usage" / "llm_usage.jsonl"
-            if legacy_usage.exists() and not default_usage.exists():
-                default_usage.parent.mkdir(parents=True, exist_ok=True)
-                default_usage.write_text(
-                    legacy_usage.read_text(encoding="utf-8"), encoding="utf-8"
-                )
-
-            legacy_knowledge = self.base_dir / "knowledge"
-            default_knowledge = root / "knowledge"
-            if legacy_knowledge.exists() and not any(default_knowledge.rglob("*")):
-                shutil.copytree(legacy_knowledge, default_knowledge, dirs_exist_ok=True)
-
-        self._migrate_legacy_root_memory(root)
         if created_workspace:
             self._seed_workspace_skills(root)
             ensure_skills_snapshot(root)
@@ -406,20 +328,11 @@ class AgentManager:
         self._refresh_runtime_config(runtime)
         return runtime
 
-    def get_session_manager(self, agent_id: str = "default") -> SessionManager:
-        return self.get_runtime(agent_id).session_manager
-
     def get_session_repository(
         self, agent_id: str = "default"
     ) -> CheckpointSessionRepository:
         _ = agent_id
         return self.session_repository
-
-    def get_memory_indexer(self, agent_id: str = "default") -> MemoryIndexer:
-        return self.get_runtime(agent_id).memory_indexer
-
-    def get_usage_store(self, agent_id: str = "default") -> UsageStore:
-        return self.get_runtime(agent_id).usage_store
 
     def get_llm_status(self, agent_id: str = "default") -> dict[str, Any]:
         runtime = self.get_runtime(agent_id)
@@ -601,9 +514,7 @@ class AgentManager:
         self,
         *,
         message: str,
-        history: list[dict[str, Any]],
         session_id: str,
-        is_first_turn: bool = False,
         output_format: str = "text",
         trigger_type: str = "chat",
         agent_id: str = "default",
@@ -614,9 +525,9 @@ class AgentManager:
         result = await self._runtime_graph().invoke(
             RuntimeRequest(
                 message=message,
-                history=history,
+                history=[],
                 session_id=session_id,
-                is_first_turn=is_first_turn,
+                is_first_turn=False,
                 output_format=output_format,
                 trigger_type=trigger_type,
                 agent_id=agent_id,
@@ -644,9 +555,7 @@ class AgentManager:
     async def astream(
         self,
         message: str,
-        history: list[dict[str, Any]],
         session_id: str,
-        is_first_turn: bool = False,
         trigger_type: str = "chat",
         agent_id: str = "default",
         resume_same_turn: bool = False,
@@ -657,9 +566,9 @@ class AgentManager:
         async for event in runtime.astream(
             RuntimeRequest(
                 message=message,
-                history=history,
+                history=[],
                 session_id=session_id,
-                is_first_turn=is_first_turn,
+                is_first_turn=False,
                 output_format="text",
                 trigger_type=trigger_type,
                 agent_id=agent_id,

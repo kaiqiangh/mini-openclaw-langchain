@@ -33,11 +33,6 @@ def list_agent_roots(project_root: Path) -> list[tuple[str, Path]]:
             if path.is_dir() and is_valid_agent_id(path.name):
                 rows.append((path.name, path))
 
-    # Compatibility with tests/legacy layouts that place default workspace at project root.
-    if not any(agent_id == "default" for agent_id, _ in rows):
-        if (project_root / "workspace").exists():
-            rows.append(("default", project_root))
-
     return rows
 
 
@@ -57,8 +52,5 @@ def resolve_agent_root(
     candidate = workspaces_dir / agent_id
     if candidate.exists() and candidate.is_dir():
         return agent_id, candidate
-
-    if agent_id == "default" and (project_root / "workspace").exists():
-        return "default", project_root
 
     raise FileNotFoundError(f"Agent not found: {agent_id}")

@@ -26,7 +26,7 @@ def _require_store(agent_id: str) -> UsageStore:
             message="Usage store is not initialized",
         )
     try:
-        return _agent_manager.get_usage_store(agent_id)
+        return _agent_manager.get_runtime(agent_id).usage_store
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)

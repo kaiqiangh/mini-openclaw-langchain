@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.session_manager import LegacySessionStateError
 from tools.path_guard import InvalidPathError, resolve_workspace_path
 
 router = APIRouter(tags=["tokens"])
@@ -46,6 +47,14 @@ def _require_deps() -> tuple[Path, AgentManager]:
     return _BASE_DIR, _AGENT_MANAGER
 
 
+def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="unsupported_legacy_state",
+        message=str(exc),
+    )
+
+
 @router.get("/agents/{agent_id}/tokens/session/{session_id}")
 async def session_tokens(
     agent_id: str,
@@ -53,18 +62,21 @@ async def session_tokens(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        agent_manager.get_session_manager(agent_id)
+        agent_manager.get_runtime(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
     repository = agent_manager.get_session_repository(agent_id)
-    snapshot = await repository.load_snapshot(
-        agent_id=agent_id,
-        session_id=session_id,
-        include_live=False,
-        create_if_missing=True,
-    )
+    try:
+        snapshot = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=False,
+            create_if_missing=True,
+        )
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     messages = snapshot.messages
     if agent_manager.config is None:
         raise ApiError(

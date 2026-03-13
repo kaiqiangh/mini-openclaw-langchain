@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 
 def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     created = client.post("/api/v1/agents/default/sessions", json={})
@@ -106,11 +108,21 @@ def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     assert gen_title.json()["error"]["code"] == "invalid_state"
 
     # add enough messages and compress successfully
-    manager = api_app["session_manager"]
-    manager.save_message(session_id, "user", "u1")
-    manager.save_message(session_id, "assistant", "a1")
-    manager.save_message(session_id, "user", "u2")
-    manager.save_message(session_id, "assistant", "a2")
+    repository = api_app["agent_manager"].get_session_repository("default")
+    for role, content in [
+        ("user", "u1"),
+        ("assistant", "a1"),
+        ("user", "u2"),
+        ("assistant", "a2"),
+    ]:
+        asyncio.run(
+            repository.append_message(
+                agent_id="default",
+                session_id=session_id,
+                role=role,
+                content=content,
+            )
+        )
 
     compress_ok = client.post(f"/api/v1/agents/default/sessions/{session_id}/compress")
     assert compress_ok.status_code == 200
@@ -166,7 +178,8 @@ def test_archive_restore_and_delete_archived_session(client):
 
 def test_missing_session_reads_return_404_without_creating_files(client, api_app):
     session_id = "missing-session"
-    session_path = api_app["session_manager"].sessions_dir / f"{session_id}.json"
+    runtime = api_app["agent_manager"].get_runtime("default")
+    session_path = runtime.session_manager.sessions_dir / f"{session_id}.json"
     assert not session_path.exists()
 
     history = client.get(f"/api/v1/agents/default/sessions/{session_id}/history")

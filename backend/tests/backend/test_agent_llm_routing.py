@@ -143,7 +143,6 @@ def test_agent_runs_are_isolated_when_default_credentials_are_missing(
     elon_result = asyncio.run(
         manager.run_once(
             message="hello",
-            history=[],
             session_id="session-elon",
             agent_id="elon",
         )
@@ -154,7 +153,6 @@ def test_agent_runs_are_isolated_when_default_credentials_are_missing(
         asyncio.run(
             manager.run_once(
                 message="hello",
-                history=[],
                 session_id="session-main",
                 agent_id="main",
             )
@@ -198,7 +196,6 @@ def test_run_once_skips_unavailable_fallbacks_and_uses_next_available_profile(
     result = asyncio.run(
         manager.run_once(
             message="hello",
-            history=[],
             session_id="session-default",
             agent_id="default",
         )
@@ -250,7 +247,6 @@ def test_fallback_order_is_respected_across_multiple_candidates(
     result = asyncio.run(
         manager.run_once(
             message="hello",
-            history=[],
             session_id="session-order",
             agent_id="default",
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from sse_starlette.sse import AppStatus
@@ -83,7 +84,8 @@ def test_chat_sse_order_and_segment_persistence(client, api_app):
     assert all(int(message["timestamp_ms"]) > 0 for message in history)
 
     # Ensure structured message linkage audit records are persisted.
-    links_file = api_app["base_dir"] / "storage" / "audit" / "message_links.jsonl"
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
+    links_file = runtime_root / "storage" / "audit" / "message_links.jsonl"
     rows = [
         json.loads(line)
         for line in links_file.read_text(encoding="utf-8").splitlines()
@@ -103,12 +105,22 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
     manager = api_app["agent_manager"]
     call_count = {"value": 0}
     captured_histories: list[list[tuple[str, str]]] = []
-    session_manager = manager.get_runtime("default").session_manager
+    repository = manager.get_session_repository("default")
 
-    async def scripted_stream(
-        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
-    ):
+    async def scripted_stream(self, message: str, session_id: str, **kwargs):
         _ = self, kwargs
+        history = await repository.load_history_for_agent(
+            agent_id="default",
+            session_id=session_id,
+            create_if_missing=True,
+        )
+        if (
+            bool(kwargs.get("resume_same_turn", False))
+            and history
+            and str(history[-1].get("role", "")) == "user"
+            and str(history[-1].get("content", "")).strip() == message.strip()
+        ):
+            history = history[:-1]
         captured_histories.append(
             [
                 (str(item.get("role", "")), str(item.get("content", "")))
@@ -117,7 +129,12 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
         )
         call_count["value"] += 1
         if call_count["value"] == 1:
-            session_manager.save_message(session_id, "user", message)
+            await repository.append_message(
+                agent_id="default",
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
             yield {"type": "run_start", "data": {"run_id": "run-first", "attempt": 1}}
             yield {
                 "type": "error",
@@ -129,7 +146,12 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
                 },
             }
             return
-        session_manager.save_message(session_id, "assistant", "continued")
+        await repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="assistant",
+            content="continued",
+        )
         yield {"type": "run_start", "data": {"run_id": "run-second", "attempt": 1}}
         yield {"type": "token", "data": {"content": "continued"}}
         yield {
@@ -145,8 +167,15 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
 
     created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
-    session_manager.save_message(session_id, "user", "prior-question")
-    session_manager.save_message(session_id, "assistant", "prior-answer")
+    for role, content in [("user", "prior-question"), ("assistant", "prior-answer")]:
+        asyncio.run(
+            repository.append_message(
+                agent_id="default",
+                session_id=session_id,
+                role=role,
+                content=content,
+            )
+        )
 
     first = client.post(
         "/api/v1/agents/default/chat",
@@ -196,10 +225,8 @@ def test_chat_stream_hides_backend_exception_text(client, api_app):
 
     manager = api_app["agent_manager"]
 
-    async def failing_stream(
-        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
-    ):
-        _ = self, message, history, session_id, kwargs
+    async def failing_stream(self, message: str, session_id: str, **kwargs):
+        _ = self, message, session_id, kwargs
         raise RuntimeError("provider failed at /tmp/secret-config")
         yield  # pragma: no cover
 
@@ -225,13 +252,16 @@ def test_chat_stream_tracks_skill_usage_in_events_and_history(client, api_app):
         setattr(AppStatus, "should_exit_event", None)
 
     manager = api_app["agent_manager"]
-    session_manager = manager.get_runtime("default").session_manager
+    repository = manager.get_session_repository("default")
 
-    async def scripted_stream(
-        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
-    ):
-        _ = self, history, kwargs
-        session_manager.save_message(session_id, "user", message)
+    async def scripted_stream(self, message: str, session_id: str, **kwargs):
+        _ = self, kwargs
+        await repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="user",
+            content=message,
+        )
         yield {"type": "run_start", "data": {"run_id": "run-skill", "attempt": 1}}
         yield {
             "type": "selected_skills",
@@ -253,10 +283,11 @@ def test_chat_stream_tracks_skill_usage_in_events_and_history(client, api_app):
             },
         }
         yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
-        session_manager.save_message(
-            session_id,
-            "assistant",
-            f"{message}-done",
+        await repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="assistant",
+            content=f"{message}-done",
             selected_skills=["weather_helper"],
             skill_uses=["get_weather"],
             tool_calls=[

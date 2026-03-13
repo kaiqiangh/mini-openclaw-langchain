@@ -280,8 +280,7 @@ async def lifespan(_: FastAPI):
         raise RuntimeError(f"Missing required secrets: {joined}")
 
     agent_manager.initialize(BASE_DIR)
-    if agent_manager.session_manager is None or agent_manager.memory_indexer is None:
-        raise RuntimeError("AgentManager dependencies not initialized")
+    default_runtime = agent_manager.get_runtime("default")
 
     chat.set_agent_manager(agent_manager)
     chat.set_coordinator(local_coordinator)
@@ -294,11 +293,9 @@ async def lifespan(_: FastAPI):
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
 
-    default_runtime = agent_manager.get_runtime("default")
-    if agent_manager.memory_indexer is not None:
-        agent_manager.memory_indexer.rebuild_index(
-            settings=default_runtime.runtime_config.retrieval.memory
-        )
+    default_runtime.memory_indexer.rebuild_index(
+        settings=default_runtime.runtime_config.retrieval.memory
+    )
 
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=default_runtime.root_dir,
@@ -435,12 +432,14 @@ async def health() -> dict[str, str]:
 @app.get("/api/v1/ready")
 async def ready() -> dict[str, str]:
     _ = load_config(BASE_DIR)
-    if agent_manager.session_manager is None:
+    try:
+        agent_manager.get_runtime("default")
+    except RuntimeError as exc:
         raise ApiError(
             status_code=503,
             code="not_ready",
-            message="Agent manager is not ready",
-        )
+            message=str(exc) or "Agent manager is not ready",
+        ) from exc
     return {"status": "ready"}
 
 

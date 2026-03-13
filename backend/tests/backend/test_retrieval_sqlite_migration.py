@@ -9,7 +9,9 @@ from graph.memory_indexer import MemoryIndexer
 from tools.search_knowledge_tool import SearchKnowledgeTool
 
 
-def test_memory_indexer_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
+def test_memory_indexer_rebuilds_sqlite_from_source_instead_of_json_index(
+    tmp_path: Path,
+):
     (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
     (tmp_path / "storage" / "memory_index").mkdir(parents=True, exist_ok=True)
     (tmp_path / "config.json").write_text(
@@ -40,8 +42,8 @@ def test_memory_indexer_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
         "digest": digest,
         "chunk_size": settings.chunk_size,
         "chunk_overlap": settings.chunk_overlap,
-        "chunks": ["alpha one", "beta two", "alpha three"],
-        "embeddings": [[], [], []],
+        "chunks": ["stale legacy only"],
+        "embeddings": [[]],
         "source": "memory/MEMORY.md",
         "embedding_provider": "openai",
         "embedding_model": "text-embedding-3-small",
@@ -54,6 +56,7 @@ def test_memory_indexer_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
     rows = indexer.retrieve("alpha", settings=settings)
     assert rows
     assert rows[0]["source"] == "memory/MEMORY.md"
+    assert any("alpha" in str(row["text"]).lower() for row in rows)
 
     with sqlite3.connect(tmp_path / "storage" / "retrieval.db") as conn:
         meta = conn.execute(
@@ -63,7 +66,9 @@ def test_memory_indexer_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
     assert str(meta[0]) == digest
 
 
-def test_search_knowledge_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
+def test_search_knowledge_rebuilds_sqlite_from_source_instead_of_json_index(
+    tmp_path: Path,
+):
     (tmp_path / "knowledge").mkdir(parents=True, exist_ok=True)
     (tmp_path / "storage" / "knowledge_index").mkdir(parents=True, exist_ok=True)
     (tmp_path / "config.json").write_text(
@@ -98,8 +103,11 @@ def test_search_knowledge_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
         "embedding_provider": "openai",
         "embedding_model": "text-embedding-3-small",
         "rows": [
-            {"source": "knowledge/guide.md", "text": "alpha section", "embedding": []},
-            {"source": "knowledge/guide.md", "text": "beta section", "embedding": []},
+            {
+                "source": "knowledge/guide.md",
+                "text": "stale legacy row",
+                "embedding": [],
+            },
         ],
     }
     (tmp_path / "storage" / "knowledge_index" / "index.json").write_text(
@@ -110,6 +118,9 @@ def test_search_knowledge_migrates_legacy_json_index_to_sqlite(tmp_path: Path):
     result = tool.run({"query": "alpha"}, context=None)  # type: ignore[arg-type]
     assert result.ok is True
     assert result.data["results"]
+    assert any(
+        "alpha" in str(row["text"]).lower() for row in result.data["results"]
+    )
 
     with sqlite3.connect(tmp_path / "storage" / "retrieval.db") as conn:
         meta = conn.execute(

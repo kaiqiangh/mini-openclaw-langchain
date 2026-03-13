@@ -15,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 from api.errors import ApiError
 from control import LocalCoordinator
 from graph.agent import AgentManager
+from graph.session_manager import LegacySessionStateError
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -36,9 +37,7 @@ class _StreamRunState:
     agent_id: str
     session_id: str
     message: str
-    is_first_turn: bool
     resume_same_turn: bool = False
-    history: list[dict[str, Any]] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict[str, str] | None]] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     task: asyncio.Task[None] | None = None
@@ -76,6 +75,14 @@ def _run_key(agent_id: str, session_id: str) -> str:
     return f"{agent_id}:{session_id}"
 
 
+def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="unsupported_legacy_state",
+        message=str(exc),
+    )
+
+
 def _extract_skill_uses(value: Any) -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
@@ -99,6 +106,25 @@ def _extract_skill_uses(value: Any) -> list[str]:
 
     visit(value)
     return found
+
+
+async def _should_emit_title(
+    agent: AgentManager,
+    *,
+    agent_id: str,
+    session_id: str,
+) -> bool:
+    runtime = agent.get_runtime(agent_id)
+    session = runtime.session_manager.load_existing_session(session_id)
+    if str(session.get("title", "New Session")).strip() != "New Session":
+        return False
+    snapshot = await agent.get_session_repository(agent_id).load_snapshot(
+        agent_id=agent_id,
+        session_id=session_id,
+        include_live=False,
+    )
+    user_message_count = sum(1 for item in snapshot.messages if item.get("role") == "user")
+    return user_message_count == 1
 
 
 async def _publish_event(
@@ -159,9 +185,7 @@ async def _run_stream_task(
     try:
         async for event in agent.astream(
             message=state.message,
-            history=state.history,
             session_id=state.session_id,
-            is_first_turn=state.is_first_turn,
             trigger_type="chat",
             agent_id=state.agent_id,
             resume_same_turn=state.resume_same_turn,
@@ -176,9 +200,13 @@ async def _run_stream_task(
 
             await _publish_event(state, event_type, data)
 
-            if event_type == "done" and state.is_first_turn:
+            if event_type == "done" and await _should_emit_title(
+                agent,
+                agent_id=state.agent_id,
+                session_id=state.session_id,
+            ):
                 title = await agent.generate_title(state.message, agent_id=state.agent_id)
-                agent.get_session_manager(state.agent_id).update_title(
+                agent.get_runtime(state.agent_id).session_manager.update_title(
                     state.session_id, title
                 )
                 await _publish_event(
@@ -236,44 +264,27 @@ async def _unsubscribe_run(
 async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
-        agent.get_session_manager(agent_id)
+        runtime = agent.get_runtime(agent_id)
+        runtime.session_manager.load_session(request.session_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-
-    session_repository = agent.get_session_repository(agent_id)
-    snapshot = await session_repository.load_snapshot(
-        agent_id=agent_id,
-        session_id=request.session_id,
-        include_live=False,
-        create_if_missing=True,
-    )
-    is_first_turn = len(snapshot.messages) == 0
-    history = await session_repository.load_history_for_agent(
-        agent_id=agent_id,
-        session_id=request.session_id,
-        create_if_missing=True,
-    )
-    if request.resume_same_turn and history:
-        last = history[-1]
-        if (
-            str(last.get("role", "")).strip() == "user"
-            and str(last.get("content", "")).strip() == request.message.strip()
-        ):
-            history = history[:-1]
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
 
     if not request.stream:
-        result = await agent.run_once(
-            message=request.message,
-            history=history,
-            session_id=request.session_id,
-            is_first_turn=is_first_turn,
-            output_format="text",
-            trigger_type="chat",
-            agent_id=agent_id,
-            resume_same_turn=bool(request.resume_same_turn),
-        )
+        try:
+            result = await agent.run_once(
+                message=request.message,
+                session_id=request.session_id,
+                output_format="text",
+                trigger_type="chat",
+                agent_id=agent_id,
+                resume_same_turn=bool(request.resume_same_turn),
+            )
+        except LegacySessionStateError as exc:
+            raise _legacy_state_api_error(exc) from exc
         return {
             "data": {
                 "content": str(result.get("text", "")),
@@ -315,9 +326,7 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
                 agent_id=agent_id,
                 session_id=request.session_id,
                 message=request.message,
-                is_first_turn=is_first_turn,
                 resume_same_turn=bool(request.resume_same_turn),
-                history=history,
                 lock_owner=lock_owner,
             )
             _active_runs[key] = state

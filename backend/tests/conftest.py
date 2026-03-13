@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,6 +67,77 @@ class FakeRuntime:
 class FakeSessionRepository:
     def __init__(self, manager: SessionManager) -> None:
         self.manager = manager
+        self._messages: dict[tuple[bool, str], list[dict[str, object]]] = {}
+        self._live_responses: dict[tuple[bool, str], dict[str, object]] = {}
+
+    @staticmethod
+    def _key(session_id: str, *, archived: bool) -> tuple[bool, str]:
+        return archived, session_id
+
+    @staticmethod
+    def _now_ms() -> int:
+        return int(time.time() * 1000)
+
+    @classmethod
+    def _message_entry(
+        cls,
+        role: str,
+        content: str,
+        *,
+        tool_calls: list[dict[str, object]] | None = None,
+        skill_uses: list[str] | None = None,
+        selected_skills: list[str] | None = None,
+    ) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "role": role,
+            "content": content,
+            "timestamp_ms": cls._now_ms(),
+        }
+        if tool_calls:
+            entry["tool_calls"] = list(tool_calls)
+        if skill_uses:
+            entry["skill_uses"] = list(dict.fromkeys(skill_uses))
+        if selected_skills:
+            entry["selected_skills"] = list(dict.fromkeys(selected_skills))
+        return entry
+
+    @staticmethod
+    def _history_with_summary(
+        messages: list[dict[str, object]],
+        compressed_context: str,
+    ) -> list[dict[str, object]]:
+        merged = [dict(message) for message in messages]
+        if not compressed_context.strip():
+            return merged
+        return [
+            {
+                "role": "assistant",
+                "content": f"[Summary of Earlier Conversation]\n{compressed_context.strip()}",
+            },
+            *merged,
+        ]
+
+    @staticmethod
+    def _with_live_response(
+        messages: list[dict[str, object]],
+        live_response: dict[str, object] | None,
+    ) -> list[dict[str, object]]:
+        merged = [dict(message) for message in messages]
+        if not isinstance(live_response, dict):
+            return merged
+        content = str(live_response.get("content", "")).strip()
+        if not content:
+            return merged
+        merged.append(
+            {
+                "role": "assistant",
+                "content": content,
+                "streaming": True,
+                "timestamp_ms": live_response.get("timestamp_ms", 0),
+                "run_id": live_response.get("run_id", ""),
+            }
+        )
+        return merged
 
     async def load_snapshot(
         self,
@@ -83,16 +155,18 @@ class FakeSessionRepository:
             if create_if_missing
             else self.manager.load_existing_session(session_id, archived=archived)
         )
-        messages = list(session.get("messages", []))
+        key = self._key(session_id, archived=archived)
+        messages = [dict(item) for item in self._messages.get(key, [])]
+        live_response = self._live_responses.get(key)
         if include_live and not archived:
-            messages = self.manager.with_live_response(messages, session)
+            messages = self._with_live_response(messages, live_response)
         return SimpleNamespace(
             session_id=session_id,
             agent_id=agent_id,
             archived=archived,
             messages=messages,
             compressed_context=str(session.get("compressed_context", "")),
-            live_response=session.get("live_response"),
+            live_response=live_response,
         )
 
     async def load_history_for_agent(
@@ -107,7 +181,10 @@ class FakeSessionRepository:
         _ = agent_id, graph_name
         if create_if_missing:
             self.manager.load_session(session_id, archived=archived)
-        return self.manager.load_session_for_agent(session_id)
+        key = self._key(session_id, archived=archived)
+        session = self.manager.load_existing_session(session_id, archived=archived)
+        messages = [dict(item) for item in self._messages.get(key, [])]
+        return self._history_with_summary(messages, str(session.get("compressed_context", "")))
 
     async def delete_session(
         self,
@@ -117,6 +194,9 @@ class FakeSessionRepository:
         archived: bool = False,
     ) -> bool:
         _ = agent_id
+        key = self._key(session_id, archived=archived)
+        self._messages.pop(key, None)
+        self._live_responses.pop(key, None)
         return self.manager.delete_session(session_id, archived=archived)
 
     async def compress_history(
@@ -129,7 +209,78 @@ class FakeSessionRepository:
         graph_name: str = "default",
     ) -> dict[str, int]:
         _ = agent_id, graph_name
-        return self.manager.compress_history(session_id=session_id, summary=summary, n=n)
+        key = self._key(session_id, archived=False)
+        session = self.manager.load_session(session_id)
+        messages = self._messages.get(key, [])
+        archive_count = min(max(0, n), len(messages))
+        to_archive = messages[:archive_count]
+        remain = messages[archive_count:]
+
+        if archive_count > 0:
+            archive_path = self.manager.archive_dir / f"{session_id}_{int(time.time())}.json"
+            self.manager._write_json_file(archive_path, to_archive)  # noqa: SLF001
+
+        prior = str(session.get("compressed_context", "")).strip()
+        normalized = summary.strip()
+        if prior and normalized:
+            session["compressed_context"] = f"{prior}\n---\n{normalized}"
+        else:
+            session["compressed_context"] = normalized or prior
+        self.manager.save_session(session_id, session)
+        self._messages[key] = list(remain)
+        self._live_responses.pop(key, None)
+        return {"archived_count": archive_count, "remaining_count": len(remain)}
+
+    async def append_message(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        tool_calls: list[dict[str, object]] | None = None,
+        skill_uses: list[str] | None = None,
+        selected_skills: list[str] | None = None,
+    ) -> None:
+        _ = agent_id
+        self.manager.load_session(session_id)
+        key = self._key(session_id, archived=False)
+        rows = self._messages.setdefault(key, [])
+        rows.append(
+            self._message_entry(
+                role,
+                content,
+                tool_calls=tool_calls,
+                skill_uses=skill_uses,
+                selected_skills=selected_skills,
+            )
+        )
+
+    async def set_live_response(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        run_id: str,
+        content: str,
+    ) -> None:
+        _ = agent_id
+        self.manager.load_session(session_id)
+        key = self._key(session_id, archived=False)
+        self._live_responses[key] = {
+            "run_id": run_id,
+            "content": content,
+            "timestamp_ms": self._now_ms(),
+        }
+
+    async def clear_live_response(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> None:
+        _ = agent_id
+        self._live_responses.pop(self._key(session_id, archived=False), None)
 
 
 class FakeAgentManager:
@@ -137,16 +288,10 @@ class FakeAgentManager:
         self.base_dir = base_dir
         self.config = _Config()
         self._runtimes: dict[str, FakeRuntime] = {}
-        runtime = self.get_runtime("default")
-        self.session_manager = runtime.session_manager
-        self.memory_indexer = runtime.memory_indexer
-        self.audit_store = runtime.audit_store
-        self.usage_store = runtime.usage_store
-        self.session_repository = FakeSessionRepository(runtime.session_manager)
+        self._session_repositories: dict[str, FakeSessionRepository] = {}
+        self.get_runtime("default")
 
     def _agent_root(self, agent_id: str) -> Path:
-        if agent_id == "default":
-            return self.base_dir
         return self.base_dir / "workspaces" / agent_id
 
     def _ensure_agent_root(self, agent_id: str) -> Path:
@@ -208,17 +353,13 @@ class FakeAgentManager:
         root = self._ensure_agent_root(agent_id)
         return root / "config.json"
 
-    def get_session_manager(self, agent_id: str = "default") -> SessionManager:
-        return self.get_runtime(agent_id).session_manager
-
     def get_session_repository(self, agent_id: str = "default") -> FakeSessionRepository:
-        return FakeSessionRepository(self.get_runtime(agent_id).session_manager)
-
-    def get_memory_indexer(self, agent_id: str = "default") -> MemoryIndexer:
-        return self.get_runtime(agent_id).memory_indexer
-
-    def get_usage_store(self, agent_id: str = "default") -> UsageStore:
-        return self.get_runtime(agent_id).usage_store
+        runtime = self.get_runtime(agent_id)
+        repository = self._session_repositories.get(agent_id)
+        if repository is None:
+            repository = FakeSessionRepository(runtime.session_manager)
+            self._session_repositories[agent_id] = repository
+        return repository
 
     @staticmethod
     def _llm_status() -> dict[str, object]:
@@ -290,22 +431,43 @@ class FakeAgentManager:
         return "Compressed Summary"
 
     async def run_once(self, *, message: str, **kwargs):
-        runtime = self.get_runtime(str(kwargs.get("agent_id", "default")))
+        agent_id = str(kwargs.get("agent_id", "default"))
+        repository = self.get_session_repository(agent_id)
         session_id = str(kwargs.get("session_id", ""))
+        snapshot = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=False,
+            create_if_missing=True,
+        )
         if session_id and not bool(kwargs.get("resume_same_turn", False)):
-            runtime.session_manager.save_message(session_id, "user", message)
-        text = f"RUN:first={int(bool(kwargs.get('is_first_turn', False)))}:{message[:40]}"
+            await repository.append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
+        text = f"RUN:first={int(len(snapshot.messages) == 0)}:{message[:40]}"
         if session_id:
-            runtime.session_manager.save_message(session_id, "assistant", text)
+            await repository.append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role="assistant",
+                content=text,
+            )
         return {"text": text}
 
-    async def astream(
-        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
-    ):
-        _ = history
-        runtime = self.get_runtime(str(kwargs.get("agent_id", "default")))
+    async def astream(self, message: str, session_id: str, **kwargs):
+        agent_id = str(kwargs.get("agent_id", "default"))
+        runtime = self.get_runtime(agent_id)
+        repository = self.get_session_repository(agent_id)
         if not bool(kwargs.get("resume_same_turn", False)):
-            runtime.session_manager.save_message(session_id, "user", message)
+            await repository.append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role="user",
+                content=message,
+            )
             runtime.audit_store.append_message_link(
                 run_id=None,
                 session_id=session_id,
@@ -331,11 +493,18 @@ class FakeAgentManager:
             "data": {"tool": "read_files", "input": {"path": "memory/MEMORY.md"}},
         }
         yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
-        runtime.session_manager.save_message(
-            session_id,
-            "assistant",
-            f"[{session_id}]A",
-            tool_calls=[{"tool": "read_files", "input": {"path": "memory/MEMORY.md"}, "output": "ok"}],
+        await repository.append_message(
+            agent_id=agent_id,
+            session_id=session_id,
+            role="assistant",
+            content=f"[{session_id}]A",
+            tool_calls=[
+                {
+                    "tool": "read_files",
+                    "input": {"path": "memory/MEMORY.md"},
+                    "output": "ok",
+                }
+            ],
         )
         runtime.audit_store.append_message_link(
             run_id="run-test",
@@ -351,7 +520,12 @@ class FakeAgentManager:
             "data": {"run_id": "run-test", "content": "reasoning sample"},
         }
         yield {"type": "token", "data": {"content": "B"}}
-        runtime.session_manager.save_message(session_id, "assistant", "B")
+        await repository.append_message(
+            agent_id=agent_id,
+            session_id=session_id,
+            role="assistant",
+            content="B",
+        )
         runtime.audit_store.append_message_link(
             run_id="run-test",
             session_id=session_id,
@@ -431,7 +605,6 @@ def api_app(backend_base_dir: Path):
 
     agent_manager = FakeAgentManager(backend_base_dir)
     typed_agent_manager = cast("AgentManager", agent_manager)
-    session_manager = agent_manager.get_session_manager("default")
 
     chat.set_agent_manager(typed_agent_manager)
     sessions.set_agent_manager(typed_agent_manager)
@@ -510,9 +683,7 @@ def api_app(backend_base_dir: Path):
     return {
         "app": app,
         "base_dir": backend_base_dir,
-        "session_manager": session_manager,
         "agent_manager": agent_manager,
-        "memory_indexer": agent_manager.get_memory_indexer("default"),
         "heartbeat_scheduler": heartbeat_scheduler,
         "cron_scheduler": cron_scheduler,
     }

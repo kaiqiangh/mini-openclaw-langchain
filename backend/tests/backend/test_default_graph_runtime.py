@@ -261,10 +261,8 @@ def test_graph_runtime_streams_tool_loop_events(monkeypatch, tmp_path: Path):
     async def collect():
         rows = []
         async for event in manager.astream(
-            "read the memory file",
-            [],
-            "session-1",
-            is_first_turn=True,
+            message="read the memory file",
+            session_id="session-1",
             agent_id="default",
         ):
             rows.append(event)
@@ -323,10 +321,8 @@ def test_graph_runtime_rebuilds_model_input_after_tool_results(
     async def collect():
         rows = []
         async for event in manager.astream(
-            "read the memory file",
-            [],
-            "session-tool-loop",
-            is_first_turn=True,
+            message="read the memory file",
+            session_id="session-tool-loop",
             agent_id="default",
         ):
             rows.append(event)
@@ -383,10 +379,8 @@ def test_graph_runtime_enforces_max_steps(monkeypatch, tmp_path: Path):
     async def collect():
         rows = []
         async for event in manager.astream(
-            "loop forever",
-            [],
-            "session-2",
-            is_first_turn=True,
+            message="loop forever",
+            session_id="session-2",
             agent_id="default",
         ):
             rows.append(event)
@@ -450,10 +444,8 @@ def test_graph_runtime_emits_retrieval_and_usage(monkeypatch, tmp_path: Path):
     async def collect():
         rows = []
         async for event in manager.astream(
-            "use memory",
-            [],
-            "session-3",
-            is_first_turn=True,
+            message="use memory",
+            session_id="session-3",
             agent_id="default",
         ):
             rows.append(event)
@@ -497,10 +489,8 @@ def test_graph_runtime_retries_then_succeeds(monkeypatch, tmp_path: Path):
     async def collect():
         rows = []
         async for event in manager.astream(
-            "retry please",
-            [],
-            "session-retry",
-            is_first_turn=True,
+            message="retry please",
+            session_id="session-retry",
             agent_id="default",
         ):
             rows.append(event)
@@ -563,10 +553,8 @@ def test_graph_runtime_injects_selected_skills_and_rag_context(
     async def collect():
         rows = []
         async for event in manager.astream(
-            "use memory",
-            [],
-            "session-4",
-            is_first_turn=True,
+            message="use memory",
+            session_id="session-4",
             agent_id="default",
         ):
             rows.append(event)

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from api.errors import ApiError
 from graph.agent import AgentManager
-from graph.session_manager import SessionManager
+from graph.session_manager import LegacySessionStateError, SessionManager
 from scheduler.cron import CronScheduler
 
 router = APIRouter(tags=["sessions"])
@@ -42,7 +42,7 @@ def _require_agent_manager() -> AgentManager:
 def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManager]:
     manager = _require_agent_manager()
     try:
-        session_manager = manager.get_session_manager(agent_id)
+        session_manager = manager.get_runtime(agent_id).session_manager
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -83,6 +83,14 @@ def _display_session_title(
     return normalized or "New Session"
 
 
+def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
+    return ApiError(
+        status_code=409,
+        code="unsupported_legacy_state",
+        message=str(exc),
+    )
+
+
 @router.get("/agents/{agent_id}/sessions")
 async def list_sessions(
     agent_id: str,
@@ -90,8 +98,12 @@ async def list_sessions(
 ) -> dict[str, Any]:
     agent_manager, session_manager = _resolve_session_manager(agent_id)
     cron_titles = _cron_session_titles(agent_manager, agent_id)
+    try:
+        raw_sessions = session_manager.list_sessions(scope=scope)
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     sessions = []
-    for item in session_manager.list_sessions(scope=scope):
+    for item in raw_sessions:
         row = dict(item)
         row["title"] = _display_session_title(
             str(row.get("session_id", "")),
@@ -186,7 +198,7 @@ async def get_messages(
     session_id: str,
     archived: bool = False,
 ) -> dict[str, Any]:
-    agent, manager = _resolve_session_manager(agent_id)
+    agent, _ = _resolve_session_manager(agent_id)
     repository = agent.get_session_repository(agent_id)
     try:
         canonical = await repository.load_snapshot(
@@ -197,6 +209,8 @@ async def get_messages(
         )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     canonical_messages = canonical.messages
     compressed_context = canonical.compressed_context
     is_first_turn = len(canonical.messages) == 0
@@ -231,7 +245,7 @@ async def get_history(
     session_id: str,
     archived: bool = False,
 ) -> dict[str, Any]:
-    agent, manager = _resolve_session_manager(agent_id)
+    agent, _ = _resolve_session_manager(agent_id)
     repository = agent.get_session_repository(agent_id)
     try:
         canonical = await repository.load_snapshot(
@@ -242,6 +256,8 @@ async def get_history(
         )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     messages = canonical.messages
     compressed_context = canonical.compressed_context
     return {
@@ -270,6 +286,8 @@ async def generate_title(
         )
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
     messages = snapshot.messages
     compressed_context = snapshot.compressed_context.strip()
     seed = ""

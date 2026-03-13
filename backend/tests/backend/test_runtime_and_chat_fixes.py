@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 
 def test_chat_non_stream_respects_first_turn_flag(client):
     session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
@@ -25,12 +27,19 @@ def test_chat_non_stream_resume_same_turn_avoids_duplicate_user_message(
     client, api_app
 ):
     manager = api_app["agent_manager"]
-    session_manager = manager.get_runtime("default").session_manager
+    repository = manager.get_session_repository("default")
     session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
         "session_id"
     ]
 
-    session_manager.save_message(session_id, "user", "hello")
+    asyncio.run(
+        repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="user",
+            content="hello",
+        )
+    )
 
     resumed = client.post(
         "/api/v1/agents/default/chat",

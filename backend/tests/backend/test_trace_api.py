@@ -14,10 +14,10 @@ def _append_jsonl(path, rows):
 
 def test_trace_events_list_normalizes_and_filters_persisted_sources(client, api_app):
     now_ms = int(time.time() * 1000)
-    base_dir = api_app["base_dir"]
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
 
     _append_jsonl(
-        base_dir / "storage" / "audit" / "steps.jsonl",
+        runtime_root / "storage" / "audit" / "steps.jsonl",
         [
           {
               "schema": "audit.step.v1",
@@ -40,7 +40,7 @@ def test_trace_events_list_normalizes_and_filters_persisted_sources(client, api_
         ],
     )
     _append_jsonl(
-        base_dir / "storage" / "runs_events.jsonl",
+        runtime_root / "storage" / "runs_events.jsonl",
         [
           {
               "run_id": "run-audit-tool",
@@ -106,10 +106,10 @@ def test_trace_events_list_normalizes_and_filters_persisted_sources(client, api_
 
 def test_trace_events_support_cursor_pagination_and_detail_lookup(client, api_app):
     now_ms = int(time.time() * 1000)
-    base_dir = api_app["base_dir"]
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
 
     _append_jsonl(
-        base_dir / "storage" / "audit" / "steps.jsonl",
+        runtime_root / "storage" / "audit" / "steps.jsonl",
         [
             {
                 "schema": "audit.step.v1",
@@ -177,10 +177,10 @@ def test_trace_events_support_cursor_pagination_and_detail_lookup(client, api_ap
 
 def test_trace_events_preserve_missing_run_and_session_ids(client, api_app):
     now_ms = int(time.time() * 1000)
-    base_dir = api_app["base_dir"]
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
 
     _append_jsonl(
-        base_dir / "storage" / "audit" / "steps.jsonl",
+        runtime_root / "storage" / "audit" / "steps.jsonl",
         [
             {
                 "schema": "audit.step.v1",
@@ -207,10 +207,10 @@ def test_trace_events_preserve_missing_run_and_session_ids(client, api_app):
 
 def test_trace_events_reject_cursor_payloads_that_are_not_objects(client, api_app):
     now_ms = int(time.time() * 1000)
-    base_dir = api_app["base_dir"]
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
 
     _append_jsonl(
-        base_dir / "storage" / "audit" / "steps.jsonl",
+        runtime_root / "storage" / "audit" / "steps.jsonl",
         [
             {
                 "schema": "audit.step.v1",

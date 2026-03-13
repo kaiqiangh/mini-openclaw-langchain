@@ -9,7 +9,6 @@ from langchain_core.messages import BaseMessage
 
 from graph.runtime_types import GraphRuntime, RuntimeEvent, RuntimeRequest, RuntimeResult
 from graph.session_manager import SessionManager
-from graph.session_metadata_store import SessionMetadataStore
 
 from graph.runtime_types import RuntimeCheckpointer
 
@@ -64,8 +63,8 @@ class CheckpointSessionRepository:
     def _runtime(self, agent_id: str) -> RuntimeWithSessionManager:
         return self._runtime_getter(agent_id)
 
-    def _metadata(self, agent_id: str) -> SessionMetadataStore:
-        return SessionMetadataStore(self._runtime(agent_id).session_manager)
+    def _session_manager(self, agent_id: str) -> SessionManager:
+        return self._runtime(agent_id).session_manager
 
     @staticmethod
     def _state_request(
@@ -199,7 +198,7 @@ class CheckpointSessionRepository:
         )
         return await self._graph_getter(graph_name).aupdate_state(request, values)
 
-    async def _ensure_checkpoint_migrated(
+    async def _ensure_session_state(
         self,
         *,
         agent_id: str,
@@ -208,11 +207,11 @@ class CheckpointSessionRepository:
         create_if_missing: bool = False,
         graph_name: str = "default",
     ) -> dict[str, Any]:
-        metadata = self._metadata(agent_id)
+        session_manager = self._session_manager(agent_id)
         session = (
-            metadata.load(session_id, archived=archived)
+            session_manager.load_session(session_id, archived=archived)
             if create_if_missing
-            else metadata.load_existing(session_id, archived=archived)
+            else session_manager.load_existing_session(session_id, archived=archived)
         )
 
         state = await self.get_state(
@@ -220,64 +219,9 @@ class CheckpointSessionRepository:
             session_id=session_id,
             graph_name=graph_name,
         )
-        state_messages = self._normalize_messages(state.get("messages", []))
         compressed_context = str(session.get("compressed_context", "")).strip()
         state_updated = False
-
-        if state_messages and not metadata.is_checkpoint_migrated(
-            session_id, archived=archived
-        ):
-            live_response = metadata.get_live_response(session_id, archived=archived)
-            if (
-                live_response is not None
-                and self._normalize_live_response(state.get("live_response")) is None
-            ):
-                await self.update_state(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    values={"live_response": live_response},
-                    graph_name=graph_name,
-                )
-                state_updated = True
-            metadata.mark_checkpoint_migrated(
-                session_id,
-                imported_message_count=len(
-                    metadata.get_legacy_messages(session_id, archived=archived)
-                ),
-                archived=archived,
-            )
-            if live_response is not None:
-                metadata.clear_live_response(session_id, archived=archived)
-            session = metadata.load(session_id, archived=archived)
-        elif not state_messages and not metadata.is_checkpoint_migrated(
-            session_id, archived=archived
-        ):
-            legacy_messages = metadata.get_legacy_messages(session_id, archived=archived)
-            live_response = metadata.get_live_response(session_id, archived=archived)
-            updates: dict[str, Any] = {}
-            if legacy_messages:
-                updates["messages"] = legacy_messages
-            if compressed_context:
-                updates["compressed_context"] = compressed_context
-            if live_response is not None:
-                updates["live_response"] = live_response
-            if updates:
-                await self.update_state(
-                    agent_id=agent_id,
-                    session_id=session_id,
-                    values=updates,
-                    graph_name=graph_name,
-                )
-                state_updated = True
-            metadata.mark_checkpoint_migrated(
-                session_id,
-                imported_message_count=len(legacy_messages),
-                archived=archived,
-            )
-            if live_response is not None:
-                metadata.clear_live_response(session_id, archived=archived)
-            session = metadata.load(session_id, archived=archived)
-        elif compressed_context != str(state.get("compressed_context", "")).strip():
+        if compressed_context != str(state.get("compressed_context", "")).strip():
             await self.update_state(
                 agent_id=agent_id,
                 session_id=session_id,
@@ -300,7 +244,6 @@ class CheckpointSessionRepository:
                 values=self._runtime_repair_values(),
                 graph_name=graph_name,
             )
-            metadata.clear_live_response(session_id)
 
         return session
 
@@ -364,6 +307,47 @@ class CheckpointSessionRepository:
             *merged,
         ]
 
+    @staticmethod
+    def _merge_live_response(
+        messages: list[dict[str, Any]],
+        live_response: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        merged = [dict(message) for message in messages]
+        if live_response is None:
+            return merged
+        content = str(live_response.get("content", "")).strip()
+        tool_calls = live_response.get("tool_calls")
+        skill_uses = live_response.get("skill_uses")
+        selected_skills = live_response.get("selected_skills")
+        if (
+            not content
+            and not (isinstance(tool_calls, list) and tool_calls)
+            and not (isinstance(skill_uses, list) and skill_uses)
+            and not (isinstance(selected_skills, list) and selected_skills)
+        ):
+            return merged
+        entry: dict[str, Any] = {
+            "role": "assistant",
+            "content": content,
+            "streaming": True,
+        }
+        timestamp_ms = live_response.get("timestamp_ms")
+        if timestamp_ms is not None:
+            entry["timestamp_ms"] = timestamp_ms
+        if isinstance(tool_calls, list) and tool_calls:
+            entry["tool_calls"] = list(tool_calls)
+        if isinstance(skill_uses, list) and skill_uses:
+            entry["skill_uses"] = list(dict.fromkeys(str(item) for item in skill_uses))
+        if isinstance(selected_skills, list) and selected_skills:
+            entry["selected_skills"] = list(
+                dict.fromkeys(str(item) for item in selected_skills)
+            )
+        run_id = str(live_response.get("run_id", "")).strip()
+        if run_id:
+            entry["run_id"] = run_id
+        merged.append(entry)
+        return merged
+
     async def load_snapshot(
         self,
         *,
@@ -374,7 +358,7 @@ class CheckpointSessionRepository:
         create_if_missing: bool = False,
         graph_name: str = "default",
     ) -> CheckpointSessionSnapshot:
-        session = await self._ensure_checkpoint_migrated(
+        session = await self._ensure_session_state(
             agent_id=agent_id,
             session_id=session_id,
             archived=archived,
@@ -395,11 +379,7 @@ class CheckpointSessionRepository:
         compressed_context = str(session.get("compressed_context", "")).strip() or str(
             state.get("compressed_context", "")
         ).strip()
-        merged_messages = (
-            SessionManager.with_live_response(messages, {"live_response": live_response})
-            if live_response is not None
-            else messages
-        )
+        merged_messages = self._merge_live_response(messages, live_response)
         return CheckpointSessionSnapshot(
             session_id=session_id,
             agent_id=agent_id,
@@ -429,7 +409,7 @@ class CheckpointSessionRepository:
         return self._history_with_summary(snapshot.messages, snapshot.compressed_context)
 
     async def prepare_runtime_request(self, request: RuntimeRequest) -> RuntimeRequest:
-        session = await self._ensure_checkpoint_migrated(
+        session = await self._ensure_session_state(
             agent_id=request.agent_id,
             session_id=request.session_id,
             create_if_missing=True,
@@ -814,7 +794,7 @@ class CheckpointSessionRepository:
         selected_skills: list[str] | None = None,
         graph_name: str = "default",
     ) -> None:
-        await self._ensure_checkpoint_migrated(
+        await self._ensure_session_state(
             agent_id=agent_id,
             session_id=session_id,
             create_if_missing=True,
@@ -851,8 +831,8 @@ class CheckpointSessionRepository:
         n: int,
         graph_name: str = "default",
     ) -> dict[str, int]:
-        metadata = self._metadata(agent_id)
-        await self._ensure_checkpoint_migrated(
+        session_manager = self._session_manager(agent_id)
+        await self._ensure_session_state(
             agent_id=agent_id,
             session_id=session_id,
             create_if_missing=False,
@@ -869,10 +849,20 @@ class CheckpointSessionRepository:
         remain = messages[archive_count:]
 
         if archive_count > 0:
-            metadata.write_archive_snapshot(session_id, to_archive)
+            archive_path = (
+                session_manager.archive_dir / f"{session_id}_{int(time.time())}.json"
+            )
+            session_manager._write_json_file(archive_path, to_archive)  # noqa: SLF001
 
-        metadata.update_compressed_context(session_id, summary)
-        compressed_context = metadata.get_compressed_context(session_id)
+        session = session_manager.load_session(session_id)
+        prior = str(session.get("compressed_context", "")).strip()
+        normalized = summary.strip()
+        if prior and normalized:
+            session["compressed_context"] = f"{prior}\n---\n{normalized}"
+        else:
+            session["compressed_context"] = normalized or prior
+        session_manager.save_session(session_id, session)
+        compressed_context = str(session.get("compressed_context", "")).strip()
         await self.update_state(
             agent_id=agent_id,
             session_id=session_id,
@@ -893,7 +883,9 @@ class CheckpointSessionRepository:
         session_id: str,
         archived: bool = False,
     ) -> bool:
-        deleted = self._metadata(agent_id).delete_session(session_id, archived=archived)
+        deleted = self._session_manager(agent_id).delete_session(
+            session_id, archived=archived
+        )
         if deleted:
             await self._checkpointer.delete_thread(agent_id=agent_id, thread_id=session_id)
         return deleted
