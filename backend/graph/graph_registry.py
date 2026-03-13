@@ -3,16 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
-from graph.runtime_types import GraphRuntime, RuntimeCheckpointer, RuntimeRequest
-
-
-class NullRuntimeCheckpointer:
-    async def for_request(self, request: RuntimeRequest) -> None:
-        _ = request
-        return None
-
-    async def delete_thread(self, *, agent_id: str, thread_id: str) -> None:
-        _ = agent_id, thread_id
+from graph.runtime_types import GraphRuntime
 
 
 @dataclass(frozen=True)
@@ -22,8 +13,7 @@ class _RegisteredRuntime:
 
 
 class GraphRuntimeRegistry:
-    def __init__(self, checkpointer: RuntimeCheckpointer | None = None) -> None:
-        self.checkpointer = checkpointer or NullRuntimeCheckpointer()
+    def __init__(self) -> None:
         self._entries: dict[str, _RegisteredRuntime] = {}
 
     def register(self, name: str, factory: Callable[[], GraphRuntime]) -> None:
