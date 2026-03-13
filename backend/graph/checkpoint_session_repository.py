@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable, Protocol
 
 from langchain_core.messages import BaseMessage
 
@@ -11,9 +11,11 @@ from graph.runtime_types import GraphRuntime, RuntimeEvent, RuntimeRequest, Runt
 from graph.session_manager import SessionManager
 from graph.session_metadata_store import SessionMetadataStore
 
-if TYPE_CHECKING:
-    from graph.agent import AgentRuntime
-    from graph.runtime_types import RuntimeCheckpointer
+from graph.runtime_types import RuntimeCheckpointer
+
+
+class RuntimeWithSessionManager(Protocol):
+    session_manager: SessionManager
 
 
 _SKILL_PATH_PATTERN = re.compile(
@@ -50,7 +52,7 @@ class CheckpointSessionRepository:
     def __init__(
         self,
         *,
-        runtime_getter: Callable[[str], AgentRuntime],
+        runtime_getter: Callable[[str], RuntimeWithSessionManager],
         graph_getter: Callable[[str], GraphRuntime],
         checkpointer: RuntimeCheckpointer,
     ) -> None:
@@ -59,7 +61,7 @@ class CheckpointSessionRepository:
         self._checkpointer = checkpointer
         self._streams: dict[tuple[str, str], _StreamAccumulator] = {}
 
-    def _runtime(self, agent_id: str) -> AgentRuntime:
+    def _runtime(self, agent_id: str) -> RuntimeWithSessionManager:
         return self._runtime_getter(agent_id)
 
     def _metadata(self, agent_id: str) -> SessionMetadataStore:

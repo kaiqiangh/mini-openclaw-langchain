@@ -96,39 +96,49 @@ class RuntimeResult:
 
 
 class RuntimeCheckpointer(Protocol):
-    async def for_request(self, request: RuntimeRequest) -> Any | None: ...
+    async def for_request(self, request: RuntimeRequest) -> Any | None:
+        pass
 
-    async def delete_thread(self, *, agent_id: str, thread_id: str) -> None: ...
+    async def delete_thread(self, *, agent_id: str, thread_id: str) -> None:
+        pass
 
 
 class ToolCapableChatModel(Protocol):
     def bind_tools(
         self, tools: Sequence[Any], **kwargs: Any
-    ) -> Runnable[Any, BaseMessage]: ...
+    ) -> Runnable[Any, BaseMessage]:
+        pass
 
     async def ainvoke(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
-    ) -> Any: ...
+    ) -> Any:
+        pass
 
     def astream(
         self, input: Any, config: RunnableConfig | None = None, **kwargs: Any
-    ) -> AsyncIterator[Any]: ...
+    ) -> AsyncIterator[Any]:
+        pass
 
 
 class GraphRuntime(Protocol):
-    async def astream(self, request: RuntimeRequest): ...
+    async def astream(self, request: RuntimeRequest):
+        pass
 
-    async def invoke(self, request: RuntimeRequest) -> RuntimeResult: ...
+    async def invoke(self, request: RuntimeRequest) -> RuntimeResult:
+        pass
 
-    async def aget_state(self, request: RuntimeRequest) -> dict[str, Any]: ...
+    async def aget_state(self, request: RuntimeRequest) -> dict[str, Any]:
+        pass
 
     async def aget_state_history(
         self, request: RuntimeRequest
-    ) -> list[dict[str, Any]]: ...
+    ) -> list[dict[str, Any]]:
+        pass
 
     async def aupdate_state(
         self, request: RuntimeRequest, values: dict[str, Any]
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        pass
 
 
 class RuntimeGraphState(TypedDict, total=False):

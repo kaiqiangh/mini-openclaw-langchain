@@ -3,14 +3,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import Any, Callable, Protocol, cast
 
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from config import AppConfig, LLMProfile, RuntimeConfig, resolve_header_templates
 from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
-from graph.checkpoint_session_repository import CheckpointSessionRepository
 from graph.prompt_builder import PromptBuilder
 from graph.runtime_types import ToolCapableChatModel
 from graph.usage_orchestrator import UsageOrchestrator
@@ -24,8 +23,17 @@ from observability.tracing import build_optional_callbacks
 from tools.skills_scanner import ensure_skills_snapshot
 from usage.pricing import infer_provider
 
-if TYPE_CHECKING:
-    from graph.agent import AgentRuntime
+
+class SessionRepositoryHandle(Protocol):
+    pass
+
+
+class RuntimeWithServices(Protocol):
+    agent_id: str
+    root_dir: Path
+    runtime_config: RuntimeConfig
+    llm_cache: dict[tuple[Any, ...], ToolCapableChatModel]
+    audit_store: Any
 
 
 @dataclass(frozen=True)
@@ -40,7 +48,7 @@ class RuntimeExecutionServices:
         *,
         base_dir_getter: Callable[[], Path | None],
         app_config_getter: Callable[[], AppConfig],
-        runtime_getter: Callable[[str], AgentRuntime],
+        runtime_getter: Callable[[str], RuntimeWithServices],
         prompt_builder: PromptBuilder,
         usage_orchestrator: UsageOrchestrator,
     ) -> None:
@@ -49,19 +57,17 @@ class RuntimeExecutionServices:
         self._runtime_getter = runtime_getter
         self.prompt_builder = prompt_builder
         self.usage_orchestrator = usage_orchestrator
-        self.session_repository: CheckpointSessionRepository | None = None
+        self.session_repository: SessionRepositoryHandle | None = None
 
-    def set_session_repository(
-        self, repository: CheckpointSessionRepository
-    ) -> None:
+    def set_session_repository(self, repository: SessionRepositoryHandle) -> None:
         self.session_repository = repository
 
-    def require_session_repository(self) -> CheckpointSessionRepository:
+    def require_session_repository(self) -> SessionRepositoryHandle:
         if self.session_repository is None:
             raise RuntimeError("Session repository is not configured")
         return self.session_repository
 
-    def get_runtime(self, agent_id: str = "default") -> AgentRuntime:
+    def get_runtime(self, agent_id: str = "default") -> RuntimeWithServices:
         return self._runtime_getter(agent_id)
 
     def get_app_config(self) -> AppConfig:
@@ -209,7 +215,7 @@ class RuntimeExecutionServices:
         )
 
     def get_runtime_llm(
-        self, runtime: AgentRuntime, profile: LLMProfile
+        self, runtime: RuntimeWithServices, profile: LLMProfile
     ) -> ToolCapableChatModel:
         api_key = self._profile_api_key(profile)
         signature = (
@@ -234,7 +240,7 @@ class RuntimeExecutionServices:
     def resolve_tool_capable_model(
         self,
         *,
-        runtime: AgentRuntime,
+        runtime: RuntimeWithServices,
         candidate: ResolvedLlmCandidate,
         has_tools: bool,
         tool_loop_model: str,
@@ -259,7 +265,7 @@ class RuntimeExecutionServices:
             selected_model,
         )
 
-    def resolve_llm_route(self, runtime: AgentRuntime) -> ResolvedLlmRoute:
+    def resolve_llm_route(self, runtime: RuntimeWithServices) -> ResolvedLlmRoute:
         return resolve_agent_llm_route(
             agent_id=runtime.agent_id,
             runtime=runtime.runtime_config,
@@ -295,7 +301,7 @@ class RuntimeExecutionServices:
     def append_llm_route_event(
         self,
         *,
-        runtime: AgentRuntime,
+        runtime: RuntimeWithServices,
         run_id: str,
         session_id: str,
         trigger_type: str,
@@ -330,7 +336,7 @@ class RuntimeExecutionServices:
 
     def resolve_auxiliary_llm_candidate(
         self,
-        runtime: AgentRuntime,
+        runtime: RuntimeWithServices,
     ) -> ResolvedLlmCandidate | None:
         route = self.resolve_llm_route(runtime)
         if not route.valid:

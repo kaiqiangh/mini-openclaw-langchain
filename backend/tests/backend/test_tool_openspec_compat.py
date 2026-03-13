@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import asyncio
 import json
 import shutil
 import time
@@ -230,13 +228,6 @@ def test_management_tools_return_workspace_state(tmp_path):
     default_root = manager.get_runtime("default").root_dir
     for name in ("cron_jobs.json", "cron_runs.jsonl", "heartbeat_runs.jsonl"):
         shutil.copy2(tmp_path / "storage" / name, default_root / "storage" / name)
-    asyncio.run(
-        manager.get_session_repository("default").load_snapshot(
-            agent_id="default",
-            session_id="sess-alpha",
-            include_live=False,
-        )
-    )
     tool_map, _ = _build_tool_map(tmp_path)
 
     sessions = _parse_result(
@@ -249,7 +240,8 @@ def test_management_tools_return_workspace_state(tmp_path):
         tool_map["session_history"].invoke({"session_id": "sess-alpha"})  # type: ignore[call-arg]
     )
     assert history["ok"] is True
-    assert history["data"]["message_count"] >= 1
+    assert history["data"]["message_count"] == 2
+    assert [row["content"] for row in history["data"]["messages"]] == ["hello", "hi"]
 
     agents = _parse_result(tool_map["agents_list"].invoke({}))  # type: ignore[call-arg]
     assert agents["ok"] is True

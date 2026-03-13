@@ -4,7 +4,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator
 
 from config import (
     AppConfig,
@@ -13,22 +13,20 @@ from config import (
     load_effective_runtime_config,
     runtime_config_digest,
 )
-from graph.checkpoint_session_repository import CheckpointSessionRepository
-from graph.default_graph_runtime import DefaultGraphRuntime
 from graph.graph_registry import GraphRuntimeRegistry
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
-from graph.runtime_execution_services import RuntimeExecutionServices
-from graph.runtime_types import RuntimeRequest
-from graph.runtime_types import ToolCapableChatModel
+from graph.runtime_types import RuntimeRequest, ToolCapableChatModel
 from graph.session_manager import SessionManager
 from graph.skill_selector import SkillSelector
-from graph.sqlite_runtime_checkpointer import SQLiteRuntimeCheckpointer
 from graph.usage_orchestrator import UsageOrchestrator
 from storage.run_store import AuditStore
 from storage.usage_store import UsageStore
 from tools.skills_scanner import ensure_skills_snapshot
+
+if TYPE_CHECKING:
+    from graph.checkpoint_session_repository import CheckpointSessionRepository
 
 _AGENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
@@ -65,6 +63,11 @@ class AgentManager:
         self.skill_selector = SkillSelector()
         self.usage_orchestrator = UsageOrchestrator()
         self.lcel_pipelines = RuntimeLcelPipelines()
+        from graph.checkpoint_session_repository import CheckpointSessionRepository
+        from graph.default_graph_runtime import DefaultGraphRuntime
+        from graph.runtime_execution_services import RuntimeExecutionServices
+        from graph.sqlite_runtime_checkpointer import SQLiteRuntimeCheckpointer
+
         self.runtime_services = RuntimeExecutionServices(
             base_dir_getter=lambda: self.base_dir,
             app_config_getter=self._refresh_app_config,
@@ -604,6 +607,7 @@ class AgentManager:
         output_format: str = "text",
         trigger_type: str = "chat",
         agent_id: str = "default",
+        resume_same_turn: bool = False,
     ) -> dict[str, Any]:
         if self.base_dir is None or self.config is None:
             raise RuntimeError("AgentManager must be initialized before run_once().")
@@ -616,6 +620,7 @@ class AgentManager:
                 output_format=output_format,
                 trigger_type=trigger_type,
                 agent_id=agent_id,
+                resume_same_turn=resume_same_turn,
             )
         )
         if result.error is not None:

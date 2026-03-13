@@ -11,7 +11,6 @@ from langgraph.types import Command
 
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.retrieval_orchestrator import RetrievalOrchestrator
-from graph.runtime_execution_services import RuntimeExecutionServices
 from graph.runtime_types import (
     GraphRuntime,
     RuntimeCheckpointer,
@@ -36,7 +35,7 @@ class DefaultGraphRuntime(GraphRuntime):
     def __init__(
         self,
         *,
-        services: RuntimeExecutionServices,
+        services: Any,
         pipelines: RuntimeLcelPipelines,
         skill_selector: SkillSelector,
         checkpointer: RuntimeCheckpointer | None = None,

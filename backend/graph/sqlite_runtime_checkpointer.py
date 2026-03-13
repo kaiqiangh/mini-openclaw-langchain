@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import Callable, Protocol
 
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -11,8 +11,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from graph.checkpoint_serde import build_checkpoint_serializer
 from graph.runtime_types import RuntimeCheckpointer, RuntimeRequest
 
-if TYPE_CHECKING:
-    from graph.agent import AgentRuntime
+
+class RuntimeRoot(Protocol):
+    root_dir: Path
 
 
 @dataclass
@@ -25,7 +26,7 @@ class SQLiteRuntimeCheckpointer(RuntimeCheckpointer):
     def __init__(
         self,
         *,
-        runtime_getter: Callable[[str], AgentRuntime],
+        runtime_getter: Callable[[str], RuntimeRoot],
         filename: str = "langgraph_checkpoints.sqlite",
     ) -> None:
         self._runtime_getter = runtime_getter

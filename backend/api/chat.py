@@ -272,6 +272,7 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
             output_format="text",
             trigger_type="chat",
             agent_id=agent_id,
+            resume_same_turn=bool(request.resume_same_turn),
         )
         return {
             "data": {

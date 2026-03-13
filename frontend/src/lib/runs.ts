@@ -32,6 +32,7 @@ const WINDOW_TO_HOURS: Record<RunWindow, number> = {
   "7d": 24 * 7,
   "30d": 24 * 30,
 };
+const SESSION_USAGE_MATCH_MAX_DISTANCE_MS = 5 * 60 * 1000;
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -132,6 +133,9 @@ function matchSchedulerUsage(
     }
   }
 
+  if (bestDistance > SESSION_USAGE_MATCH_MAX_DISTANCE_MS) {
+    return null;
+  }
   return bestMatch;
 }
 
