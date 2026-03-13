@@ -168,20 +168,10 @@ class HeartbeatScheduler:
                 )
             )
             return
-        repository = self.agent_manager.get_session_repository(self.agent_id)
-        snapshot = await repository.load_snapshot(
-            agent_id=self.agent_id,
-            session_id=self.config.session_id,
-            include_live=False,
-            create_if_missing=True,
-        )
-
         try:
             result = await self.agent_manager.run_once(
                 message=prompt,
-                history=[],
                 session_id=self.config.session_id,
-                is_first_turn=len(snapshot.messages) == 0,
                 output_format="text",
                 trigger_type="heartbeat",
                 agent_id=self.agent_id,

@@ -365,13 +365,6 @@ class CronScheduler:
 
     async def _run_job(self, job: CronJob, now_ts: float, *, manual_run: bool) -> None:
         session_id = f"__cron__:{job.id}"
-        repository = self.agent_manager.get_session_repository(self.agent_id)
-        snapshot = await repository.load_snapshot(
-            agent_id=self.agent_id,
-            session_id=session_id,
-            include_live=False,
-            create_if_missing=True,
-        )
         scheduled_ts = (
             float(job.next_run_ts)
             if (not manual_run and float(job.next_run_ts) > 0)
@@ -387,9 +380,7 @@ class CronScheduler:
         try:
             result = await self.agent_manager.run_once(
                 message=self._compose_job_prompt(job.prompt),
-                history=[],
                 session_id=session_id,
-                is_first_turn=len(snapshot.messages) == 0,
                 output_format="text",
                 trigger_type="cron",
                 agent_id=self.agent_id,
