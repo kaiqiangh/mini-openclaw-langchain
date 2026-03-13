@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import shutil
 import time
@@ -9,6 +10,7 @@ from typing import Any, Protocol
 import pytest
 
 from config import RuntimeConfig, ToolOutputLimits, ToolTimeouts
+from graph.agent import AgentManager
 from tools import get_all_tools, get_tool_runner
 from tools.apply_patch_tool import ApplyPatchTool
 from tools.base import MiniTool, ToolContext
@@ -223,6 +225,18 @@ def test_read_files_single_and_multi_path_modes(tmp_path):
 
 def test_management_tools_return_workspace_state(tmp_path):
     _seed_workspace(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    default_root = manager.get_runtime("default").root_dir
+    for name in ("cron_jobs.json", "cron_runs.jsonl", "heartbeat_runs.jsonl"):
+        shutil.copy2(tmp_path / "storage" / name, default_root / "storage" / name)
+    asyncio.run(
+        manager.get_session_repository("default").load_snapshot(
+            agent_id="default",
+            session_id="sess-alpha",
+            include_live=False,
+        )
+    )
     tool_map, _ = _build_tool_map(tmp_path)
 
     sessions = _parse_result(
