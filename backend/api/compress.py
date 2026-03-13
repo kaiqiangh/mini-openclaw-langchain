@@ -39,8 +39,16 @@ async def compress_session(
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-    session = session_manager.load_session(session_id)
-    messages: list[dict[str, Any]] = list(session.get("messages", []))
+    repository = agent_manager.get_session_repository(agent_id)
+    try:
+        snapshot = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=False,
+        )
+    except FileNotFoundError as exc:
+        raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    messages = list(snapshot.messages)
 
     if len(messages) < 4:
         raise ApiError(
@@ -54,8 +62,11 @@ async def compress_session(
     n = min(n, len(messages))
 
     summary = await agent_manager.summarize_messages(messages[:n], agent_id=agent_id)
-    result = session_manager.compress_history(
-        session_id=session_id, summary=summary, n=n
+    result = await repository.compress_history(
+        agent_id=agent_id,
+        session_id=session_id,
+        summary=summary,
+        n=n,
     )
     return {
         "data": {

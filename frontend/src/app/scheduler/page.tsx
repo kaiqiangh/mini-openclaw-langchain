@@ -37,7 +37,6 @@ import { usePersistentSectionState } from "@/lib/usePersistentSectionState";
 
 type ScheduleType = "at" | "every" | "cron";
 type SchedulerSectionKey =
-  | "composer"
   | "metrics"
   | "trend"
   | "cron"
@@ -45,10 +44,23 @@ type SchedulerSectionKey =
   | "recent_runs"
   | "recent_failures"
   | "heartbeat_runs";
+type JobStatusFilter =
+  | "all"
+  | "scheduled"
+  | "retrying"
+  | "paused"
+  | "completed"
+  | "failed";
+type StatusTone = "neutral" | "accent" | "success" | "warn" | "danger";
+type DerivedJobStatus = {
+  key: Exclude<JobStatusFilter, "all">;
+  label: string;
+  tone: StatusTone;
+  detail: string;
+};
 
 const SCHEDULER_SECTIONS_KEY = "mini-openclaw:scheduler-sections:v1";
 const DESKTOP_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
-  composer: true,
   metrics: true,
   trend: true,
   cron: true,
@@ -58,7 +70,6 @@ const DESKTOP_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
   heartbeat_runs: true,
 };
 const MOBILE_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
-  composer: false,
   metrics: true,
   trend: true,
   cron: false,
@@ -68,15 +79,25 @@ const MOBILE_SCHEDULER_SECTIONS: Record<SchedulerSectionKey, boolean> = {
   heartbeat_runs: false,
 };
 
-const SCHEDULER_FILTER_GRID_STYLE = {
-  gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-} as const;
-
 const SCHEDULER_METRIC_GRID_STYLE = {
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
 } as const;
+const CRON_EDITOR_GRID_STYLE = {
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+} as const;
 
 const SCHEDULER_DATA_PANEL_CLASS = "max-h-[26rem] overflow-y-auto lg:max-h-[40vh]";
+const CRON_STATUS_OPTIONS: Array<{
+  label: string;
+  value: JobStatusFilter;
+}> = [
+  { label: "All states", value: "all" },
+  { label: "Scheduled", value: "scheduled" },
+  { label: "Retrying", value: "retrying" },
+  { label: "Paused", value: "paused" },
+  { label: "Completed", value: "completed" },
+  { label: "Failed", value: "failed" },
+];
 
 type JobDraft = {
   id: string | null;
@@ -149,6 +170,95 @@ function describeSchedule(type: ScheduleType, value: string): string {
   return "Cron expression with 5 fields (minute hour day month weekday).";
 }
 
+function formatEveryInterval(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours}h`;
+  }
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
+function formatScheduleSummary(type: ScheduleType, value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "Schedule required";
+  if (type === "every") {
+    const seconds = Number(normalized);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return "Invalid interval";
+    }
+    return `Every ${formatEveryInterval(seconds)}`;
+  }
+  if (type === "at") {
+    const parsed = Date.parse(normalized);
+    if (Number.isNaN(parsed)) {
+      return "One-time run";
+    }
+    return `Once at ${new Date(parsed).toLocaleString()}`;
+  }
+  return `Cron ${normalized}`;
+}
+
+function previewText(value: string, maxLength = 96): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized) return "—";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function deriveJobStatus(job: CronJob): DerivedJobStatus {
+  const hasError = job.last_error.trim().length > 0;
+  const hasRun = Number(job.last_run_ts) > 0;
+  const futureRun = Number(job.next_run_ts) > 0;
+
+  if (job.enabled && job.failure_count > 0 && hasError) {
+    return {
+      key: "retrying",
+      label: "Retrying",
+      tone: "warn",
+      detail: futureRun
+        ? `Retry queued for ${asDateTime(job.next_run_ts)}`
+        : "Retry queued on next scheduler tick",
+    };
+  }
+  if (job.enabled) {
+    return {
+      key: "scheduled",
+      label: "Scheduled",
+      tone: "success",
+      detail: futureRun
+        ? `Next run ${asDateTime(job.next_run_ts)}`
+        : "Waiting for the next scheduler tick",
+    };
+  }
+  if (job.schedule_type === "at" && hasRun && !hasError) {
+    return {
+      key: "completed",
+      label: "Completed",
+      tone: "accent",
+      detail: `Finished ${asDateTime(job.last_run_ts)}`,
+    };
+  }
+  if (hasError) {
+    return {
+      key: "failed",
+      label: "Failed",
+      tone: "danger",
+      detail: previewText(job.last_error, 120),
+    };
+  }
+  return {
+    key: "paused",
+    label: "Paused",
+    tone: "neutral",
+    detail: hasRun ? `Paused after ${asDateTime(job.last_run_ts)}` : "Disabled by operator",
+  };
+}
+
 export default function SchedulerPage() {
   const { currentAgentId, setCurrentAgent } = useAppStore();
   const [agents, setAgents] = useState<string[]>(["default"]);
@@ -178,6 +288,10 @@ export default function SchedulerPage() {
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
+  const [jobStatusFilter, setJobStatusFilter] = useState<JobStatusFilter>("all");
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [savingJob, setSavingJob] = useState(false);
+  const [jobActionKey, setJobActionKey] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const { sections, toggleSection, expandAll, collapseAll } =
     usePersistentSectionState<SchedulerSectionKey>({
@@ -200,7 +314,10 @@ export default function SchedulerPage() {
     window.localStorage.setItem("mini-openclaw:scheduler-density", density);
   }, [density]);
 
-  async function refreshAll(nextAgentId: string, window: SchedulerMetricsWindow) {
+  async function refreshAll(
+    nextAgentId: string,
+    window: SchedulerMetricsWindow,
+  ): Promise<CronJob[]> {
     setLoading(true);
     setError("");
     try {
@@ -228,10 +345,12 @@ export default function SchedulerPage() {
       setHeartbeatRuns(heartbeatRunRows);
       setMetrics(metricsSummary);
       setMetricsSeries(metricsTrend);
+      return jobRows;
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Failed to load scheduler data",
       );
+      return [];
     } finally {
       setLoading(false);
     }
@@ -265,9 +384,38 @@ export default function SchedulerPage() {
     void refreshAll(agentId, metricsWindow);
   }, [agentId, metricsWindow]);
 
+  function openJobEditor(job?: CronJob | null) {
+    setDraft(
+      job
+        ? {
+            id: job.id,
+            name: job.name,
+            schedule_type: job.schedule_type,
+            schedule: job.schedule,
+            prompt: job.prompt,
+            enabled: job.enabled,
+          }
+        : EMPTY_DRAFT,
+    );
+    setSubmitAttempted(false);
+    setError("");
+    setSelectedJob(null);
+    setEditorOpen(true);
+  }
+
+  function closeJobEditor() {
+    setEditorOpen(false);
+    setDraft(EMPTY_DRAFT);
+    setSubmitAttempted(false);
+  }
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (editorOpen) {
+          closeJobEditor();
+          return;
+        }
         setSelectedJob(null);
       }
     };
@@ -275,7 +423,7 @@ export default function SchedulerPage() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [editorOpen]);
 
   const recentRuns = useMemo(() => runs.slice(0, 10), [runs]);
   const recentFailures = useMemo(() => failures.slice(0, 10), [failures]);
@@ -283,6 +431,47 @@ export default function SchedulerPage() {
     () => heartbeatRuns.slice(0, 10),
     [heartbeatRuns],
   );
+  const orderedJobs = useMemo(
+    () =>
+      [...jobs].sort((left, right) => {
+        const leftNext = Number(left.next_run_ts) || 0;
+        const rightNext = Number(right.next_run_ts) || 0;
+        if (leftNext > 0 && rightNext > 0 && leftNext !== rightNext) {
+          return leftNext - rightNext;
+        }
+        if (right.updated_at !== left.updated_at) {
+          return right.updated_at - left.updated_at;
+        }
+        return left.name.localeCompare(right.name);
+      }),
+    [jobs],
+  );
+  const filteredJobs = useMemo(
+    () =>
+      orderedJobs.filter((job) => {
+        if (jobStatusFilter === "all") {
+          return true;
+        }
+        return deriveJobStatus(job).key === jobStatusFilter;
+      }),
+    [jobStatusFilter, orderedJobs],
+  );
+  const jobStatusCounts = useMemo(() => {
+    return jobs.reduce(
+      (acc, job) => {
+        const key = deriveJobStatus(job).key;
+        acc[key] += 1;
+        return acc;
+      },
+      {
+        scheduled: 0,
+        retrying: 0,
+        paused: 0,
+        completed: 0,
+        failed: 0,
+      },
+    );
+  }, [jobs]);
   const trendPoints = useMemo(() => metricsSeries?.points ?? [], [metricsSeries]);
   const trendMax = useMemo(
     () => Math.max(1, ...trendPoints.map((point) => point.total)),
@@ -292,6 +481,29 @@ export default function SchedulerPage() {
     () => describeSchedule(draft.schedule_type, draft.schedule),
     [draft.schedule, draft.schedule_type],
   );
+  const draftStatusPreview = useMemo(() => {
+    if (!draft.id) {
+      return "New jobs start clean and inherit the selected active state.";
+    }
+    const currentJob =
+      jobs.find((job) => job.id === draft.id) ??
+      ({
+        id: draft.id,
+        name: draft.name,
+        schedule_type: draft.schedule_type,
+        schedule: draft.schedule,
+        prompt: draft.prompt,
+        enabled: draft.enabled,
+        next_run_ts: 0,
+        created_at: 0,
+        updated_at: 0,
+        last_run_ts: 0,
+        last_success_ts: 0,
+        failure_count: 0,
+        last_error: "",
+      } satisfies CronJob);
+    return `Current state: ${deriveJobStatus(currentJob).label}`;
+  }, [draft, jobs]);
   const heartbeatHealth = useMemo(() => {
     const latest = recentHeartbeat[0];
     const ts = Number(latest?.timestamp_ms ?? 0);
@@ -308,36 +520,72 @@ export default function SchedulerPage() {
       return;
     }
     setError("");
+    setSavingJob(true);
     try {
-      if (draft.id) {
-        await updateCronJob(
-          draft.id,
-          {
-            name: draft.name,
-            schedule_type: draft.schedule_type,
-            schedule: draft.schedule,
-            prompt: draft.prompt,
-            enabled: draft.enabled,
-          },
-          agentId,
-        );
-      } else {
-        await createCronJob(
-          {
-            name: draft.name,
-            schedule_type: draft.schedule_type,
-            schedule: draft.schedule,
-            prompt: draft.prompt,
-            enabled: draft.enabled,
-          },
-          agentId,
-        );
-      }
-      setDraft(EMPTY_DRAFT);
-      setSubmitAttempted(false);
-      await refreshAll(agentId, metricsWindow);
+      const savedJob = draft.id
+        ? await updateCronJob(
+            draft.id,
+            {
+              name: draft.name,
+              schedule_type: draft.schedule_type,
+              schedule: draft.schedule,
+              prompt: draft.prompt,
+              enabled: draft.enabled,
+            },
+            agentId,
+          )
+        : await createCronJob(
+            {
+              name: draft.name,
+              schedule_type: draft.schedule_type,
+              schedule: draft.schedule,
+              prompt: draft.prompt,
+              enabled: draft.enabled,
+            },
+            agentId,
+          );
+      closeJobEditor();
+      const refreshedJobs = await refreshAll(agentId, metricsWindow);
+      setSelectedJob(
+        refreshedJobs.find((job) => job.id === savedJob.id) ?? savedJob,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save cron job");
+    } finally {
+      setSavingJob(false);
+    }
+  }
+
+  async function handleJobAction(
+    job: CronJob,
+    action: "toggle" | "run" | "delete",
+  ) {
+    const actionKey = `${job.id}:${action}`;
+    setJobActionKey(actionKey);
+    setError("");
+    try {
+      if (action === "toggle") {
+        await updateCronJob(job.id, { enabled: !job.enabled }, agentId);
+      } else if (action === "run") {
+        await runCronJob(job.id, agentId);
+      } else {
+        await deleteCronJob(job.id, agentId);
+      }
+      if (action === "delete") {
+        setSelectedJob((current) => (current?.id === job.id ? null : current));
+      }
+      const refreshedJobs = await refreshAll(agentId, metricsWindow);
+      if (action !== "delete" && selectedJob?.id === job.id) {
+        setSelectedJob(
+          refreshedJobs.find((item) => item.id === job.id) ?? null,
+        );
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to update cron job",
+      );
+    } finally {
+      setJobActionKey(null);
     }
   }
 
@@ -400,6 +648,14 @@ export default function SchedulerPage() {
               <Button
                 type="button"
                 size="sm"
+                className="px-3"
+                onClick={() => openJobEditor()}
+              >
+                New Job
+              </Button>
+              <Button
+                type="button"
+                size="sm"
                 className="px-2"
                 onClick={expandAll}
               >
@@ -413,163 +669,19 @@ export default function SchedulerPage() {
               >
                 Collapse All Sections
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="px-2"
-                aria-expanded={sections.composer}
-                onClick={() => toggleSection("composer")}
-              >
-                {sections.composer ? "Collapse" : "Expand"}
-              </Button>
             </div>
           </div>
-          {sections.composer ? (
-            <div
-              className="grid gap-3 p-4"
-              style={SCHEDULER_FILTER_GRID_STYLE}
-            >
-              <label className="min-w-0">
-                <span className="ui-label">Agent</span>
-                <Select
-                  className="mt-1 ui-mono text-sm"
-                  value={agentId}
-                  onChange={(event) => {
-                    void setCurrentAgent(event.target.value);
-                  }}
-                >
-                  {agents.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="min-w-0">
-                <span className="ui-label">Schedule Type</span>
-                <Select
-                  className="mt-1 ui-mono text-sm"
-                  value={draft.schedule_type}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      schedule_type: event.target.value as ScheduleType,
-                    }))
-                  }
-                >
-                  <option value="every">every (seconds)</option>
-                  <option value="cron">cron (5 fields)</option>
-                  <option value="at">at (ISO datetime)</option>
-                </Select>
-              </label>
-              <label className="min-w-0">
-                <span className="ui-label">Schedule</span>
-                <Input
-                  className="mt-1 ui-mono text-sm"
-                  invalid={submitAttempted && !draft.schedule.trim()}
-                  hintId="scheduler-schedule-hint"
-                  errorId="scheduler-schedule-error"
-                  value={draft.schedule}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      schedule: event.target.value,
-                    }))
-                  }
-                  placeholder={
-                    draft.schedule_type === "every"
-                      ? "300"
-                      : draft.schedule_type === "cron"
-                        ? "*/5 * * * *"
-                        : "2026-03-01T10:00:00Z"
-                  }
-                />
-                <span
-                  id={
-                    submitAttempted && !draft.schedule.trim()
-                      ? "scheduler-schedule-error"
-                      : "scheduler-schedule-hint"
-                  }
-                  className="ui-helper mt-1 block"
-                >
-                  {submitAttempted && !draft.schedule.trim()
-                    ? "Schedule is required."
-                    : scheduleHint}
-                </span>
-              </label>
-              <label className="min-w-0 sm:col-span-2">
-                <span className="ui-label">Prompt</span>
-                <Input
-                  className="mt-1 text-sm"
-                  invalid={submitAttempted && !draft.prompt.trim()}
-                  hintId="scheduler-prompt-hint"
-                  errorId="scheduler-prompt-error"
-                  value={draft.prompt}
-                  onChange={(event) =>
-                    setDraft((prev) => ({ ...prev, prompt: event.target.value }))
-                  }
-                  placeholder="Prompt executed when this cron job runs"
-                />
-                <span
-                  id={
-                    submitAttempted && !draft.prompt.trim()
-                      ? "scheduler-prompt-error"
-                      : "scheduler-prompt-hint"
-                  }
-                  className="ui-helper mt-1 block"
-                >
-                  {submitAttempted && !draft.prompt.trim()
-                    ? "Prompt is required."
-                    : "This prompt is sent when the job executes."}
-                </span>
-              </label>
-              <label className="min-w-0">
-                <span className="ui-label">Name</span>
-                <Input
-                  className="mt-1 text-sm"
-                  value={draft.name}
-                  onChange={(event) =>
-                    setDraft((prev) => ({ ...prev, name: event.target.value }))
-                  }
-                  placeholder="optional job name"
-                />
-              </label>
-              <label className="flex min-h-[44px] items-center gap-2 pt-6 text-sm text-[var(--muted)]">
-                <input
-                  type="checkbox"
-                  checked={draft.enabled}
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      enabled: event.target.checked,
-                    }))
-                  }
-                />
-                Enabled
-              </label>
-              <div className="flex flex-wrap items-end gap-2 sm:col-span-2">
-                <Button
-                  type="button"
-                  className="px-3 text-sm"
-                  onClick={() => void handleSubmitJob()}
-                >
-                  {draft.id ? "Update Job" : "Create Job"}
-                </Button>
-                {draft.id ? (
-                  <Button
-                    type="button"
-                    className="px-3 text-sm"
-                    onClick={() => {
-                      setDraft(EMPTY_DRAFT);
-                      setSubmitAttempted(false);
-                    }}
-                  >
-                    Cancel Edit
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm text-[var(--muted)]">
+            <span>{jobs.length} jobs</span>
+            <span>·</span>
+            <span>{jobStatusCounts.scheduled} scheduled</span>
+            <span>·</span>
+            <span>{jobStatusCounts.retrying} retrying</span>
+            <span>·</span>
+            <span>{jobStatusCounts.paused} paused</span>
+            <span>·</span>
+            <span>{jobStatusCounts.failed} failed</span>
+          </div>
           {error ? (
             <div className="px-4 pb-4">
               <div className="ui-alert" role="alert">
@@ -723,7 +835,31 @@ export default function SchedulerPage() {
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Cron Jobs</h2>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge tone="neutral">{jobs.length} jobs</Badge>
+                <Badge tone="neutral">
+                  {filteredJobs.length}/{jobs.length} shown
+                </Badge>
+                <Select
+                  aria-label="Filter cron jobs by state"
+                  className="min-h-[40px] w-full text-sm sm:w-[160px]"
+                  value={jobStatusFilter}
+                  onChange={(event) =>
+                    setJobStatusFilter(event.target.value as JobStatusFilter)
+                  }
+                >
+                  {CRON_STATUS_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="px-2"
+                  onClick={() => openJobEditor()}
+                >
+                  New Job
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -744,9 +880,19 @@ export default function SchedulerPage() {
                     <Skeleton className="h-10 w-full" />
                   </div>
                 ) : jobs.length === 0 ? (
+                  <div className="space-y-3">
+                    <EmptyState
+                      title="No Cron Jobs"
+                      description="Create a cron job to start scheduled automation."
+                    />
+                    <Button type="button" onClick={() => openJobEditor()}>
+                      Create Job
+                    </Button>
+                  </div>
+                ) : filteredJobs.length === 0 ? (
                   <EmptyState
-                    title="No Cron Jobs"
-                    description="Create a cron job to start scheduled automation."
+                    title="No Matching Jobs"
+                    description="Try a different state filter or create a new job."
                   />
                 ) : (
                   <div
@@ -754,70 +900,95 @@ export default function SchedulerPage() {
                     data-testid="scheduler-cron-scroll"
                   >
                     <div className="space-y-2 lg:hidden">
-                      {jobs.map((job) => (
-                        <article
-                          key={`${job.id}-mobile`}
-                          className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
-                          onClick={() => setSelectedJob(job)}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="ui-mono">{job.name || job.id.slice(0, 8)}</div>
-                            <Badge tone={job.enabled ? "success" : "warn"}>
-                              {job.enabled ? "Enabled" : "Disabled"}
-                            </Badge>
-                          </div>
-                          <div className="ui-mono mt-1 text-xs text-[var(--muted)]">
-                            {job.schedule_type} {job.schedule}
-                          </div>
-                          <div className="mt-2 text-xs text-[var(--muted)]">
-                            Next run {asDateTime(job.next_run_ts)} · failures {job.failure_count}
-                          </div>
-                          <div className="mt-3 flex flex-wrap gap-1">
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setDraft({
-                                  id: job.id,
-                                  name: job.name,
-                                  schedule_type: job.schedule_type,
-                                  schedule: job.schedule,
-                                  prompt: job.prompt,
-                                  enabled: job.enabled,
-                                });
-                              }}
-                            >
-                              Edit
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                setSelectedJob(null);
-                                await runCronJob(job.id, agentId);
-                                await refreshAll(agentId, metricsWindow);
-                              }}
-                            >
-                              Run now
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="danger"
-                              onClick={async (event) => {
-                                event.stopPropagation();
-                                setSelectedJob(null);
-                                await deleteCronJob(job.id, agentId);
-                                await refreshAll(agentId, metricsWindow);
-                              }}
-                            >
-                              Delete
-                            </Button>
-                          </div>
-                        </article>
-                      ))}
+                      {filteredJobs.map((job) => {
+                        const status = deriveJobStatus(job);
+                        const runBusy = jobActionKey === `${job.id}:run`;
+                        const toggleBusy = jobActionKey === `${job.id}:toggle`;
+                        const deleteBusy = jobActionKey === `${job.id}:delete`;
+                        return (
+                          <article
+                            key={`${job.id}-mobile`}
+                            className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-sm"
+                            onClick={() => setSelectedJob(job)}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="ui-mono truncate">
+                                  {job.name || job.id.slice(0, 8)}
+                                </div>
+                                <div className="mt-1 text-xs text-[var(--muted)]">
+                                  {formatScheduleSummary(
+                                    job.schedule_type,
+                                    job.schedule,
+                                  )}
+                                </div>
+                              </div>
+                              <Badge tone={status.tone}>{status.label}</Badge>
+                            </div>
+                            <div className="mt-3 grid gap-2 text-xs text-[var(--muted)]">
+                              <div>{status.detail}</div>
+                              <div>
+                                Last run {asDateTime(job.last_run_ts)} · success{" "}
+                                {asDateTime(job.last_success_ts)}
+                              </div>
+                              <div>
+                                Prompt: {previewText(job.prompt, 84)}
+                              </div>
+                              {job.last_error ? (
+                                <div className="rounded-md border border-[var(--border)] bg-[var(--danger-soft)] px-2 py-1 text-[var(--danger)]">
+                                  {previewText(job.last_error, 120)}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openJobEditor(job);
+                                }}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                loading={runBusy}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleJobAction(job, "run");
+                                }}
+                              >
+                                Run now
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                loading={toggleBusy}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleJobAction(job, "toggle");
+                                }}
+                              >
+                                {job.enabled ? "Pause" : "Resume"}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="danger"
+                                loading={deleteBusy}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleJobAction(job, "delete");
+                                }}
+                              >
+                                Delete
+                              </Button>
+                            </div>
+                          </article>
+                        );
+                      })}
                     </div>
                     <TableWrap className="hidden lg:block">
                       <DataTable
@@ -827,91 +998,112 @@ export default function SchedulerPage() {
                           <tr>
                             <th>Name</th>
                             <th>Schedule</th>
-                            <th>Enabled</th>
+                            <th>Status</th>
                             <th>Next Run</th>
-                            <th>Failure</th>
+                            <th>Last Run</th>
                             <th>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {jobs.map((job) => (
-                            <tr
-                              key={job.id}
-                              className="cursor-pointer"
-                              onClick={() => setSelectedJob(job)}
-                            >
-                              <td className="ui-mono">
-                                {job.name || job.id.slice(0, 8)}
-                              </td>
-                              <td className="ui-mono">
-                                {job.schedule_type} {job.schedule}
-                              </td>
-                              <td>
-                                <label className="flex items-center gap-2 text-xs">
-                                  <input
-                                    type="checkbox"
-                                    checked={job.enabled}
-                                    onChange={async (event) => {
-                                      event.stopPropagation();
-                                      await updateCronJob(
-                                        job.id,
-                                        { enabled: event.target.checked },
-                                        agentId,
-                                      );
-                                      await refreshAll(agentId, metricsWindow);
-                                    }}
-                                  />
-                                  {job.enabled ? "on" : "off"}
-                                </label>
-                              </td>
-                              <td>{asDateTime(job.next_run_ts)}</td>
-                              <td>{job.failure_count}</td>
-                              <td>
-                                <div className="flex gap-1">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      setDraft({
-                                        id: job.id,
-                                        name: job.name,
-                                        schedule_type: job.schedule_type,
-                                        schedule: job.schedule,
-                                        prompt: job.prompt,
-                                        enabled: job.enabled,
-                                      });
-                                    }}
-                                  >
-                                    Edit
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={async (event) => {
-                                      event.stopPropagation();
-                                      await runCronJob(job.id, agentId);
-                                      await refreshAll(agentId, metricsWindow);
-                                    }}
-                                  >
-                                    Run now
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="danger"
-                                    onClick={async (event) => {
-                                      event.stopPropagation();
-                                      await deleteCronJob(job.id, agentId);
-                                      await refreshAll(agentId, metricsWindow);
-                                    }}
-                                  >
-                                    Delete
-                                  </Button>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
+                          {filteredJobs.map((job) => {
+                            const status = deriveJobStatus(job);
+                            const runBusy = jobActionKey === `${job.id}:run`;
+                            const toggleBusy = jobActionKey === `${job.id}:toggle`;
+                            const deleteBusy = jobActionKey === `${job.id}:delete`;
+                            return (
+                              <tr
+                                key={job.id}
+                                className="cursor-pointer"
+                                onClick={() => setSelectedJob(job)}
+                              >
+                                <td className="ui-mono">
+                                  <div>{job.name || job.id.slice(0, 8)}</div>
+                                  <div className="mt-1 text-xs text-[var(--muted)]">
+                                    {previewText(job.prompt, 80)}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="ui-mono">
+                                    {formatScheduleSummary(
+                                      job.schedule_type,
+                                      job.schedule,
+                                    )}
+                                  </div>
+                                  <div className="mt-1 text-xs text-[var(--muted)]">
+                                    {job.schedule_type === "cron"
+                                      ? "Raw expression available in detail view"
+                                      : describeSchedule(
+                                          job.schedule_type,
+                                          job.schedule,
+                                        )}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="flex flex-col gap-1">
+                                    <Badge tone={status.tone}>{status.label}</Badge>
+                                    <span className="text-xs text-[var(--muted)]">
+                                      {status.detail}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td>{asDateTime(job.next_run_ts)}</td>
+                                <td>
+                                  <div>{asDateTime(job.last_run_ts)}</div>
+                                  <div className="mt-1 text-xs text-[var(--muted)]">
+                                    success {asDateTime(job.last_success_ts)}
+                                  </div>
+                                </td>
+                                <td>
+                                  <div className="flex flex-wrap gap-1">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openJobEditor(job);
+                                      }}
+                                    >
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      loading={runBusy}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleJobAction(job, "run");
+                                      }}
+                                    >
+                                      Run now
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      loading={toggleBusy}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleJobAction(job, "toggle");
+                                      }}
+                                    >
+                                      {job.enabled ? "Pause" : "Resume"}
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="danger"
+                                      loading={deleteBusy}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        void handleJobAction(job, "delete");
+                                      }}
+                                    >
+                                      Delete
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </DataTable>
                     </TableWrap>
@@ -1295,69 +1487,298 @@ export default function SchedulerPage() {
           </div>
         </div>
         {selectedJob ? (
-          <aside className="fixed inset-y-3 right-3 z-50 w-[min(520px,92vw)] rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
-            <div className="ui-panel-header">
-              <h2 className="ui-panel-title">Cron Job Detail</h2>
-              <Button type="button" size="sm" onClick={() => setSelectedJob(null)}>
-                Close
-              </Button>
-            </div>
-            <div className="ui-scroll-area h-[calc(100%-56px)] space-y-3 p-4 text-sm">
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                <div className="ui-label">Job</div>
-                <div className="ui-mono mt-1">
-                  {selectedJob.name || selectedJob.id.slice(0, 8)}
+          <div
+            className="fixed inset-0 z-50 bg-[rgba(2,6,23,0.36)] backdrop-blur-[1px]"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setSelectedJob(null);
+              }
+            }}
+          >
+            <aside className="ml-auto flex h-full w-full max-w-[min(560px,100vw)] flex-col border-l border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
+              <div className="ui-panel-header">
+                <div>
+                  <h2 className="ui-panel-title">Cron Job Detail</h2>
+                  <div className="mt-1 text-xs text-[var(--muted)]">
+                    Quick view for schedule state, last activity, and prompt.
+                  </div>
                 </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  {selectedJob.enabled ? "Enabled" : "Disabled"} · failures{" "}
-                  {selectedJob.failure_count}
-                </div>
-              </div>
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                <div className="ui-label">Schedule</div>
-                <div className="ui-mono mt-1">
-                  {selectedJob.schedule_type} {selectedJob.schedule}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Next run {asDateTime(selectedJob.next_run_ts)}
-                </div>
-              </div>
-              <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                <div className="ui-label">Prompt</div>
-                <pre className="ui-mono mt-1 whitespace-pre-wrap text-xs text-[var(--text)]">
-                  {selectedJob.prompt}
-                </pre>
-              </div>
-              <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
                   size="sm"
-                  onClick={async () => {
-                    await runCronJob(selectedJob.id, agentId);
-                    await refreshAll(agentId, metricsWindow);
-                  }}
+                  onClick={() => setSelectedJob(null)}
                 >
-                  Run now
+                  Close
+                </Button>
+              </div>
+              <div className="ui-scroll-area flex-1 space-y-3 p-4 text-sm">
+                {(() => {
+                  const status = deriveJobStatus(selectedJob);
+                  const runBusy = jobActionKey === `${selectedJob.id}:run`;
+                  const toggleBusy = jobActionKey === `${selectedJob.id}:toggle`;
+                  const deleteBusy = jobActionKey === `${selectedJob.id}:delete`;
+                  return (
+                    <>
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="ui-label">Job</div>
+                            <div className="ui-mono mt-1">
+                              {selectedJob.name || selectedJob.id.slice(0, 8)}
+                            </div>
+                          </div>
+                          <Badge tone={status.tone}>{status.label}</Badge>
+                        </div>
+                        <div className="mt-2 text-xs text-[var(--muted)]">
+                          {status.detail}
+                        </div>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                          <div className="ui-label">Schedule</div>
+                          <div className="ui-mono mt-1">
+                            {formatScheduleSummary(
+                              selectedJob.schedule_type,
+                              selectedJob.schedule,
+                            )}
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            {selectedJob.schedule_type === "cron"
+                              ? selectedJob.schedule
+                              : describeSchedule(
+                                  selectedJob.schedule_type,
+                                  selectedJob.schedule,
+                                )}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                          <div className="ui-label">Timing</div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            Next run {asDateTime(selectedJob.next_run_ts)}
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            Last run {asDateTime(selectedJob.last_run_ts)}
+                          </div>
+                          <div className="mt-1 text-xs text-[var(--muted)]">
+                            Last success {asDateTime(selectedJob.last_success_ts)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                        <div className="ui-label">Prompt</div>
+                        <pre className="ui-mono mt-2 whitespace-pre-wrap text-xs text-[var(--text)]">
+                          {selectedJob.prompt}
+                        </pre>
+                      </div>
+                      {selectedJob.last_error ? (
+                        <div className="rounded-md border border-[var(--border)] bg-[var(--danger-soft)] p-3">
+                          <div className="ui-label text-[var(--danger)]">
+                            Last Error
+                          </div>
+                          <div className="mt-2 whitespace-pre-wrap text-sm text-[var(--danger)]">
+                            {selectedJob.last_error}
+                          </div>
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          loading={runBusy}
+                          onClick={() => void handleJobAction(selectedJob, "run")}
+                        >
+                          Run now
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          loading={toggleBusy}
+                          onClick={() =>
+                            void handleJobAction(selectedJob, "toggle")
+                          }
+                        >
+                          {selectedJob.enabled ? "Pause" : "Resume"}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => openJobEditor(selectedJob)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="danger"
+                          loading={deleteBusy}
+                          onClick={() => void handleJobAction(selectedJob, "delete")}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </aside>
+          </div>
+        ) : null}
+        {editorOpen ? (
+          <div
+            className="fixed inset-0 z-50 bg-[rgba(2,6,23,0.42)] backdrop-blur-[2px]"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                closeJobEditor();
+              }
+            }}
+          >
+            <aside
+              className="ml-auto flex h-full w-full max-w-[min(620px,100vw)] flex-col border-l border-[var(--border-strong)] bg-[var(--surface-2)] shadow-2xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cron-job-editor-title"
+              data-testid="scheduler-job-editor"
+            >
+              <div className="ui-panel-header">
+                <div>
+                  <h2 id="cron-job-editor-title" className="ui-panel-title">
+                    {draft.id ? "Edit Cron Job" : "Create Cron Job"}
+                  </h2>
+                  <div className="mt-1 text-xs text-[var(--muted)]">
+                    Set what runs, when it runs, and whether it starts active.
+                  </div>
+                </div>
+                <Button type="button" size="sm" onClick={closeJobEditor}>
+                  Close
+                </Button>
+              </div>
+              <div className="ui-scroll-area flex-1 space-y-4 p-4">
+                <div className="grid gap-4" style={CRON_EDITOR_GRID_STYLE}>
+                  <label className="min-w-0">
+                    <span className="ui-label">Job Name</span>
+                    <Input
+                      className="mt-1 text-sm"
+                      value={draft.name}
+                      onChange={(event) =>
+                        setDraft((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                      placeholder="Operator-friendly label"
+                    />
+                    <span className="ui-helper mt-1 block">
+                      Leave blank to use a generated cron identifier.
+                    </span>
+                  </label>
+                  <label className="min-w-0">
+                    <span className="ui-label">Schedule Type</span>
+                    <Select
+                      className="mt-1 ui-mono text-sm"
+                      value={draft.schedule_type}
+                      onChange={(event) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          schedule_type: event.target.value as ScheduleType,
+                        }))
+                      }
+                    >
+                      <option value="every">Every interval</option>
+                      <option value="cron">Cron expression</option>
+                      <option value="at">One-time run</option>
+                    </Select>
+                    <span className="ui-helper mt-1 block">
+                      Default to interval mode unless you need calendar precision.
+                    </span>
+                  </label>
+                  <label className="min-w-0">
+                    <span className="ui-label">When It Runs</span>
+                    <Input
+                      className="mt-1 ui-mono text-sm"
+                      invalid={submitAttempted && !draft.schedule.trim()}
+                      hintId="scheduler-schedule-hint"
+                      errorId="scheduler-schedule-error"
+                      value={draft.schedule}
+                      onChange={(event) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          schedule: event.target.value,
+                        }))
+                      }
+                      placeholder={
+                        draft.schedule_type === "every"
+                          ? "300"
+                          : draft.schedule_type === "cron"
+                            ? "*/15 * * * *"
+                            : "2026-03-01T10:00:00Z"
+                      }
+                    />
+                    <span
+                      id={
+                        submitAttempted && !draft.schedule.trim()
+                          ? "scheduler-schedule-error"
+                          : "scheduler-schedule-hint"
+                      }
+                      className="ui-helper mt-1 block"
+                    >
+                      {submitAttempted && !draft.schedule.trim()
+                        ? "Schedule is required."
+                        : scheduleHint}
+                    </span>
+                  </label>
+                  <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                    <div className="ui-label">Runtime Preview</div>
+                    <div className="mt-1 text-sm text-[var(--text)]">
+                      {formatScheduleSummary(draft.schedule_type, draft.schedule)}
+                    </div>
+                    <div className="mt-2 text-xs text-[var(--muted)]">
+                      {draftStatusPreview}
+                    </div>
+                  </div>
+                </div>
+                <label className="block">
+                  <span className="ui-label">Prompt</span>
+                  <textarea
+                    className="ui-input mt-1 min-h-[160px] resize-y text-sm"
+                    aria-invalid={
+                      submitAttempted && !draft.prompt.trim() ? true : undefined
+                    }
+                    value={draft.prompt}
+                    onChange={(event) =>
+                      setDraft((prev) => ({ ...prev, prompt: event.target.value }))
+                    }
+                    placeholder="Describe exactly what the job should do when it runs."
+                  />
+                  <span className="ui-helper mt-1 block">
+                    Keep the prompt task-focused. Tooling guidance is added by the scheduler runtime.
+                  </span>
+                </label>
+                <label className="flex min-h-[44px] items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-3 text-sm text-[var(--muted)]">
+                  <input
+                    type="checkbox"
+                    checked={draft.enabled}
+                    onChange={(event) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        enabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  Start this job active after saving
+                </label>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] bg-[var(--surface-header)] px-4 py-3">
+                <Button type="button" size="sm" onClick={closeJobEditor}>
+                  Cancel
                 </Button>
                 <Button
                   type="button"
                   size="sm"
-                  onClick={() =>
-                    setDraft({
-                      id: selectedJob.id,
-                      name: selectedJob.name,
-                      schedule_type: selectedJob.schedule_type,
-                      schedule: selectedJob.schedule,
-                      prompt: selectedJob.prompt,
-                      enabled: selectedJob.enabled,
-                    })
-                  }
+                  loading={savingJob}
+                  onClick={() => void handleSubmitJob()}
                 >
-                  Edit in form
+                  {draft.id ? "Save Changes" : "Create Job"}
                 </Button>
               </div>
-            </div>
-          </aside>
+            </aside>
+          </div>
         ) : null}
       </section>
     </main>

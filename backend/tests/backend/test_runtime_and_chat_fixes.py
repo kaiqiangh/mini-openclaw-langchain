@@ -21,6 +21,40 @@ def test_chat_non_stream_respects_first_turn_flag(client):
     assert "first=0" in second.json()["data"]["content"]
 
 
+def test_chat_non_stream_resume_same_turn_avoids_duplicate_user_message(
+    client, api_app
+):
+    manager = api_app["agent_manager"]
+    session_manager = manager.get_runtime("default").session_manager
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
+        "session_id"
+    ]
+
+    session_manager.save_message(session_id, "user", "hello")
+
+    resumed = client.post(
+        "/api/v1/agents/default/chat",
+        json={
+            "message": "hello",
+            "session_id": session_id,
+            "stream": False,
+            "resume_same_turn": True,
+        },
+    )
+
+    assert resumed.status_code == 200
+
+    history = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/history"
+    ).json()["data"]["messages"]
+    user_messages = [row for row in history if row.get("role") == "user"]
+    assistant_messages = [row for row in history if row.get("role") == "assistant"]
+
+    assert [row["content"] for row in user_messages] == ["hello"]
+    assert len(assistant_messages) == 1
+    assert "RUN:first=0:hello" in assistant_messages[0]["content"]
+
+
 def test_runtime_config_endpoint_roundtrip(client):
     before = client.get("/api/v1/agents/default/config/runtime")
     assert before.status_code == 200

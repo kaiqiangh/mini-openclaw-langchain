@@ -365,7 +365,13 @@ class CronScheduler:
 
     async def _run_job(self, job: CronJob, now_ts: float, *, manual_run: bool) -> None:
         session_id = f"__cron__:{job.id}"
-        history = self.session_manager.load_session_for_agent(session_id)
+        repository = self.agent_manager.get_session_repository(self.agent_id)
+        snapshot = await repository.load_snapshot(
+            agent_id=self.agent_id,
+            session_id=session_id,
+            include_live=False,
+            create_if_missing=True,
+        )
         scheduled_ts = (
             float(job.next_run_ts)
             if (not manual_run and float(job.next_run_ts) > 0)
@@ -381,9 +387,9 @@ class CronScheduler:
         try:
             result = await self.agent_manager.run_once(
                 message=self._compose_job_prompt(job.prompt),
-                history=history,
+                history=[],
                 session_id=session_id,
-                is_first_turn=len(history) == 0,
+                is_first_turn=len(snapshot.messages) == 0,
                 output_format="text",
                 trigger_type="cron",
                 agent_id=self.agent_id,
@@ -391,9 +397,7 @@ class CronScheduler:
             finished_ts = time.time()
             duration_ms = max(0, int((finished_ts - started_ts) * 1000))
             text = str(result.get("text", "")).strip()
-            if text:
-                self.session_manager.save_message(session_id, "user", job.prompt)
-                self.session_manager.save_message(session_id, "assistant", text)
+            run_id = str(result.get("run_id", "")).strip() or None
 
             job.failure_count = 0
             job.last_error = ""
@@ -416,6 +420,8 @@ class CronScheduler:
                     "name": job.name,
                     "status": "ok",
                     "trigger": "manual" if manual_run else "scheduled",
+                    "run_id": run_id,
+                    "session_id": session_id,
                     "scheduled_at_ms": int(scheduled_ts * 1000)
                     if scheduled_ts is not None
                     else None,
@@ -451,6 +457,7 @@ class CronScheduler:
                     "name": job.name,
                     "status": "error",
                     "trigger": "manual" if manual_run else "scheduled",
+                    "session_id": session_id,
                     "scheduled_at_ms": int(scheduled_ts * 1000)
                     if scheduled_ts is not None
                     else None,

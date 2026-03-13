@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -19,7 +18,9 @@ from graph.agent import AgentManager
 
 router = APIRouter(tags=["chat"])
 logger = logging.getLogger(__name__)
-_SKILL_PATH_PATTERN = re.compile(r"(?:^|[^A-Za-z0-9._-])(?:\./)?skills/([A-Za-z0-9._-]+)(?=/)")
+_SKILL_PATH_PATTERN = re.compile(
+    r"(?:^|[^A-Za-z0-9._-])(?:\./)?skills/([A-Za-z0-9._-]+)(?=/)"
+)
 
 
 class ChatRequest(BaseModel):
@@ -37,18 +38,11 @@ class _StreamRunState:
     message: str
     is_first_turn: bool
     resume_same_turn: bool = False
+    history: list[dict[str, Any]] = field(default_factory=list)
     subscribers: set[asyncio.Queue[dict[str, str] | None]] = field(default_factory=set)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     task: asyncio.Task[None] | None = None
     done: bool = False
-    run_id: str = ""
-    assistant_segments: list[dict[str, Any]] = field(default_factory=list)
-    current_content: str = ""
-    current_tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    current_skill_uses: list[str] = field(default_factory=list)
-    selected_skills: list[str] = field(default_factory=list)
-    selected_skills_pending: bool = False
-    last_live_sync_ms: int = 0
     lock_owner: str = ""
 
 
@@ -69,7 +63,7 @@ def set_coordinator(coordinator: LocalCoordinator) -> None:
 
 
 def _require_agent_manager() -> AgentManager:
-    if _agent_manager is None or _agent_manager.session_manager is None:
+    if _agent_manager is None:
         raise ApiError(
             status_code=500,
             code="not_initialized",
@@ -80,32 +74,6 @@ def _require_agent_manager() -> AgentManager:
 
 def _run_key(agent_id: str, session_id: str) -> str:
     return f"{agent_id}:{session_id}"
-
-
-def _snapshot_live_content(state: _StreamRunState) -> str:
-    content_parts: list[str] = []
-    for segment in state.assistant_segments:
-        text = str(segment.get("content", "")).strip()
-        if text:
-            content_parts.append(text)
-    current = state.current_content.strip()
-    if current:
-        content_parts.append(current)
-    return "\n\n".join(content_parts).strip()
-
-
-def _merge_unique_names(existing: list[str], additions: list[str]) -> list[str]:
-    if not additions:
-        return existing
-    seen = {item for item in existing if item}
-    merged = list(existing)
-    for item in additions:
-        normalized = str(item).strip()
-        if not normalized or normalized in seen:
-            continue
-        merged.append(normalized)
-        seen.add(normalized)
-    return merged
 
 
 def _extract_skill_uses(value: Any) -> list[str]:
@@ -133,48 +101,6 @@ def _extract_skill_uses(value: Any) -> list[str]:
     return found
 
 
-def _flush_current_segment(state: _StreamRunState, fallback_content: str = "") -> None:
-    content = state.current_content.strip() or fallback_content.strip()
-    if content or state.current_tool_calls or state.current_skill_uses:
-        segment = {
-            "content": content,
-            "tool_calls": list(state.current_tool_calls),
-            "skill_uses": list(state.current_skill_uses),
-        }
-        if state.selected_skills_pending and state.selected_skills:
-            segment["selected_skills"] = list(state.selected_skills)
-            state.selected_skills_pending = False
-        state.assistant_segments.append(segment)
-    state.current_content = ""
-    state.current_tool_calls = []
-    state.current_skill_uses = []
-
-
-def _persist_live_snapshot(
-    session_manager: Any, state: _StreamRunState, *, force: bool = False
-) -> None:
-    now_ms = int(time.time() * 1000)
-    if not force and now_ms - state.last_live_sync_ms < 350:
-        return
-
-    content = _snapshot_live_content(state)
-    tool_calls = list(state.current_tool_calls)
-    skill_uses = list(state.current_skill_uses)
-    selected_skills = list(state.selected_skills)
-    if not content and not tool_calls and not skill_uses and not selected_skills:
-        return
-
-    session_manager.set_live_response(
-        state.session_id,
-        run_id=state.run_id or "__pending__",
-        content=content,
-        tool_calls=tool_calls or None,
-        skill_uses=skill_uses or None,
-        selected_skills=selected_skills or None,
-    )
-    state.last_live_sync_ms = now_ms
-
-
 async def _publish_event(
     state: _StreamRunState, event_type: str, data: dict[str, Any] | str
 ) -> None:
@@ -193,7 +119,6 @@ async def _publish_event(
         except asyncio.QueueFull:
             pass
 
-        # Keep the newest event by dropping one stale entry if queue is saturated.
         try:
             _ = queue.get_nowait()
         except asyncio.QueueEmpty:
@@ -226,165 +151,52 @@ async def _close_run(state: _StreamRunState) -> None:
         _coordinator.release_stream_lock(state.key, state.lock_owner)
 
 
-async def _persist_final_segments(state: _StreamRunState, runtime: Any) -> None:
-    session_manager = runtime.session_manager
-    session_manager.clear_live_response(state.session_id, run_id=state.run_id or None)
-
-    for idx, segment in enumerate(state.assistant_segments):
-        content = str(segment.get("content", "")).strip()
-        if not content:
-            continue
-        tool_calls = segment.get("tool_calls") or None
-        skill_uses = segment.get("skill_uses") or None
-        selected_skills = segment.get("selected_skills") or None
-        session_manager.save_message(
-            state.session_id,
-            "assistant",
-            content,
-            tool_calls=tool_calls,
-            skill_uses=skill_uses,
-            selected_skills=selected_skills,
-        )
-        if runtime.audit_store is not None:
-            runtime.audit_store.append_message_link(
-                run_id=state.run_id or None,
-                session_id=state.session_id,
-                role="assistant",
-                segment_index=idx,
-                content=content,
-                details={"tool_call_count": len(tool_calls or [])},
-            )
-
-
 async def _run_stream_task(
     state: _StreamRunState,
     *,
     agent: AgentManager,
-    runtime: Any,
-    history: list[dict[str, Any]],
 ) -> None:
-    session_manager = runtime.session_manager
-    persisted_final = False
-
     try:
-        # Persist user input immediately so generation can continue independently of client SSE.
-        # Resume mode reuses an already-persisted turn and must not duplicate the user message.
-        if not state.resume_same_turn:
-            session_manager.save_message(state.session_id, "user", state.message)
-            if runtime.audit_store is not None:
-                runtime.audit_store.append_message_link(
-                    run_id=None,
-                    session_id=state.session_id,
-                    role="user",
-                    segment_index=0,
-                    content=state.message,
-                    details={"source": "chat_persist"},
-                )
-
         async for event in agent.astream(
             message=state.message,
-            history=history,
+            history=state.history,
             session_id=state.session_id,
             is_first_turn=state.is_first_turn,
             trigger_type="chat",
             agent_id=state.agent_id,
+            resume_same_turn=state.resume_same_turn,
         ):
             event_type = str(event.get("type", "message"))
             raw_data = event.get("data", {})
             data = raw_data if isinstance(raw_data, dict) else {"value": raw_data}
-
-            if event_type == "run_start":
-                run_id = str(data.get("run_id", "")).strip()
-                if run_id:
-                    state.run_id = run_id
-                    _persist_live_snapshot(session_manager, state, force=True)
-
-            if event_type == "selected_skills":
-                payload_skills = data.get("skills", [])
-                selected_names: list[str] = []
-                if isinstance(payload_skills, list):
-                    for item in payload_skills:
-                        if isinstance(item, dict):
-                            name = str(item.get("name", "")).strip()
-                        else:
-                            name = str(item).strip()
-                        if name:
-                            selected_names.append(name)
-                state.selected_skills = _merge_unique_names([], selected_names)
-                state.selected_skills_pending = bool(state.selected_skills)
-                _persist_live_snapshot(session_manager, state, force=True)
-
-            if event_type == "token":
-                state.current_content += str(data.get("content", ""))
-                _persist_live_snapshot(session_manager, state, force=False)
-
             if event_type == "tool_start":
                 skill_uses = _extract_skill_uses(data.get("input", {}))
-                state.current_skill_uses = _merge_unique_names(
-                    state.current_skill_uses,
-                    skill_uses,
-                )
                 if skill_uses:
                     data = {**data, "skill_uses": skill_uses}
-                state.current_tool_calls.append(
-                    {
-                        "tool": data.get("tool", "tool"),
-                        "input": data.get("input", {}),
-                    }
-                )
-                _persist_live_snapshot(session_manager, state, force=True)
-
-            if event_type == "tool_end" and state.current_tool_calls:
-                state.current_tool_calls[-1]["output"] = data.get("output", "")
-                _persist_live_snapshot(session_manager, state, force=True)
-
-            if event_type == "new_response":
-                _flush_current_segment(state)
-                _persist_live_snapshot(session_manager, state, force=True)
-
-            pending_title: str | None = None
-            if event_type == "done":
-                done_content = str(data.get("content", "")).strip()
-                _flush_current_segment(state, fallback_content=done_content)
-                await _persist_final_segments(state, runtime)
-                persisted_final = True
-                if state.is_first_turn:
-                    title = await agent.generate_title(
-                        state.message,
-                        agent_id=state.agent_id,
-                    )
-                    session_manager.update_title(state.session_id, title)
-                    pending_title = title
 
             await _publish_event(state, event_type, data)
 
-            if event_type == "done" and pending_title:
+            if event_type == "done" and state.is_first_turn:
+                title = await agent.generate_title(state.message, agent_id=state.agent_id)
+                agent.get_session_manager(state.agent_id).update_title(
+                    state.session_id, title
+                )
                 await _publish_event(
                     state,
                     "title",
                     {
                         "session_id": state.session_id,
                         "agent_id": state.agent_id,
-                        "title": pending_title,
+                        "title": title,
                     },
                 )
-
-        if not persisted_final:
-            _flush_current_segment(state)
-            if state.assistant_segments:
-                await _persist_final_segments(state, runtime)
-
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception(
             "Chat stream failed",
             extra={
                 "agent_id": state.agent_id,
                 "session_id": state.session_id,
-                "run_id": state.run_id or "",
             },
-        )
-        session_manager.clear_live_response(
-            state.session_id, run_id=state.run_id or None
         )
         await _publish_event(
             state,
@@ -392,7 +204,7 @@ async def _run_stream_task(
             {
                 "error": "Stream failed. Check server logs for details.",
                 "code": "stream_failed",
-                "run_id": state.run_id,
+                "run_id": "",
                 "attempt": 1,
             },
         )
@@ -424,16 +236,25 @@ async def _unsubscribe_run(
 async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
-        runtime = agent.get_runtime(agent_id)
-        session_manager = runtime.session_manager
+        agent.get_session_manager(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
 
-    session = session_manager.load_session(request.session_id)
-    is_first_turn = len(session.get("messages", [])) == 0
-    history = session_manager.load_session_for_agent(request.session_id)
+    session_repository = agent.get_session_repository(agent_id)
+    snapshot = await session_repository.load_snapshot(
+        agent_id=agent_id,
+        session_id=request.session_id,
+        include_live=False,
+        create_if_missing=True,
+    )
+    is_first_turn = len(snapshot.messages) == 0
+    history = await session_repository.load_history_for_agent(
+        agent_id=agent_id,
+        session_id=request.session_id,
+        create_if_missing=True,
+    )
     if request.resume_same_turn and history:
         last = history[-1]
         if (
@@ -451,48 +272,19 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
             output_format="text",
             trigger_type="chat",
             agent_id=agent_id,
-        )
-        text = str(result.get("text", ""))
-        usage = result.get("usage", {})
-        session_manager.save_message(request.session_id, "user", request.message)
-        tool_calls: list[dict[str, Any]] = []
-        skill_uses: list[str] = []
-        selected_skills = [
-            str(item).strip()
-            for item in result.get("selected_skills", [])
-            if str(item).strip()
-        ]
-        for output_message in result.get("messages", []):
-            message_tool_calls = getattr(output_message, "tool_calls", None)
-            if isinstance(message_tool_calls, list):
-                for call in message_tool_calls:
-                    if not isinstance(call, dict):
-                        continue
-                    tool_calls.append(
-                        {
-                            "tool": call.get("name", "tool"),
-                            "input": call.get("args", {}),
-                        }
-                    )
-                    skill_uses = _merge_unique_names(
-                        skill_uses,
-                        _extract_skill_uses(call.get("args", {})),
-                    )
-        session_manager.save_message(
-            request.session_id,
-            "assistant",
-            text,
-            tool_calls=tool_calls or None,
-            skill_uses=skill_uses or None,
-            selected_skills=selected_skills or None,
+            resume_same_turn=bool(request.resume_same_turn),
         )
         return {
             "data": {
-                "content": text,
+                "content": str(result.get("text", "")),
                 "session_id": request.session_id,
                 "agent_id": agent_id,
-                "selected_skills": selected_skills,
-                "usage": usage,
+                "selected_skills": [
+                    str(item).strip()
+                    for item in result.get("selected_skills", [])
+                    if str(item).strip()
+                ],
+                "usage": result.get("usage", {}),
             }
         }
 
@@ -525,6 +317,7 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
                 message=request.message,
                 is_first_turn=is_first_turn,
                 resume_same_turn=bool(request.resume_same_turn),
+                history=history,
                 lock_owner=lock_owner,
             )
             _active_runs[key] = state
@@ -543,8 +336,6 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
             _run_stream_task(
                 state,
                 agent=agent,
-                runtime=runtime,
-                history=history,
             )
         )
 

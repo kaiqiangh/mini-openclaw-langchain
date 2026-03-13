@@ -173,7 +173,7 @@ describe("SchedulerPage", () => {
 
     expect(screen.getByText("Scheduler Events")).toBeInTheDocument();
     expect(screen.getByText("No Trend Data")).toBeInTheDocument();
-    expect(screen.queryByText("Schedule Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Create Cron Job")).not.toBeInTheDocument();
     expect(screen.queryByText("No Cron Jobs")).not.toBeInTheDocument();
     expect(screen.queryByText("Save Heartbeat")).not.toBeInTheDocument();
   });
@@ -195,20 +195,21 @@ describe("SchedulerPage", () => {
 
     await waitFor(() => expect(apiMocks.listCronJobs).toHaveBeenCalled());
 
-    expect(screen.getByText("Schedule Type")).toBeInTheDocument();
     expect(screen.getByText("No Cron Jobs")).toBeInTheDocument();
     expect(screen.getByText("Save Heartbeat")).toBeInTheDocument();
     expect(screen.getByText("No Runs")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "New Job" }).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("restores saved section state over responsive defaults", async () => {
     window.localStorage.setItem(
       "mini-openclaw:scheduler-sections:v1",
       JSON.stringify({
-        composer: true,
         metrics: false,
         trend: false,
-        cron: false,
+        cron: true,
         heartbeat: false,
         recent_runs: false,
         recent_failures: false,
@@ -220,7 +221,7 @@ describe("SchedulerPage", () => {
 
     await waitFor(() => expect(apiMocks.listCronJobs).toHaveBeenCalled());
 
-    expect(screen.getByText("Schedule Type")).toBeInTheDocument();
+    expect(screen.getByText("No Cron Jobs")).toBeInTheDocument();
     expect(screen.queryByText("Scheduler Events")).not.toBeInTheDocument();
     expect(screen.queryByText("No Trend Data")).not.toBeInTheDocument();
   });
@@ -231,11 +232,10 @@ describe("SchedulerPage", () => {
     await waitFor(() => expect(apiMocks.listCronJobs).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: "Expand All Sections" }));
-    expect(screen.getByText("Schedule Type")).toBeInTheDocument();
     expect(screen.getByText("No Cron Jobs")).toBeInTheDocument();
+    expect(screen.getByText("Save Heartbeat")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Collapse All Sections" }));
-    expect(screen.queryByText("Schedule Type")).not.toBeInTheDocument();
     expect(screen.queryByText("Scheduler Events")).not.toBeInTheDocument();
     expect(screen.queryByText("No Cron Jobs")).not.toBeInTheDocument();
   });
@@ -304,5 +304,132 @@ describe("SchedulerPage", () => {
     );
 
     expect(screen.queryByText("No Cron Jobs")).not.toBeInTheDocument();
+  });
+
+  it("derives user-facing cron status labels from runtime fields", async () => {
+    setViewportMode(true);
+    fixtures.jobs = [
+      {
+        id: "job-scheduled",
+        name: "Scheduled job",
+        schedule_type: "every",
+        schedule: "300",
+        prompt: "sync",
+        enabled: true,
+        next_run_ts: Math.floor(Date.now() / 1000) + 600,
+        created_at: 0,
+        updated_at: 10,
+        last_run_ts: 0,
+        last_success_ts: 0,
+        failure_count: 0,
+        last_error: "",
+      },
+      {
+        id: "job-retrying",
+        name: "Retrying job",
+        schedule_type: "every",
+        schedule: "300",
+        prompt: "retry",
+        enabled: true,
+        next_run_ts: Math.floor(Date.now() / 1000) + 60,
+        created_at: 0,
+        updated_at: 9,
+        last_run_ts: 1,
+        last_success_ts: 0,
+        failure_count: 2,
+        last_error: "timeout",
+      },
+      {
+        id: "job-paused",
+        name: "Paused job",
+        schedule_type: "every",
+        schedule: "300",
+        prompt: "pause",
+        enabled: false,
+        next_run_ts: 0,
+        created_at: 0,
+        updated_at: 8,
+        last_run_ts: 1,
+        last_success_ts: 0,
+        failure_count: 0,
+        last_error: "",
+      },
+      {
+        id: "job-completed",
+        name: "Completed job",
+        schedule_type: "at",
+        schedule: "2026-03-01T10:00:00Z",
+        prompt: "once",
+        enabled: false,
+        next_run_ts: 0,
+        created_at: 0,
+        updated_at: 7,
+        last_run_ts: 1,
+        last_success_ts: 1,
+        failure_count: 0,
+        last_error: "",
+      },
+      {
+        id: "job-failed",
+        name: "Failed job",
+        schedule_type: "every",
+        schedule: "300",
+        prompt: "fail",
+        enabled: false,
+        next_run_ts: 0,
+        created_at: 0,
+        updated_at: 6,
+        last_run_ts: 1,
+        last_success_ts: 0,
+        failure_count: 3,
+        last_error: "rate limited",
+      },
+    ];
+
+    renderPage();
+
+    await waitFor(() => expect(apiMocks.listCronJobs).toHaveBeenCalled());
+
+    expect(screen.getAllByText("Scheduled").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Retrying").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Paused").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
+  });
+
+  it("uses a drawer workflow for creating and editing cron jobs", async () => {
+    setViewportMode(true);
+    fixtures.jobs = [
+      {
+        id: "job-1",
+        name: "Digest",
+        schedule_type: "every",
+        schedule: "300",
+        prompt: "Build digest",
+        enabled: true,
+        next_run_ts: 1,
+        created_at: 0,
+        updated_at: 0,
+        last_run_ts: 0,
+        last_success_ts: 0,
+        failure_count: 0,
+        last_error: "",
+      },
+    ];
+
+    renderPage();
+
+    await waitFor(() => expect(apiMocks.listCronJobs).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "New Job" })[0]);
+    expect(screen.getByTestId("scheduler-job-editor")).toBeInTheDocument();
+    expect(screen.getByText("Create Cron Job")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByTestId("scheduler-job-editor")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
+    expect(screen.getByText("Edit Cron Job")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Digest")).toBeInTheDocument();
   });
 });

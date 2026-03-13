@@ -9,7 +9,7 @@ import {
 } from "@/lib/runs";
 
 describe("runs normalization", () => {
-  it("keeps chat usage rows and drops duplicate scheduler-backed usage triggers", () => {
+  it("keeps chat usage rows and enriches scheduler history with matching usage", () => {
     const rows = buildRunLedgerRows({
       usageRecords: [
         {
@@ -55,7 +55,7 @@ describe("runs normalization", () => {
           agent_id: "default",
           provider: "openai",
           run_id: "run-cron-usage",
-          session_id: "session-cron",
+          session_id: "__cron__:cron-1",
           trigger_type: "cron",
           model: "gpt-5",
           model_source: "catalog",
@@ -93,6 +93,8 @@ describe("runs normalization", () => {
           job_id: "cron-1",
           name: "Digest",
           status: "ok",
+          run_id: "run-cron-usage",
+          session_id: "__cron__:cron-1",
           duration_ms: 120,
         },
       ],
@@ -120,6 +122,14 @@ describe("runs normalization", () => {
       ["cron", "ok", "Digest"],
       ["usage", "recorded", "run-chat"],
     ]);
+
+    const cronRow = rows.find((row) => row.label === "Digest");
+    expect(cronRow?.runId).toBe("run-cron-usage");
+    expect(cronRow?.sessionId).toBe("__cron__:cron-1");
+    expect(cronRow?.totalTokens).toBe(2);
+    expect(cronRow?.costUsd).toBe(0.02);
+    expect(cronRow?.provider).toBe("openai");
+    expect(cronRow?.model).toBe("gpt-5");
   });
 
   it("normalizes usage rows with conservative status semantics", () => {
@@ -166,6 +176,69 @@ describe("runs normalization", () => {
     expect(row.sessionId).toBe("session-1");
     expect(row.totalTokens).toBe(14);
     expect(row.costUsd).toBeNull();
+  });
+
+  it("does not attach stale session usage to newer scheduler failures", () => {
+    const rows = buildRunLedgerRows({
+      usageRecords: [
+        {
+          schema_version: 1,
+          timestamp_ms: 10,
+          agent_id: "default",
+          provider: "openai",
+          run_id: "",
+          session_id: "__cron__:cron-1",
+          trigger_type: "cron",
+          model: "gpt-5",
+          model_source: "catalog",
+          usage_source: "stream",
+          input_tokens: 1,
+          input_uncached_tokens: 1,
+          input_cache_read_tokens: 0,
+          input_cache_write_tokens_5m: 0,
+          input_cache_write_tokens_1h: 0,
+          input_cache_write_tokens_unknown: 0,
+          output_tokens: 1,
+          reasoning_tokens: 0,
+          tool_input_tokens: 0,
+          total_tokens: 2,
+          priced: true,
+          cost_usd: 0.02,
+          pricing: {
+            provider: "openai",
+            model: "gpt-5",
+            model_key: "gpt-5",
+            priced: true,
+            currency: "USD",
+            source: "catalog",
+            catalog_version: "test",
+            long_context_applied: false,
+            total_cost_usd: 0.02,
+            unpriced_reason: null,
+            line_items: [],
+          },
+        },
+      ],
+      cronRuns: [],
+      cronFailures: [
+        {
+          timestamp_ms: 10 + 10 * 60 * 1000,
+          job_id: "cron-1",
+          name: "Digest failure",
+          status: "error",
+          session_id: "__cron__:cron-1",
+          error: "boom",
+        },
+      ],
+      heartbeatRuns: [],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.label).toBe("Digest failure");
+    expect(rows[0]?.totalTokens).toBeNull();
+    expect(rows[0]?.costUsd).toBeNull();
+    expect(rows[0]?.provider).toBeNull();
+    expect(rows[0]?.model).toBeNull();
   });
 
   it("filters rows by trigger without mutating ordering", () => {

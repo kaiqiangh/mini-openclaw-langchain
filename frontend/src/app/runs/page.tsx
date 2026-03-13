@@ -379,8 +379,6 @@ function RunsPageContent() {
 
       try {
         const windowHours = windowToHours(selectedWindow);
-        const shouldLoadUsage =
-          selectedTrigger === "all" || selectedTrigger === "chat";
         const shouldLoadCron =
           selectedTrigger === "all" || selectedTrigger === "cron";
         const shouldLoadHeartbeat =
@@ -388,13 +386,11 @@ function RunsPageContent() {
 
         const [usageRecords, cronRuns, cronFailures, heartbeatRuns] =
           await Promise.all([
-            shouldLoadUsage
-              ? getUsageRecords({
-                  sinceHours: windowHours,
-                  agentId,
-                  limit: 500,
-                })
-              : Promise.resolve([]),
+            getUsageRecords({
+              sinceHours: windowHours,
+              agentId,
+              limit: 500,
+            }),
             shouldLoadCron ? listCronRuns(agentId, 200) : Promise.resolve([]),
             shouldLoadCron
               ? listCronFailures(agentId, 200)

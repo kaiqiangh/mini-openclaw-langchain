@@ -103,6 +103,7 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
     manager = api_app["agent_manager"]
     call_count = {"value": 0}
     captured_histories: list[list[tuple[str, str]]] = []
+    session_manager = manager.get_runtime("default").session_manager
 
     async def scripted_stream(
         self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
@@ -116,6 +117,7 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
         )
         call_count["value"] += 1
         if call_count["value"] == 1:
+            session_manager.save_message(session_id, "user", message)
             yield {"type": "run_start", "data": {"run_id": "run-first", "attempt": 1}}
             yield {
                 "type": "error",
@@ -127,6 +129,7 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
                 },
             }
             return
+        session_manager.save_message(session_id, "assistant", "continued")
         yield {"type": "run_start", "data": {"run_id": "run-second", "attempt": 1}}
         yield {"type": "token", "data": {"content": "continued"}}
         yield {
@@ -142,7 +145,6 @@ def test_chat_resume_same_turn_avoids_duplicate_user_message(client, api_app):
 
     created = client.post("/api/v1/agents/default/sessions", json={}).json()
     session_id = created["data"]["session_id"]
-    session_manager = manager.get_runtime("default").session_manager
     session_manager.save_message(session_id, "user", "prior-question")
     session_manager.save_message(session_id, "assistant", "prior-answer")
 
@@ -223,11 +225,13 @@ def test_chat_stream_tracks_skill_usage_in_events_and_history(client, api_app):
         setattr(AppStatus, "should_exit_event", None)
 
     manager = api_app["agent_manager"]
+    session_manager = manager.get_runtime("default").session_manager
 
     async def scripted_stream(
         self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
     ):
         _ = self, history, kwargs
+        session_manager.save_message(session_id, "user", message)
         yield {"type": "run_start", "data": {"run_id": "run-skill", "attempt": 1}}
         yield {
             "type": "selected_skills",
@@ -249,6 +253,20 @@ def test_chat_stream_tracks_skill_usage_in_events_and_history(client, api_app):
             },
         }
         yield {"type": "tool_end", "data": {"tool": "read_files", "output": "ok"}}
+        session_manager.save_message(
+            session_id,
+            "assistant",
+            f"{message}-done",
+            selected_skills=["weather_helper"],
+            skill_uses=["get_weather"],
+            tool_calls=[
+                {
+                    "tool": "read_files",
+                    "input": {"path": "skills/get_weather/SKILL.md"},
+                    "output": "ok",
+                }
+            ],
+        )
         yield {
             "type": "done",
             "data": {

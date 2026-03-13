@@ -7,7 +7,15 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { type ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
@@ -41,7 +49,7 @@ import {
   RetrievalItem,
   useAppStore,
 } from "@/lib/store";
-import { sessionScopeTone } from "@/lib/badge-tones";
+import { activityTone, sessionScopeTone } from "@/lib/badge-tones";
 
 const LIVE_EDGE_THRESHOLD_PX = 80;
 const detailTimestampFormatter = new Intl.DateTimeFormat(undefined, {
@@ -54,6 +62,10 @@ const detailTimestampFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 type SessionScope = "active" | "archived";
+type SessionRuntimeBadge = {
+  label: string;
+  tone: "neutral" | "accent" | "success" | "warn" | "danger";
+};
 type SessionMessageView = {
   id: string;
   role: "user" | "assistant";
@@ -128,6 +140,27 @@ function buildParams(
   return params;
 }
 
+function resolveSessionRuntimeBadge(params: {
+  scope: SessionScope;
+  hasSession: boolean;
+  activeSyncing: boolean;
+  liveSessionReady: boolean;
+  isStreaming: boolean;
+}): SessionRuntimeBadge | null {
+  const { scope, hasSession, activeSyncing, liveSessionReady, isStreaming } = params;
+  if (!hasSession) return null;
+  if (scope === "archived") {
+    return { label: "Read only", tone: "warn" };
+  }
+  if (activeSyncing) {
+    return { label: "Syncing", tone: activityTone("running") };
+  }
+  if (liveSessionReady && isStreaming) {
+    return { label: "Running", tone: activityTone("running") };
+  }
+  return { label: "Ready", tone: activityTone("ready") };
+}
+
 type TranscriptFeedProps = {
   messages: Array<SessionMessageView | StoreChatMessage>;
   loading: boolean;
@@ -135,6 +168,7 @@ type TranscriptFeedProps = {
   emptyTitle: string;
   emptyDescription: string;
   footer?: ReactNode;
+  scrollAreaClassName?: string;
 };
 
 function TranscriptFeed({
@@ -144,6 +178,7 @@ function TranscriptFeed({
   emptyTitle,
   emptyDescription,
   footer,
+  scrollAreaClassName,
 }: TranscriptFeedProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [atLiveEdge, setAtLiveEdge] = useState(true);
@@ -157,7 +192,7 @@ function TranscriptFeed({
     <div className="flex min-h-0 flex-1 flex-col">
       <div
         ref={scrollRef}
-        className="ui-scroll-area flex-1 px-4 pt-4"
+        className={`ui-scroll-area flex-1 px-4 pt-4 ${scrollAreaClassName ?? ""}`.trim()}
         onScroll={(event) => {
           const node = event.currentTarget;
           const distanceFromBottom =
@@ -249,6 +284,7 @@ function LiveConversation({
       error={error}
       emptyTitle="No Messages Yet"
       emptyDescription="Send a message to start the session."
+      scrollAreaClassName="min-h-[26rem] md:min-h-[34rem] xl:min-h-[40rem]"
       footer={
         <>
           {isStreaming ? (
@@ -287,6 +323,7 @@ type SessionDetailProps = {
   history: ChatHistoryResponse | null;
   busyAction: string | null;
   status: string;
+  runtimeBadge: SessionRuntimeBadge | null;
   onArchive: () => void;
   onRestore: () => void;
   onDelete: () => void;
@@ -301,6 +338,7 @@ function SessionDetail({
   history,
   busyAction,
   status,
+  runtimeBadge,
   onArchive,
   onRestore,
   onDelete,
@@ -327,6 +365,9 @@ function SessionDetail({
             <Badge tone={sessionScopeTone(scope)}>
               {scope === "archived" ? "Archived" : "Active"}
             </Badge>
+            {runtimeBadge ? (
+              <Badge tone={runtimeBadge.tone}>{runtimeBadge.label}</Badge>
+            ) : null}
             <Badge tone="neutral" className="ui-mono">
               Agent {agentId}
             </Badge>
@@ -370,7 +411,7 @@ function SessionDetail({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <div className="ui-scroll-area border-b border-[var(--border)] px-4 py-4">
+        <div className="border-b border-[var(--border)] px-4 py-4">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
               <div className="ui-label">Session</div>
@@ -450,6 +491,7 @@ function SessionDetailShell({
     history,
     busyAction,
     status,
+    runtimeBadge,
     onArchive,
     onRestore,
     onDelete,
@@ -466,6 +508,7 @@ function SessionDetailShell({
         history={history}
         busyAction={busyAction}
         status={status}
+        runtimeBadge={runtimeBadge}
         onArchive={onArchive}
         onRestore={onRestore}
         onDelete={onDelete}
@@ -485,6 +528,7 @@ function SessionDetailShell({
         history={history}
         busyAction={busyAction}
         status={status}
+        runtimeBadge={runtimeBadge}
         onArchive={onArchive}
         onRestore={onRestore}
         onDelete={onDelete}
@@ -555,7 +599,7 @@ function SessionsPageContent() {
   const scope = normalizeScope(searchParams.get("scope"));
   const query = searchParams.get("q") ?? "";
   const requestedAgentId = (searchParams.get("agent") ?? "").trim();
-  const selectedSessionId = (searchParams.get("session") ?? "").trim();
+  const sessionIdFromUrl = (searchParams.get("session") ?? "").trim();
   const fallbackAgentId = currentAgentId || agents[0]?.agent_id || "default";
   const agentId =
     agents.length > 0 && requestedAgentId
@@ -563,9 +607,24 @@ function SessionsPageContent() {
         ? requestedAgentId
         : fallbackAgentId
       : requestedAgentId || fallbackAgentId;
-
+  const recoveredSessionId =
+    !sessionIdFromUrl &&
+    currentAgentId === agentId &&
+    sessionsScope === scope &&
+    currentSessionId
+      ? currentSessionId
+      : "";
+  const selectedSessionId = sessionIdFromUrl || recoveredSessionId;
   const selectedSession =
-    sessions.find((session) => session.session_id === selectedSessionId) ?? null;
+    sessions.find((session) => session.session_id === selectedSessionId) ??
+    (recoveredSessionId
+      ? {
+          session_id: recoveredSessionId,
+          title: "Current Session",
+          created_at: 0,
+          updated_at: 0,
+        }
+      : null);
 
   const filteredSessions = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -584,13 +643,20 @@ function SessionsPageContent() {
   const liveSessionReady =
     scope === "active" &&
     currentAgentId === agentId &&
-    sessionsScope === "active" &&
+    sessionsScope === scope &&
     currentSessionId === selectedSessionId;
+  const runtimeBadge = resolveSessionRuntimeBadge({
+    scope,
+    hasSession: Boolean(selectedSession),
+    activeSyncing,
+    liveSessionReady,
+    isStreaming,
+  });
 
-  function navigateWithUpdates(
+  const navigateWithUpdates = useCallback((
     updates: Record<string, string | undefined>,
     mode: "push" | "replace" = "replace",
-  ) {
+  ) => {
     const params = buildParams(searchParams, updates);
     const nextQuery = params.toString();
     const href = nextQuery ? `${pathname}?${nextQuery}` : pathname;
@@ -599,7 +665,19 @@ function SessionsPageContent() {
       return;
     }
     router.replace(href, { scroll: false });
-  }
+  }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (sessionIdFromUrl || !recoveredSessionId) return;
+    navigateWithUpdates(
+      {
+        agent: agentId,
+        scope,
+        session: recoveredSessionId,
+      },
+      "replace",
+    );
+  }, [agentId, navigateWithUpdates, recoveredSessionId, scope, sessionIdFromUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -632,7 +710,7 @@ function SessionsPageContent() {
     if (!requestedAgentId) return;
     if (requestedAgentId === agentId) return;
     navigateWithUpdates({ agent: agentId });
-  }, [agentId, agents, agentsLoading, requestedAgentId]);
+  }, [agentId, agents, agentsLoading, navigateWithUpdates, requestedAgentId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -877,8 +955,11 @@ function SessionsPageContent() {
       : archivedMessages;
 
   return (
-    <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="grid min-h-0 flex-1 gap-3 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
+    <main
+      id="main-content"
+      className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 pb-5"
+    >
+      <section className="grid min-h-0 gap-3 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] md:items-start xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
         <section className="panel-shell flex min-h-0 flex-col">
           <div className="ui-panel-header">
             <div>
@@ -1039,6 +1120,7 @@ function SessionsPageContent() {
             messages={detailMessages}
             busyAction={busyAction}
             status={status}
+            runtimeBadge={runtimeBadge}
             onArchive={handleArchiveSession}
             onRestore={handleRestoreSession}
             onDelete={handleDeleteSession}
@@ -1058,6 +1140,7 @@ function SessionsPageContent() {
             messages={detailMessages}
             busyAction={busyAction}
             status={status}
+            runtimeBadge={runtimeBadge}
             onArchive={handleArchiveSession}
             onRestore={handleRestoreSession}
             onDelete={handleDeleteSession}

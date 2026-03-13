@@ -53,13 +53,19 @@ async def session_tokens(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        session_manager = agent_manager.get_session_manager(agent_id)
+        agent_manager.get_session_manager(agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
-
-    session = session_manager.load_session(session_id)
+    repository = agent_manager.get_session_repository(agent_id)
+    snapshot = await repository.load_snapshot(
+        agent_id=agent_id,
+        session_id=session_id,
+        include_live=False,
+        create_if_missing=True,
+    )
+    messages = snapshot.messages
     if agent_manager.config is None:
         raise ApiError(
             status_code=500, code="not_initialized", message="Agent config unavailable"
@@ -68,13 +74,13 @@ async def session_tokens(
 
     system_prompt = agent_manager.build_system_prompt(
         rag_mode=runtime.runtime_config.rag_mode,
-        is_first_turn=len(session.get("messages", [])) == 0,
+        is_first_turn=len(messages) == 0,
         agent_id=agent_id,
     )
     system_tokens = _token_count(system_prompt)
 
     message_tokens = 0
-    for msg in session.get("messages", []):
+    for msg in messages:
         message_tokens += _token_count(str(msg.get("content", "")))
 
     return {

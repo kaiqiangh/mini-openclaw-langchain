@@ -188,6 +188,16 @@ describe("RunsPage", () => {
           total_tokens: 42,
           cost_usd: 0.420001,
         }),
+        makeUsageRecord({
+          agent_id: "default",
+          timestamp_ms: nowMs - 20 * 60 * 1000,
+          run_id: "run-cron-recent",
+          session_id: "__cron__:cron-recent",
+          trigger_type: "cron",
+          total_tokens: 17,
+          cost_usd: 0.170001,
+          model: "gpt-5-mini",
+        }),
       ],
       alpha: [
         makeUsageRecord({
@@ -215,6 +225,8 @@ describe("RunsPage", () => {
           job_id: "cron-recent",
           name: "Recent Cron",
           status: "error",
+          run_id: "run-cron-recent",
+          session_id: "__cron__:cron-recent",
           error: "boom",
           duration_ms: 210,
         },
@@ -312,12 +324,12 @@ describe("RunsPage", () => {
     const { rerender } = render(<RunsPage />);
 
     await waitFor(() =>
-      expect(screen.getAllByText("cron-recent").length).toBeGreaterThan(0),
+      expect(screen.getAllByText("run-cron-recent").length).toBeGreaterThan(0),
     );
 
-    expect(screen.queryByText("cron-stale")).not.toBeInTheDocument();
+    expect(screen.queryByText("run-default-chat")).not.toBeInTheDocument();
 
-    fireEvent.click(findTableRow("cron-recent"));
+    fireEvent.click(findTableRow("run-cron-recent"));
     expect(navigationState.push).toHaveBeenCalled();
     expect(navigationState.searchParams.get("run")).toBe(recentCronRowId);
 
@@ -327,11 +339,15 @@ describe("RunsPage", () => {
     const aside = drawer.closest("aside") as HTMLElement;
     const runIdPanel = within(aside).getByText("Run ID").parentElement;
     const sessionIdPanel = within(aside).getByText("Session ID").parentElement;
+    const tokenPanel = within(aside).getByText("Tokens / Cost").parentElement;
 
     expect(runIdPanel).not.toBeNull();
     expect(sessionIdPanel).not.toBeNull();
-    expect(runIdPanel).toHaveTextContent("—");
-    expect(sessionIdPanel).toHaveTextContent("—");
+    expect(tokenPanel).not.toBeNull();
+    expect(runIdPanel).toHaveTextContent("run-cron-recent");
+    expect(sessionIdPanel).toHaveTextContent("__cron__:cron-recent");
+    expect(tokenPanel).toHaveTextContent("17");
+    expect(tokenPanel).toHaveTextContent("$0.170001");
 
     fireEvent.click(within(aside).getByRole("button", { name: "Close" }));
     expect(navigationState.searchParams.get("run")).toBeNull();

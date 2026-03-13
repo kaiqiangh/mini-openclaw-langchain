@@ -39,13 +39,51 @@ function navLinkClass(active: boolean) {
 }
 
 export function Navbar() {
-  const { ragEnabled, toggleRag, isStreaming, currentAgentId } = useAppStore();
+  const {
+    ragEnabled,
+    toggleRag,
+    isStreaming,
+    currentAgentId,
+    currentSessionId,
+    sessionsScope,
+    maxStepsPrompt,
+  } = useAppStore();
   const pathname = usePathname();
   const [traceEnabled, setTraceEnabled] = useState(false);
   const [traceLoading, setTraceLoading] = useState(false);
   const [traceUnavailable, setTraceUnavailable] = useState(false);
 
   const workspaceActive = pathname === "/";
+  const runtimeLabel = isStreaming
+    ? "Running"
+    : maxStepsPrompt
+      ? "Awaiting input"
+      : sessionsScope === "archived"
+        ? "Archived"
+        : currentSessionId
+          ? "Active"
+          : "Idle";
+  const runtimeTone = isStreaming
+    ? activityTone("running")
+    : maxStepsPrompt
+      ? "warn"
+      : sessionsScope === "archived"
+        ? "warn"
+        : currentSessionId
+          ? activityTone("active")
+          : activityTone("idle");
+  const sessionsHref = (() => {
+    const params = new URLSearchParams();
+    if (currentAgentId) {
+      params.set("agent", currentAgentId);
+    }
+    params.set("scope", sessionsScope);
+    if (currentSessionId) {
+      params.set("session", currentSessionId);
+    }
+    const query = params.toString();
+    return query ? `/sessions?${query}` : "/sessions";
+  })();
 
   useEffect(() => {
     let cancelled = false;
@@ -84,11 +122,7 @@ export function Navbar() {
             >
               Agent: {currentAgentId}
             </Badge>
-            {isStreaming ? (
-              <Badge tone={activityTone("running")}>Running</Badge>
-            ) : (
-              <Badge tone={activityTone("idle")}>Idle</Badge>
-            )}
+            <Badge tone={runtimeTone}>{runtimeLabel}</Badge>
           </div>
           <div className="flex flex-shrink-0 items-center gap-2">
             {workspaceActive ? (
@@ -201,10 +235,11 @@ export function Navbar() {
         >
           {NAV_ITEMS.map((item) => {
             const active = isActivePath(pathname, item.href, item.exact);
+            const href = item.href === "/sessions" ? sessionsHref : item.href;
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={href}
                 className={navLinkClass(active)}
                 aria-current={active ? "page" : undefined}
               >

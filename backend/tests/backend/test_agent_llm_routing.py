@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessageChunk
 
 from graph.agent import AgentManager
 
@@ -41,35 +41,69 @@ def _configure_agent(base_dir: Path, agent_id: str, payload: dict) -> None:
     _write_json(root / "config.json", payload)
 
 
+class _StubToolCapableModel:
+    def __init__(self, profile_name: str) -> None:
+        self.profile_name = profile_name
+
+    def bind_tools(self, tools):  # type: ignore[no-untyped-def]
+        _ = tools
+        return self
+
+    async def ainvoke(self, input, config=None, **kwargs):  # type: ignore[no-untyped-def]
+        _ = input, config, kwargs
+        return None
+
+    async def astream(self, input, config=None, **kwargs):  # type: ignore[no-untyped-def]
+        _ = input, config, kwargs
+        if False:
+            yield None
+
+
+class _ProfileAwareChain:
+    def __init__(
+        self,
+        *,
+        model: _StubToolCapableModel,
+        behaviors: dict[str, list[object] | object],
+        call_order: list[str],
+    ) -> None:
+        self.model = model
+        self.behaviors = behaviors
+        self.call_order = call_order
+
+    async def astream(self, payload, config=None):  # type: ignore[no-untyped-def]
+        _ = payload, config
+        self.call_order.append(self.model.profile_name)
+        scripted = self.behaviors[self.model.profile_name]
+        if isinstance(scripted, list):
+            outcome = scripted.pop(0)
+        else:
+            outcome = scripted
+        if isinstance(outcome, Exception):
+            raise outcome
+        yield AIMessageChunk(content=str(outcome))
+
+
 def _patch_agent_execution(
     monkeypatch,
+    manager: AgentManager,
     behaviors: dict[str, list[object] | object],
     call_order: list[str],
 ) -> None:
-    def fake_get_runtime_llm(self, runtime, profile):  # type: ignore[no-untyped-def]
-        _ = self, runtime, profile
-        return object()
-
-    def fake_build_agent(self, **kwargs):  # type: ignore[no-untyped-def]
-        profile = kwargs["llm_profile"]
-        call_order.append(profile.profile_name)
-        scripted = behaviors[profile.profile_name]
-
-        class _FakeAgent:
-            async def ainvoke(self, payload, config):  # type: ignore[no-untyped-def]
-                _ = payload, config
-                if isinstance(scripted, list):
-                    outcome = scripted.pop(0)
-                else:
-                    outcome = scripted
-                if isinstance(outcome, Exception):
-                    raise outcome
-                return {"messages": [SimpleNamespace(content=str(outcome))]}
-
-        return _FakeAgent(), profile.model or profile.profile_name
-
-    monkeypatch.setattr(AgentManager, "_get_runtime_llm", fake_get_runtime_llm)
-    monkeypatch.setattr(AgentManager, "_build_agent", fake_build_agent)
+    monkeypatch.setattr(
+        manager.runtime_services,
+        "get_runtime_llm",
+        lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
+    )
+    monkeypatch.setattr(
+        manager.lcel_pipelines,
+        "model_chain",
+        lambda **kwargs: _ProfileAwareChain(
+            model=kwargs["llm"],
+            behaviors=behaviors,
+            call_order=call_order,
+        ),
+    )
 
 
 def _load_audit_events(path: Path) -> list[str]:
@@ -96,15 +130,15 @@ def test_agent_runs_are_isolated_when_default_credentials_are_missing(
     _configure_agent(tmp_path, "main", {"llm": {"default": "deepseek"}})
     _configure_agent(tmp_path, "elon", {"llm": {"default": "openai"}})
 
+    manager = AgentManager()
+    manager.initialize(tmp_path)
     call_order: list[str] = []
     _patch_agent_execution(
         monkeypatch,
+        manager,
         {"openai": "openai-success", "deepseek": "deepseek-success"},
         call_order,
     )
-
-    manager = AgentManager()
-    manager.initialize(tmp_path)
 
     elon_result = asyncio.run(
         manager.run_once(
@@ -148,18 +182,18 @@ def test_run_once_skips_unavailable_fallbacks_and_uses_next_available_profile(
         },
     )
 
+    manager = AgentManager()
+    manager.initialize(tmp_path)
     call_order: list[str] = []
     _patch_agent_execution(
         monkeypatch,
+        manager,
         {
             "openai": [_RateLimitFailure("rate limited")],
             "azure_foundry": "azure-success",
         },
         call_order,
     )
-
-    manager = AgentManager()
-    manager.initialize(tmp_path)
 
     result = asyncio.run(
         manager.run_once(
@@ -199,9 +233,12 @@ def test_fallback_order_is_respected_across_multiple_candidates(
         },
     )
 
+    manager = AgentManager()
+    manager.initialize(tmp_path)
     call_order: list[str] = []
     _patch_agent_execution(
         monkeypatch,
+        manager,
         {
             "openai": [_RateLimitFailure("openai limited")],
             "deepseek": [_RateLimitFailure("deepseek limited")],
@@ -209,9 +246,6 @@ def test_fallback_order_is_respected_across_multiple_candidates(
         },
         call_order,
     )
-
-    manager = AgentManager()
-    manager.initialize(tmp_path)
 
     result = asyncio.run(
         manager.run_once(

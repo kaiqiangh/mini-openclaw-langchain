@@ -32,6 +32,7 @@ const WINDOW_TO_HOURS: Record<RunWindow, number> = {
   "7d": 24 * 7,
   "30d": 24 * 30,
 };
+const SESSION_USAGE_MATCH_MAX_DISTANCE_MS = 5 * 60 * 1000;
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -67,6 +68,101 @@ function pickTimestamp(row: Record<string, unknown>): number {
     asNumber(row.started_at_ms) ??
     0
   );
+}
+
+function isSchedulerUsageRow(row: RunLedgerRow): boolean {
+  return row.triggerType === "cron" || row.triggerType === "heartbeat";
+}
+
+function indexUsageRows(rows: RunLedgerRow[]) {
+  const byRunId = new Map<string, RunLedgerRow>();
+  const bySessionId = new Map<string, RunLedgerRow[]>();
+
+  for (const row of rows) {
+    if (!isSchedulerUsageRow(row)) {
+      continue;
+    }
+    if (row.runId) {
+      byRunId.set(row.runId, row);
+    }
+    if (row.sessionId) {
+      const existing = bySessionId.get(row.sessionId) ?? [];
+      existing.push(row);
+      bySessionId.set(row.sessionId, existing);
+    }
+  }
+
+  return { byRunId, bySessionId };
+}
+
+function matchSchedulerUsage(
+  row: RunLedgerRow,
+  indexes: ReturnType<typeof indexUsageRows>,
+  consumedUsageRowIds: Set<string>,
+): RunLedgerRow | null {
+  if (row.runId) {
+    const match = indexes.byRunId.get(row.runId);
+    if (
+      match &&
+      match.triggerType === row.triggerType &&
+      !consumedUsageRowIds.has(match.rowId)
+    ) {
+      return match;
+    }
+  }
+
+  if (!row.sessionId) {
+    return null;
+  }
+
+  const candidates = indexes.bySessionId.get(row.sessionId) ?? [];
+  let bestMatch: RunLedgerRow | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    if (candidate.triggerType !== row.triggerType) {
+      continue;
+    }
+    if (consumedUsageRowIds.has(candidate.rowId)) {
+      continue;
+    }
+    const distance = Math.abs(candidate.timestampMs - row.timestampMs);
+    if (distance < bestDistance) {
+      bestMatch = candidate;
+      bestDistance = distance;
+    }
+  }
+
+  if (bestDistance > SESSION_USAGE_MATCH_MAX_DISTANCE_MS) {
+    return null;
+  }
+  return bestMatch;
+}
+
+function enrichSchedulerRow(
+  row: RunLedgerRow,
+  indexes: ReturnType<typeof indexUsageRows>,
+  consumedUsageRowIds: Set<string>,
+): RunLedgerRow {
+  const usageRow = matchSchedulerUsage(row, indexes, consumedUsageRowIds);
+  if (!usageRow) {
+    return row;
+  }
+
+  consumedUsageRowIds.add(usageRow.rowId);
+  return {
+    ...row,
+    runId: row.runId ?? usageRow.runId,
+    sessionId: row.sessionId ?? usageRow.sessionId,
+    totalTokens: usageRow.totalTokens,
+    costUsd: usageRow.costUsd,
+    provider: usageRow.provider,
+    model: usageRow.model,
+    raw: {
+      ...row.raw,
+      usage: usageRow.raw,
+    },
+  };
 }
 
 export function normalizeRunWindow(value: string | null | undefined): RunWindow {
@@ -131,6 +227,7 @@ export function normalizeUsageRun(row: UsageRecord): RunLedgerRow {
 export function normalizeCronRun(row: Record<string, unknown>): RunLedgerRow {
   const timestampMs = pickTimestamp(row);
   const jobId = asText(row.job_id) || null;
+  const sessionId = asText(row.session_id) || (jobId ? `__cron__:${jobId}` : null);
   const label = asText(row.name) || jobId || "cron-job";
 
   return {
@@ -144,8 +241,8 @@ export function normalizeCronRun(row: Record<string, unknown>): RunLedgerRow {
     triggerType: "cron",
     timestampMs,
     status: asText(row.status) || "ok",
-    runId: null,
-    sessionId: null,
+    runId: asText(row.run_id) || null,
+    sessionId,
     jobId,
     label,
     durationMs: asNumber(row.duration_ms),
@@ -166,6 +263,7 @@ export function normalizeHeartbeatRun(
     row.details && typeof row.details === "object"
       ? (row.details as Record<string, unknown>)
       : {};
+  const runId = asText(row.run_id) || asText(details.run_id) || null;
   const sessionId = asText(details.session_id) || null;
   const errorSummary =
     asText(details.error) || asText(details.response_preview) || "";
@@ -181,7 +279,7 @@ export function normalizeHeartbeatRun(
     triggerType: "heartbeat",
     timestampMs,
     status: asText(row.status) || "unknown",
-    runId: null,
+    runId,
     sessionId,
     jobId: null,
     label: sessionId ?? "heartbeat",
@@ -202,28 +300,47 @@ export function buildRunLedgerRows(input: {
   heartbeatRuns: Array<Record<string, unknown>>;
 }): RunLedgerRow[] {
   const rows: RunLedgerRow[] = [];
+  const normalizedUsageRows = input.usageRecords.map((record) =>
+    normalizeUsageRun(record),
+  );
+  const schedulerUsageIndexes = indexUsageRows(normalizedUsageRows);
+  const consumedSchedulerUsageRowIds = new Set<string>();
 
-  for (const record of input.usageRecords) {
-    const normalized = normalizeUsageRun(record);
-    if (
-      normalized.triggerType === "cron" ||
-      normalized.triggerType === "heartbeat"
-    ) {
+  for (const normalized of normalizedUsageRows) {
+    if (isSchedulerUsageRow(normalized)) {
       continue;
     }
     rows.push(normalized);
   }
 
   for (const row of input.cronRuns) {
-    rows.push(normalizeCronRun(row));
+    rows.push(
+      enrichSchedulerRow(
+        normalizeCronRun(row),
+        schedulerUsageIndexes,
+        consumedSchedulerUsageRowIds,
+      ),
+    );
   }
 
   for (const row of input.cronFailures ?? []) {
-    rows.push(normalizeCronRun(row));
+    rows.push(
+      enrichSchedulerRow(
+        normalizeCronRun(row),
+        schedulerUsageIndexes,
+        consumedSchedulerUsageRowIds,
+      ),
+    );
   }
 
   for (const row of input.heartbeatRuns) {
-    rows.push(normalizeHeartbeatRun(row));
+    rows.push(
+      enrichSchedulerRow(
+        normalizeHeartbeatRun(row),
+        schedulerUsageIndexes,
+        consumedSchedulerUsageRowIds,
+      ),
+    );
   }
 
   return rows.sort((left, right) => {

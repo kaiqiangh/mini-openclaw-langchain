@@ -15,6 +15,15 @@ vi.mock("next/navigation", () => ({
   usePathname: () => mockUsePathname(),
 }));
 
+const storeState = vi.hoisted(() => ({
+  ragEnabled: false,
+  isStreaming: false,
+  currentAgentId: "default",
+  currentSessionId: "session-1" as string | null,
+  sessionsScope: "active" as "active" | "archived",
+  maxStepsPrompt: null as null | { sessionId: string; message: string },
+}));
+
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -29,10 +38,8 @@ vi.mock("next/link", () => ({
 
 vi.mock("@/lib/store", () => ({
   useAppStore: () => ({
-    ragEnabled: false,
+    ...storeState,
     toggleRag: mockToggleRag,
-    isStreaming: false,
-    currentAgentId: "default",
   }),
 }));
 
@@ -44,6 +51,12 @@ vi.mock("@/lib/api", () => ({
 describe("Navbar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    storeState.ragEnabled = false;
+    storeState.isStreaming = false;
+    storeState.currentAgentId = "default";
+    storeState.currentSessionId = "session-1";
+    storeState.sessionsScope = "active";
+    storeState.maxStepsPrompt = null;
   });
 
   it("renders the operator console navigation and marks the active route", () => {
@@ -57,7 +70,7 @@ describe("Navbar", () => {
     );
     expect(screen.getByRole("link", { name: "Sessions" })).toHaveAttribute(
       "href",
-      "/sessions",
+      "/sessions?agent=default&scope=active&session=session-1",
     );
     expect(screen.getByRole("link", { name: "Runs" })).toHaveAttribute(
       "href",
@@ -78,5 +91,13 @@ describe("Navbar", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("shows active runtime state when a session exists even without a live stream", () => {
+    mockUsePathname.mockReturnValue("/usage");
+
+    render(<Navbar />);
+
+    expect(screen.getByText("Active")).toBeInTheDocument();
   });
 });
