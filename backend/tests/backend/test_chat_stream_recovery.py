@@ -14,20 +14,28 @@ async def test_stream_continues_after_client_disconnect(api_app):
         setattr(AppStatus, "should_exit_event", None)
 
     manager = api_app["agent_manager"]
-    session_manager = manager.get_runtime("default").session_manager
+    repository = manager.get_session_repository("default")
 
-    async def delayed_stream(
-        self, message: str, history: list[dict[str, object]], session_id: str, **kwargs
-    ):
-        _ = history, kwargs
-        session_manager.save_message(session_id, "user", message)
+    async def delayed_stream(self, message: str, session_id: str, **kwargs):
+        _ = kwargs
+        await repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="user",
+            content=message,
+        )
         yield {"type": "run_start", "data": {"run_id": "run-bg", "attempt": 1}}
         await asyncio.sleep(0.25)
         yield {"type": "token", "data": {"content": f"[{session_id}]"}}
         await asyncio.sleep(0.25)
         yield {"type": "token", "data": {"content": message}}
         await asyncio.sleep(0.25)
-        session_manager.save_message(session_id, "assistant", f"[{session_id}]{message}")
+        await repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="assistant",
+            content=f"[{session_id}]{message}",
+        )
         yield {
             "type": "done",
             "data": {

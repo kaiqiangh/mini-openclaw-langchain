@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 
 def test_main_user_journey_flow(client, api_app):
     # start session
@@ -15,9 +17,16 @@ def test_main_user_journey_flow(client, api_app):
     assert stream.json()["data"]["session_id"] == session_id
 
     # ensure enough history and compress
-    manager = api_app["session_manager"]
-    manager.save_message(session_id, "user", "u2")
-    manager.save_message(session_id, "assistant", "a2")
+    repository = api_app["agent_manager"].get_session_repository("default")
+    for role, content in [("user", "u2"), ("assistant", "a2")]:
+        asyncio.run(
+            repository.append_message(
+                agent_id="default",
+                session_id=session_id,
+                role=role,
+                content=content,
+            )
+        )
     compressed = client.post(f"/api/v1/agents/default/sessions/{session_id}/compress")
     assert compressed.status_code == 200
 

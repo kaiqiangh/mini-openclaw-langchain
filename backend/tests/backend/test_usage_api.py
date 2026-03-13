@@ -16,8 +16,9 @@ def _write_usage_rows(base_dir, rows):
 
 def test_usage_summary_and_records_filters(client, api_app):
     now_ms = int(time.time() * 1000)
+    runtime_root = api_app["agent_manager"].get_runtime("default").root_dir
     _write_usage_rows(
-        api_app["base_dir"],
+        runtime_root,
         [
             {
                 "schema_version": 2,
