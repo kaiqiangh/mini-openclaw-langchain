@@ -168,29 +168,27 @@ class HeartbeatScheduler:
                 )
             )
             return
-        history = self.session_manager.load_session_for_agent(self.config.session_id)
+        repository = self.agent_manager.get_session_repository(self.agent_id)
+        snapshot = await repository.load_snapshot(
+            agent_id=self.agent_id,
+            session_id=self.config.session_id,
+            include_live=False,
+            create_if_missing=True,
+        )
 
         try:
             result = await self.agent_manager.run_once(
                 message=prompt,
-                history=history,
+                history=[],
                 session_id=self.config.session_id,
-                is_first_turn=len(history) == 0,
+                is_first_turn=len(snapshot.messages) == 0,
                 output_format="text",
                 trigger_type="heartbeat",
                 agent_id=self.agent_id,
             )
             text = str(result.get("text", "")).strip()
             suppressed = text == "HEARTBEAT_OK"
-
-            # Persist run metadata always, but suppress no-op acknowledgements from session history.
-            if not suppressed:
-                self.session_manager.save_message(
-                    self.config.session_id, "user", prompt
-                )
-                self.session_manager.save_message(
-                    self.config.session_id, "assistant", text or "HEARTBEAT_EMPTY"
-                )
+            run_id = str(result.get("run_id", "")).strip()
 
             finished_ts = time.time()
             self._write_run(
@@ -202,6 +200,7 @@ class HeartbeatScheduler:
                     finished_at_ms=int(finished_ts * 1000),
                     duration_ms=max(0, int((finished_ts - started_ts) * 1000)),
                     details={
+                        "run_id": run_id or None,
                         "session_id": self.config.session_id,
                         "suppressed": suppressed,
                         "response_preview": text[:200],

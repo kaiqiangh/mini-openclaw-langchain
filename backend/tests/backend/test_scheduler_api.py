@@ -38,7 +38,12 @@ def test_scheduler_cron_lifecycle(client):
 
     runs = client.get("/api/v1/agents/default/scheduler/cron/runs")
     assert runs.status_code == 200
-    assert any(row.get("job_id") == job_id for row in runs.json()["data"]["runs"])
+    matching = [
+        row for row in runs.json()["data"]["runs"] if row.get("job_id") == job_id
+    ]
+    assert matching
+    assert matching[0]["session_id"] == f"__cron__:{job_id}"
+    assert isinstance(matching[0].get("run_id"), (str, type(None)))
 
     failures = client.get("/api/v1/agents/default/scheduler/cron/failures")
     assert failures.status_code == 200
@@ -137,7 +142,9 @@ def test_scheduler_metrics_endpoints(client):
     runs = client.get("/api/v1/agents/default/scheduler/cron/runs")
     assert runs.status_code == 200
     assert any(
-        row.get("job_id") == job_id and "duration_ms" in row
+        row.get("job_id") == job_id
+        and "duration_ms" in row
+        and row.get("session_id") == f"__cron__:{job_id}"
         for row in runs.json()["data"]["runs"]
     )
 
