@@ -36,6 +36,16 @@ import {
   Select,
   Skeleton,
 } from "@/components/ui/primitives";
+import {
+  FilterBar,
+  FilterGrid,
+  MetricCard,
+  MetricGrid,
+  PageHeader,
+  PageLayout,
+  PageStack,
+  SectionCard,
+} from "@/components/ui/page-shell";
 
 const TRACE_WINDOW_OPTIONS: Array<{ label: string; value: TraceWindow }> = [
   { label: "1h", value: "1h" },
@@ -197,23 +207,20 @@ function TraceDetail({ event, loading, error, agentId, onClose }: TraceDetailPro
 
 function TracesPageFallback() {
   return (
-    <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="panel-shell flex min-h-0 flex-1 flex-col">
-        <div className="ui-panel-header">
-          <div>
-            <h1 className="ui-panel-title">Trace Explorer</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Loading persisted trace events...
-            </p>
-          </div>
-        </div>
-        <div className="space-y-3 p-4">
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Trace explorer"
+          title="Trace Explorer"
+          description="Loading persisted trace events..."
+        />
+        <div className="panel-shell space-y-3 p-4">
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-20 w-full" />
         </div>
-      </section>
-    </main>
+      </PageStack>
+    </PageLayout>
   );
 }
 
@@ -386,185 +393,190 @@ function TracesPageContent() {
   }, [agentId, selectedTraceId]);
 
   return (
-    <main
-      id="main-content"
+    <PageLayout
       data-testid="trace-page-main"
-      className="app-main flex min-h-0 flex-1 flex-col overflow-hidden p-3"
+      className="app-main overflow-hidden"
     >
-      <section
+      <PageStack className="overflow-hidden">
+        <PageHeader
+          eyebrow="Trace explorer"
+          title="Trace Explorer"
+          description="Persisted event timeline across audit steps, tool traces, and scheduler run events."
+          meta={
+            <>
+              <Badge tone="neutral">{eventsResponse?.total ?? 0} events</Badge>
+              <Badge tone="accent">Agent {agentId}</Badge>
+            </>
+          }
+        />
+
+        <FilterBar>
+          <FilterGrid className="md:grid-cols-4">
+            <label className="grid gap-1">
+              <span className="ui-label">Agent</span>
+              <Select
+                aria-label="Filter traces by agent"
+                className="ui-mono text-xs"
+                value={agentId}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    agent: event.target.value,
+                    trace: undefined,
+                  })
+                }
+              >
+                {(agentsLoading ? [] : agents).map((agent) => (
+                  <option key={agent.agent_id} value={agent.agent_id}>
+                    {agent.agent_id}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="ui-label">Window</span>
+              <Select
+                aria-label="Filter traces by time window"
+                value={selectedWindow}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    window: normalizeTraceWindow(event.target.value),
+                    trace: undefined,
+                  })
+                }
+              >
+                {TRACE_WINDOW_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="ui-label">Event</span>
+              <Select
+                aria-label="Filter traces by event type"
+                value={selectedEvent}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    event: normalizeTraceEventFilter(event.target.value),
+                    trace: undefined,
+                  })
+                }
+              >
+                {TRACE_EVENT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="grid gap-1">
+              <span className="ui-label">Trigger</span>
+              <Select
+                aria-label="Filter traces by trigger"
+                value={selectedTrigger}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    trigger: normalizeTraceTriggerFilter(event.target.value),
+                    trace: undefined,
+                  })
+                }
+              >
+                {TRACE_TRIGGER_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+
+            <label className="grid gap-1 md:col-span-2">
+              <span className="ui-label">Run ID</span>
+              <Input
+                aria-label="Filter traces by run id"
+                value={selectedRunId}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    run: event.target.value || undefined,
+                    trace: undefined,
+                  })
+                }
+                placeholder="Optional run id"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+
+            <label className="grid gap-1 md:col-span-2">
+              <span className="ui-label">Session ID</span>
+              <Input
+                aria-label="Filter traces by session id"
+                value={selectedSessionId}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    session: event.target.value || undefined,
+                    trace: undefined,
+                  })
+                }
+                placeholder="Optional session id"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+
+            <label className="grid gap-1 md:col-span-4">
+              <span className="ui-label">Search</span>
+              <Input
+                aria-label="Search traces"
+                value={selectedQuery}
+                onChange={(event) =>
+                  navigateWithUpdates({
+                    q: event.target.value || undefined,
+                    trace: undefined,
+                  })
+                }
+                placeholder="Search summaries and payloads"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+          </FilterGrid>
+        </FilterBar>
+
+        {eventsResponse ? (
+          <MetricGrid>
+            <MetricCard
+              label="Matches"
+              value={eventsResponse.summary.total_matches}
+              meta={`Window ${selectedWindow}`}
+              tone="accent"
+            />
+            {summaryEntries.map(([eventName, count]) => (
+              <MetricCard
+                key={eventName}
+                label={eventName}
+                value={count}
+                meta="Event count"
+              />
+            ))}
+          </MetricGrid>
+        ) : null}
+
+        <section
         data-testid="trace-layout-grid"
         className="grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[minmax(0,1fr)_minmax(360px,460px)]"
       >
-        <section className="panel-shell flex min-h-0 flex-col overflow-hidden">
-          <div className="ui-panel-header">
-            <div>
-              <h1 className="ui-panel-title">Trace Explorer</h1>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                Persisted event timeline across audit steps and scheduler run events.
-              </p>
-            </div>
-            <Badge tone="neutral">{eventsResponse?.total ?? 0} events</Badge>
-          </div>
-
-          <div
-            data-testid="trace-timeline-scroll"
-            className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4"
-          >
-            <div className="grid gap-3 md:grid-cols-4">
-              <label className="grid gap-1">
-                <span className="ui-label">Agent</span>
-                <Select
-                  aria-label="Filter traces by agent"
-                  className="ui-mono text-xs"
-                  value={agentId}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      agent: event.target.value,
-                      trace: undefined,
-                    })
-                  }
-                >
-                  {(agentsLoading ? [] : agents).map((agent) => (
-                    <option key={agent.agent_id} value={agent.agent_id}>
-                      {agent.agent_id}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-
-              <label className="grid gap-1">
-                <span className="ui-label">Window</span>
-                <Select
-                  aria-label="Filter traces by time window"
-                  value={selectedWindow}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      window: normalizeTraceWindow(event.target.value),
-                      trace: undefined,
-                    })
-                  }
-                >
-                  {TRACE_WINDOW_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-
-              <label className="grid gap-1">
-                <span className="ui-label">Event</span>
-                <Select
-                  aria-label="Filter traces by event type"
-                  value={selectedEvent}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      event: normalizeTraceEventFilter(event.target.value),
-                      trace: undefined,
-                    })
-                  }
-                >
-                  {TRACE_EVENT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-
-              <label className="grid gap-1">
-                <span className="ui-label">Trigger</span>
-                <Select
-                  aria-label="Filter traces by trigger"
-                  value={selectedTrigger}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      trigger: normalizeTraceTriggerFilter(event.target.value),
-                      trace: undefined,
-                    })
-                  }
-                >
-                  {TRACE_TRIGGER_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="ui-label">Run ID</span>
-                <Input
-                  aria-label="Filter traces by run id"
-                  value={selectedRunId}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      run: event.target.value || undefined,
-                      trace: undefined,
-                    })
-                  }
-                  placeholder="Optional run id"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="ui-label">Session ID</span>
-                <Input
-                  aria-label="Filter traces by session id"
-                  value={selectedSessionId}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      session: event.target.value || undefined,
-                      trace: undefined,
-                    })
-                  }
-                  placeholder="Optional session id"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-
-              <label className="grid gap-1 md:col-span-4">
-                <span className="ui-label">Search</span>
-                <Input
-                  aria-label="Search traces"
-                  value={selectedQuery}
-                  onChange={(event) =>
-                    navigateWithUpdates({
-                      q: event.target.value || undefined,
-                      trace: undefined,
-                    })
-                  }
-                  placeholder="Search summaries and payloads"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-            </div>
-
-            {eventsResponse ? (
-              <div className="grid gap-3 md:grid-cols-[160px_repeat(auto-fit,minmax(120px,1fr))]">
-                <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                  <div className="ui-label">Matches</div>
-                  <div className="mt-1 text-2xl font-semibold text-[var(--text)]">
-                    {eventsResponse.summary.total_matches}
-                  </div>
-                </div>
-                {summaryEntries.map(([eventName, count]) => (
-                  <div
-                    key={eventName}
-                    className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3"
-                  >
-                    <div className="ui-label">{eventName}</div>
-                    <div className="mt-1 text-xl font-semibold text-[var(--text)]">
-                      {count}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+        <SectionCard
+          title="Trace timeline"
+          description="Review raw event summaries and open a detail drawer for the selected trace."
+          toolbar={<Badge tone="neutral">{selectedEvent}</Badge>}
+          className="min-h-0 overflow-hidden"
+          contentClassName="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4"
+        >
+          <div data-testid="trace-timeline-scroll" className="contents">
 
             {eventsError ? (
               <div className="ui-alert" role="alert">
@@ -628,10 +640,10 @@ function TracesPageContent() {
                     </li>
                   );
                 })}
-              </ul>
-            )}
+                </ul>
+              )}
           </div>
-        </section>
+        </SectionCard>
 
         <section
           data-testid="trace-detail-host"
@@ -645,9 +657,10 @@ function TracesPageContent() {
           />
         </section>
       </section>
+      </PageStack>
 
       {selectedTraceId ? (
-        <aside className="panel-shell fixed inset-3 z-50 flex min-h-0 flex-col md:hidden">
+        <aside className="ui-drawer panel-shell flex min-h-0 flex-col md:hidden">
           <TraceDetail
             event={detail}
             loading={detailLoading}
@@ -657,7 +670,7 @@ function TracesPageContent() {
           />
         </aside>
       ) : null}
-    </main>
+    </PageLayout>
   );
 }
 

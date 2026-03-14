@@ -13,6 +13,14 @@ import {
   TableWrap,
 } from "@/components/ui/primitives";
 import {
+  DismissibleHint,
+  MetricCard,
+  MetricGrid,
+  PageHeader,
+  PageLayout,
+  PageStack,
+} from "@/components/ui/page-shell";
+import {
   createCronJob,
   CronJob,
   deleteCronJob,
@@ -590,14 +598,63 @@ export default function SchedulerPage() {
   }
 
   return (
-    <main
-      id="main-content"
-      className="flex min-h-0 flex-1 flex-col"
-    >
-      <section className="flex-1 min-h-0 min-w-0 space-y-3 overflow-y-auto p-3 pb-5">
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Scheduler"
+          title="Scheduler"
+          description="Monitor cron jobs, heartbeat health, and operational latency from a single control surface."
+          meta={
+            <>
+              {loading ? (
+                <Badge tone="accent">Loading</Badge>
+              ) : (
+                <Badge tone="success">Ready</Badge>
+              )}
+              {error ? <Badge tone="danger">Error</Badge> : null}
+              <Badge tone="neutral">Agent {agentId}</Badge>
+              <Badge tone="neutral">{jobs.length} jobs</Badge>
+            </>
+          }
+          actions={
+            <>
+              <Button
+                type="button"
+                size="sm"
+                className="px-3"
+                onClick={() => openJobEditor()}
+              >
+                New Job
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={expandAll}
+              >
+                Expand All Sections
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="px-2"
+                onClick={collapseAll}
+              >
+                Collapse All Sections
+              </Button>
+            </>
+          }
+        />
+
+        <DismissibleHint
+          storageKey="mini-openclaw:scheduler-hint:v1"
+          title="Section memory"
+          description="Scheduler sections remember their expanded state. Collapse low-signal areas on smaller screens and keep metrics or cron controls open while you work."
+        />
+
         <div className="panel-shell">
           <div className="ui-panel-header">
-            <h1 className="ui-panel-title">Scheduler</h1>
+            <h1 className="ui-panel-title">Filters</h1>
             <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
               <Select
                 aria-label="Scheduler agent switch"
@@ -638,37 +695,6 @@ export default function SchedulerPage() {
                 <option value="comfortable">Comfortable</option>
                 <option value="compact">Compact</option>
               </Select>
-              {loading ? (
-                <Badge tone="accent">Loading</Badge>
-              ) : (
-                <Badge tone="success">Ready</Badge>
-              )}
-              {error ? <Badge tone="danger">Error</Badge> : null}
-              <Badge tone="neutral">Agent {agentId}</Badge>
-              <Button
-                type="button"
-                size="sm"
-                className="px-3"
-                onClick={() => openJobEditor()}
-              >
-                New Job
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="px-2"
-                onClick={expandAll}
-              >
-                Expand All Sections
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                className="px-2"
-                onClick={collapseAll}
-              >
-                Collapse All Sections
-              </Button>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm text-[var(--muted)]">
@@ -705,49 +731,31 @@ export default function SchedulerPage() {
             </Button>
           </div>
           {sections.metrics ? (
-            <div
-              className="grid min-w-0 gap-3 p-4"
-              style={SCHEDULER_METRIC_GRID_STYLE}
-            >
-              <div className="panel-shell p-4">
-                <div className="ui-label">Scheduler Events</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {metrics?.totals.events ?? 0}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  Cron {metrics?.totals.cron_events ?? 0} · Heartbeat{" "}
-                  {metrics?.totals.heartbeat_events ?? 0}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Cron Success Rate</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {metrics?.cron.success_rate ?? 0}%
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  ok {metrics?.cron.ok ?? 0} · error {metrics?.cron.error ?? 0}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Duration p90 / p99</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {asMs(metrics?.duration.p90_ms)} / {asMs(metrics?.duration.p99_ms)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  avg {asMs(metrics?.duration.avg_ms)} · max{" "}
-                  {asMs(metrics?.duration.max_ms)}
-                </div>
-              </div>
-              <div className="panel-shell p-4">
-                <div className="ui-label">Latency p90 / p99</div>
-                <div className="ui-tabular mt-1 text-lg font-semibold">
-                  {asMs(metrics?.latency.p90_ms)} / {asMs(metrics?.latency.p99_ms)}
-                </div>
-                <div className="mt-1 text-xs text-[var(--muted)]">
-                  avg {asMs(metrics?.latency.avg_ms)} · max{" "}
-                  {asMs(metrics?.latency.max_ms)}
-                </div>
-              </div>
+            <div className="p-4">
+              <MetricGrid style={SCHEDULER_METRIC_GRID_STYLE}>
+                <MetricCard
+                  label="Scheduler Events"
+                  value={metrics?.totals.events ?? 0}
+                  meta={`Cron ${metrics?.totals.cron_events ?? 0} · Heartbeat ${metrics?.totals.heartbeat_events ?? 0}`}
+                  tone="accent"
+                />
+                <MetricCard
+                  label="Cron Success Rate"
+                  value={`${metrics?.cron.success_rate ?? 0}%`}
+                  meta={`ok ${metrics?.cron.ok ?? 0} · error ${metrics?.cron.error ?? 0}`}
+                />
+                <MetricCard
+                  label="Duration p90 / p99"
+                  value={`${asMs(metrics?.duration.p90_ms)} / ${asMs(metrics?.duration.p99_ms)}`}
+                  meta={`avg ${asMs(metrics?.duration.avg_ms)} · max ${asMs(metrics?.duration.max_ms)}`}
+                  tone="signal"
+                />
+                <MetricCard
+                  label="Latency p90 / p99"
+                  value={`${asMs(metrics?.latency.p90_ms)} / ${asMs(metrics?.latency.p99_ms)}`}
+                  meta={`avg ${asMs(metrics?.latency.avg_ms)} · max ${asMs(metrics?.latency.max_ms)}`}
+                />
+              </MetricGrid>
             </div>
           ) : null}
         </div>
@@ -1495,7 +1503,7 @@ export default function SchedulerPage() {
               }
             }}
           >
-            <aside className="ml-auto flex h-full w-full max-w-[min(560px,100vw)] flex-col border-l border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
+            <aside className="ui-drawer ml-auto flex h-full w-full max-w-[min(560px,100vw)] flex-col rounded-none border-l border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
               <div className="ui-panel-header">
                 <div>
                   <h2 className="ui-panel-title">Cron Job Detail</h2>
@@ -1633,7 +1641,7 @@ export default function SchedulerPage() {
             }}
           >
             <aside
-              className="ml-auto flex h-full w-full max-w-[min(620px,100vw)] flex-col border-l border-[var(--border-strong)] bg-[var(--surface-2)] shadow-2xl"
+              className="ui-drawer ml-auto flex h-full w-full max-w-[min(620px,100vw)] flex-col rounded-none border-l border-[var(--border-strong)] bg-[var(--surface-2)] shadow-2xl"
               role="dialog"
               aria-modal="true"
               aria-labelledby="cron-job-editor-title"
@@ -1780,7 +1788,7 @@ export default function SchedulerPage() {
             </aside>
           </div>
         ) : null}
-      </section>
-    </main>
+      </PageStack>
+    </PageLayout>
   );
 }

@@ -31,6 +31,15 @@ import {
   TabsList,
 } from "@/components/ui/primitives";
 import {
+  DismissibleHint,
+  FilterBar,
+  FilterGrid,
+  PageHeader,
+  PageLayout,
+  PageStack,
+  SectionCard,
+} from "@/components/ui/page-shell";
+import {
   AgentMeta,
   archiveSession,
   ChatHistoryResponse,
@@ -215,7 +224,7 @@ function TranscriptFeed({
         ) : messages.length === 0 ? (
           <EmptyState title={emptyTitle} description={emptyDescription} />
         ) : (
-          <div className="space-y-3">
+          <div className="ui-transcript mx-auto w-full max-w-[68rem] space-y-3">
             {messages.map((message) => (
               <ChatMessage
                 key={message.id}
@@ -545,23 +554,20 @@ function SessionDetailShell({
 
 function SessionsPageFallback() {
   return (
-    <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="panel-shell flex min-h-0 flex-1 flex-col">
-        <div className="ui-panel-header">
-          <div>
-            <h1 className="ui-panel-title">Sessions</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Loading session inbox...
-            </p>
-          </div>
-        </div>
-        <div className="space-y-3 p-4">
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Conversation inbox"
+          title="Sessions"
+          description="Loading session inbox..."
+        />
+        <div className="panel-shell space-y-3 p-4">
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-20 w-full" />
         </div>
-      </section>
-    </main>
+      </PageStack>
+    </PageLayout>
   );
 }
 
@@ -955,36 +961,48 @@ function SessionsPageContent() {
       : archivedMessages;
 
   return (
-    <main
-      id="main-content"
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3 pb-5"
-    >
-      <section className="grid min-h-0 gap-3 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] md:items-start xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
-        <section className="panel-shell flex min-h-0 flex-col">
-          <div className="ui-panel-header">
-            <div>
-              <h1 className="ui-panel-title">Sessions</h1>
-              <p className="mt-1 text-sm text-[var(--muted)]">
-                Active chat home for operator conversations and archived transcript review.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
+    <PageLayout className="overflow-hidden">
+      <PageStack className="overflow-y-auto">
+        <PageHeader
+          eyebrow="Conversation inbox"
+          title="Sessions"
+          description="Review live operator conversations, reopen archived transcripts, and keep one thread active without losing runtime context."
+          meta={
+            <>
               <Badge tone="neutral">
                 {filteredSessions.length}/{sessions.length}
               </Badge>
-              <Button
-                type="button"
-                size="sm"
-                loading={busyAction === "create"}
-                onClick={handleCreateSession}
-              >
-                New Session
-              </Button>
-            </div>
-          </div>
+              <Badge tone="accent">Agent {agentId}</Badge>
+            </>
+          }
+          actions={
+            <Button
+              type="button"
+              size="sm"
+              loading={busyAction === "create"}
+              onClick={handleCreateSession}
+            >
+              New Session
+            </Button>
+          }
+        />
 
-          <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
-            <div className="grid gap-3">
+        <DismissibleHint
+          storageKey="mini-openclaw:sessions-hint:v1"
+          title="Session review"
+          description="Use Active for live work and Archived for read-only transcript review. The selected session stays in the URL so you can deep-link back into the same thread."
+        />
+
+      <section className="grid min-h-0 gap-3 md:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] md:items-start xl:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
+        <SectionCard
+          title="Session inbox"
+          description="Filter by agent, switch between live and archived scopes, and open a transcript for detailed review."
+          toolbar={<Badge tone="neutral">{scope}</Badge>}
+          className="min-h-0"
+          contentClassName="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4"
+        >
+            <FilterBar>
+              <FilterGrid className="grid-cols-1">
               <label className="grid gap-1">
                 <span className="ui-label">Agent</span>
                 <Select
@@ -1038,7 +1056,8 @@ function SessionsPageContent() {
                   spellCheck={false}
                 />
               </label>
-            </div>
+              </FilterGrid>
+            </FilterBar>
 
             {status ? (
               <p className="ui-helper" aria-live="polite">
@@ -1108,8 +1127,7 @@ function SessionsPageContent() {
                 })}
               </ul>
             )}
-          </div>
-        </section>
+        </SectionCard>
 
         <section className="panel-shell hidden min-h-0 flex-col md:flex">
           <SessionDetailShell
@@ -1129,9 +1147,10 @@ function SessionsPageContent() {
           </SessionDetailShell>
         </section>
       </section>
+      </PageStack>
 
       {selectedSession ? (
-        <aside className="panel-shell fixed inset-3 z-50 flex min-h-0 flex-col md:hidden">
+        <aside className="ui-drawer panel-shell flex min-h-0 flex-col md:hidden">
           <SessionDetailShell
             agentId={agentId}
             scope={scope}
@@ -1150,7 +1169,7 @@ function SessionsPageContent() {
           </SessionDetailShell>
         </aside>
       ) : null}
-    </main>
+    </PageLayout>
   );
 }
 

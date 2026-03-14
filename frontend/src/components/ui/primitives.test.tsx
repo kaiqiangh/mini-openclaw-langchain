@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import { Input, Select, TabButton, TabsList } from "@/components/ui/primitives";
+import { DismissibleHint } from "@/components/ui/page-shell";
 
 function TabsHarness() {
   const [value, setValue] = useState("one");
@@ -68,5 +69,32 @@ describe("ui primitives", () => {
     expect(input).toHaveAttribute("aria-describedby", "input-hint input-error");
     expect(select).toHaveAttribute("aria-describedby", "select-hint");
     expect(select).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("persists dismissal for first-use hints", () => {
+    window.localStorage.clear();
+
+    const { rerender } = render(
+      <DismissibleHint
+        storageKey="mini-openclaw:test-hint"
+        title="Workspace split"
+        description="Resize panels to focus on the current task."
+      />,
+    );
+
+    expect(screen.getByText("Workspace split")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(window.localStorage.getItem("mini-openclaw:test-hint")).toBe("1");
+
+    rerender(
+      <DismissibleHint
+        storageKey="mini-openclaw:test-hint"
+        title="Workspace split"
+        description="Resize panels to focus on the current task."
+      />,
+    );
+
+    expect(screen.queryByText("Workspace split")).not.toBeInTheDocument();
   });
 });

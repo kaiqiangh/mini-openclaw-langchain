@@ -98,6 +98,6 @@ describe("Navbar", () => {
 
     render(<Navbar />);
 
-    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getAllByText("Active").length).toBeGreaterThan(0);
   });
 });

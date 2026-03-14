@@ -441,19 +441,25 @@ export function EmptyState({
   title,
   description,
   className,
+  eyebrow,
   actionLabel,
   onAction,
+  children,
 }: {
   title: string;
   description: string;
   className?: string;
+  eyebrow?: string;
   actionLabel?: string;
   onAction?: () => void;
+  children?: ReactNode;
 }) {
   return (
     <div className={cx("ui-empty", className)}>
-      <strong>{title}</strong>
+      <strong>{eyebrow ?? "Quiet Queue"}</strong>
+      <div className="text-base font-semibold text-[var(--text-strong)]">{title}</div>
       <span>{description}</span>
+      {children}
       {actionLabel && onAction ? (
         <Button type="button" size="sm" className="mt-3" onClick={onAction}>
           {actionLabel}

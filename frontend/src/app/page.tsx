@@ -6,6 +6,12 @@ import { InspectorPanel } from "@/components/editor/InspectorPanel";
 import { ResizeHandle } from "@/components/layout/ResizeHandle";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TabButton, TabsList } from "@/components/ui/primitives";
+import {
+  DismissibleHint,
+  PageHeader,
+  PageLayout,
+  PageStack,
+} from "@/components/ui/page-shell";
 
 type MobilePanel = "sidebar" | "inspector";
 
@@ -115,76 +121,129 @@ export default function Home() {
   const leftMax = Math.max(MIN_LEFT, containerWidth - MIN_MAIN - 8);
 
   return (
-    <main
-      id="main-content"
-      className="app-main flex min-h-0 flex-1 flex-col overflow-hidden"
-    >
-      <section className="hidden h-full min-w-0 p-3 md:flex md:flex-col">
-        <div className="mb-2 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="ui-btn ui-btn-sm"
-            onClick={() => setLeftCollapsed((previous) => !previous)}
-            aria-pressed={leftCollapsed}
-            aria-label={leftCollapsed ? "Show agent console" : "Hide agent console"}
-          >
-            {leftCollapsed ? "Show Console" : "Hide Console"}
-          </button>
-          <button
-            type="button"
-            className="ui-btn ui-btn-sm ui-btn-ghost"
-            onClick={() => {
-              setLeftCollapsed(false);
-              setLeftWidth(DEFAULT_LEFT);
-            }}
-          >
-            Reset Layout
-          </button>
-        </div>
+    <PageLayout className="app-main overflow-hidden">
+      <PageStack className="overflow-hidden">
+        <PageHeader
+          eyebrow="Operator workspace"
+          title="Shape agents, inspect runtime, and steer local work."
+          description="The console keeps agent operations, workspace files, and runtime controls in one place. Resize the split view to match review work versus active editing."
+          meta={
+            <>
+              <span className="ui-label !mb-0">Workspace zones</span>
+              <span className="ui-helper">
+                Console for agent operations, inspector for workspace and runtime state.
+              </span>
+            </>
+          }
+          actions={
+            <div className="ui-workspace-actions">
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm"
+                onClick={() => setLeftCollapsed((previous) => !previous)}
+                aria-pressed={leftCollapsed}
+                aria-label={leftCollapsed ? "Show agent console" : "Hide agent console"}
+              >
+                {leftCollapsed ? "Show Console" : "Hide Console"}
+              </button>
+              <button
+                type="button"
+                className="ui-btn ui-btn-sm ui-btn-ghost"
+                onClick={() => {
+                  setLeftCollapsed(false);
+                  setLeftWidth(DEFAULT_LEFT);
+                }}
+              >
+                Reset Layout
+              </button>
+            </div>
+          }
+        />
 
-        <section
-          ref={containerRef}
-          className="grid min-h-0 min-w-0 flex-1 gap-0"
-          style={{ gridTemplateColumns: desktopTemplateColumns }}
-        >
-          {!leftCollapsed ? <Sidebar /> : null}
-          {!leftCollapsed ? (
-            <ResizeHandle
-              dragging={dragging}
-              valueNow={leftWidth}
-              valueMin={MIN_LEFT}
-              valueMax={leftMax}
-              onStep={stepResize}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                startResize(event.clientX);
-              }}
-            />
-          ) : null}
-          <InspectorPanel />
+        <DismissibleHint
+          storageKey="mini-openclaw:workspace-hint:v1"
+          title="Workspace split"
+          description="Keep the console open when tuning tools and agent selection. Collapse it when you want more room for the workspace editor and runtime diff."
+        />
+
+        <section className="hidden min-h-0 md:grid">
+          <div className="ui-workspace-shell">
+            <section
+              ref={containerRef}
+              className="grid min-h-0 min-w-0 flex-1 gap-0"
+              style={{ gridTemplateColumns: desktopTemplateColumns }}
+            >
+              {!leftCollapsed ? <Sidebar /> : null}
+              {!leftCollapsed ? (
+                <ResizeHandle
+                  dragging={dragging}
+                  valueNow={leftWidth}
+                  valueMin={MIN_LEFT}
+                  valueMax={leftMax}
+                  onStep={stepResize}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    startResize(event.clientX);
+                  }}
+                />
+              ) : null}
+              <InspectorPanel />
+            </section>
+          </div>
         </section>
-      </section>
 
-      <section className="h-full min-w-0 p-3 pb-24 md:hidden">
-        <div
-          id="mobile-panel-sessions"
-          role="tabpanel"
-          aria-labelledby="mobile-tab-sessions"
-          hidden={mobilePanel !== "sidebar"}
-          className="h-full"
-        >
-          <Sidebar />
-        </div>
-        <div
-          id="mobile-panel-inspector"
-          role="tabpanel"
-          aria-labelledby="mobile-tab-inspector"
-          hidden={mobilePanel !== "inspector"}
-          className="h-full"
-        >
-          <InspectorPanel />
-        </div>
-      </section>
+        <section className="min-h-0 md:hidden">
+          <div className="panel-shell p-3">
+            <div className="mb-3">
+              <div className="ui-label">Mobile workspace</div>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Switch between the operator console and inspector. Core controls stay available in both panels.
+              </p>
+            </div>
+            <TabsList
+              className="grid grid-cols-2"
+              ariaLabel="Workspace panels"
+              value={mobilePanel}
+              onChange={(value) => setMobilePanel(value as MobilePanel)}
+            >
+              <TabButton
+                id="mobile-tab-sessions"
+                controls="mobile-panel-sessions"
+                value="sidebar"
+              >
+                Console
+              </TabButton>
+              <TabButton
+                id="mobile-tab-inspector"
+                controls="mobile-panel-inspector"
+                value="inspector"
+              >
+                Inspector
+              </TabButton>
+            </TabsList>
+          </div>
+          <div className="h-full min-w-0 pb-24 pt-3">
+            <div
+              id="mobile-panel-sessions"
+              role="tabpanel"
+              aria-labelledby="mobile-tab-sessions"
+              hidden={mobilePanel !== "sidebar"}
+              className="h-full"
+            >
+              <Sidebar />
+            </div>
+            <div
+              id="mobile-panel-inspector"
+              role="tabpanel"
+              aria-labelledby="mobile-tab-inspector"
+              hidden={mobilePanel !== "inspector"}
+              className="h-full"
+            >
+              <InspectorPanel />
+            </div>
+          </div>
+        </section>
+      </PageStack>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-[var(--border)] bg-[var(--surface-2)]/95 p-2 backdrop-blur md:hidden">
         <TabsList
@@ -194,14 +253,14 @@ export default function Home() {
           onChange={(value) => setMobilePanel(value as MobilePanel)}
         >
           <TabButton
-            id="mobile-tab-sessions"
+            id="mobile-tab-sessions-footer"
             controls="mobile-panel-sessions"
             value="sidebar"
           >
             Console
           </TabButton>
           <TabButton
-            id="mobile-tab-inspector"
+            id="mobile-tab-inspector-footer"
             controls="mobile-panel-inspector"
             value="inspector"
           >
@@ -209,6 +268,6 @@ export default function Home() {
           </TabButton>
         </TabsList>
       </div>
-    </main>
+    </PageLayout>
   );
 }

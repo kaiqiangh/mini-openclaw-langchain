@@ -19,6 +19,16 @@ import {
   TableWrap,
 } from "@/components/ui/primitives";
 import {
+  FilterBar,
+  FilterGrid,
+  MetricCard,
+  MetricGrid,
+  PageHeader,
+  PageLayout,
+  PageStack,
+  SectionCard,
+} from "@/components/ui/page-shell";
+import {
   AgentMeta,
   getAgents,
   getUsageRecords,
@@ -152,7 +162,7 @@ function RunDetailDrawer({ row, agentId, onClose }: RunDetailProps) {
   if (!row) return null;
 
   return (
-    <aside className="fixed inset-3 z-50 rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl md:inset-y-3 md:right-3 md:left-auto md:w-[min(560px,92vw)]">
+    <aside className="ui-drawer panel-shell md:inset-y-3 md:right-3 md:left-auto md:w-[min(560px,92vw)]">
       <div className="flex h-full min-h-0 flex-col">
         <div className="ui-panel-header">
           <div>
@@ -264,23 +274,20 @@ function RunDetailDrawer({ row, agentId, onClose }: RunDetailProps) {
 
 function RunsPageFallback() {
   return (
-    <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="panel-shell flex min-h-0 flex-1 flex-col">
-        <div className="ui-panel-header">
-          <div>
-            <h1 className="ui-panel-title">Runs</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Loading run ledger...
-            </p>
-          </div>
-        </div>
-        <div className="space-y-3 p-4">
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Unified ledger"
+          title="Runs"
+          description="Loading run ledger..."
+        />
+        <div className="panel-shell space-y-3 p-4">
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
         </div>
-      </section>
-    </main>
+      </PageStack>
+    </PageLayout>
   );
 }
 
@@ -314,6 +321,20 @@ function RunsPageContent() {
         minimumTimestampMs: getRunWindowStart(selectedWindow),
       }),
     [rows, selectedTrigger, selectedWindow],
+  );
+  const sourceCounts = useMemo(
+    () =>
+      filteredRows.reduce(
+        (acc, row) => {
+          acc[row.source] += 1;
+          if (row.status.toLowerCase() === "error") {
+            acc.errors += 1;
+          }
+          return acc;
+        },
+        { usage: 0, cron: 0, heartbeat: 0, errors: 0 },
+      ),
+    [filteredRows],
   );
 
   const selectedRow =
@@ -431,20 +452,25 @@ function RunsPageContent() {
   }, [agentId, selectedTrigger, selectedWindow]);
 
   return (
-    <main id="main-content" className="flex min-h-0 flex-1 flex-col p-3">
-      <section className="panel-shell flex min-h-0 flex-1 flex-col">
-        <div className="ui-panel-header">
-          <div>
-            <h1 className="ui-panel-title">Runs</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Unified ledger across chat usage, cron, and heartbeat activity.
-            </p>
-          </div>
-          <Badge tone="neutral">{filteredRows.length} rows</Badge>
-        </div>
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Unified ledger"
+          title="Runs"
+          description="Cross-check chat usage, cron jobs, and heartbeat activity in a single operational timeline."
+          meta={
+            <>
+              <Badge tone="neutral">{filteredRows.length} rows</Badge>
+              <Badge tone="accent">Agent {agentId}</Badge>
+              {sourceCounts.errors > 0 ? (
+                <Badge tone="danger">{sourceCounts.errors} error rows</Badge>
+              ) : null}
+            </>
+          }
+        />
 
-        <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
-          <div className="grid gap-3 md:grid-cols-3">
+        <FilterBar>
+          <FilterGrid className="md:grid-cols-3">
             <label className="grid gap-1">
               <span className="ui-label">Agent</span>
               <Select
@@ -502,9 +528,43 @@ function RunsPageContent() {
                 <option value="chat">Chat</option>
                 <option value="cron">Cron</option>
                 <option value="heartbeat">Heartbeat</option>
-              </Select>
-            </label>
-          </div>
+                </Select>
+              </label>
+          </FilterGrid>
+        </FilterBar>
+
+        <MetricGrid>
+          <MetricCard
+            label="Visible rows"
+            value={filteredRows.length}
+            meta={`Window ${selectedWindow}`}
+            tone="accent"
+          />
+          <MetricCard
+            label="Chat usage"
+            value={sourceCounts.usage}
+            meta="Token accounting rows"
+          />
+          <MetricCard
+            label="Scheduler runs"
+            value={sourceCounts.cron + sourceCounts.heartbeat}
+            meta={`Cron ${sourceCounts.cron} · Heartbeat ${sourceCounts.heartbeat}`}
+            tone="signal"
+          />
+          <MetricCard
+            label="Error rows"
+            value={sourceCounts.errors}
+            meta="Rows marked with operational errors"
+            tone={sourceCounts.errors > 0 ? "danger" : "success"}
+          />
+        </MetricGrid>
+
+        <SectionCard
+          title="Run ledger"
+          description="Select a row to inspect identifiers, payloads, and links back to sessions or traces."
+          toolbar={<Badge tone="neutral">{selectedTrigger} trigger</Badge>}
+          contentClassName="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4"
+        >
 
           {error ? (
             <div className="ui-alert" role="alert">
@@ -611,15 +671,15 @@ function RunsPageContent() {
               </TableWrap>
             </>
           )}
-        </div>
-      </section>
+        </SectionCard>
+      </PageStack>
 
       <RunDetailDrawer
         row={selectedRow}
         agentId={agentId}
         onClose={() => navigateWithUpdates({ run: undefined })}
       />
-    </main>
+    </PageLayout>
   );
 }
 

@@ -12,7 +12,7 @@ export function ChatInput() {
 
   return (
     <form
-      className="space-y-2 border-t border-[var(--border)] pt-3"
+      className="ui-composer space-y-3"
       onSubmit={async (event) => {
         event.preventDefault();
         const toSend = draft;
@@ -23,12 +23,12 @@ export function ChatInput() {
         }
       }}
     >
-      <div className="flex items-center gap-2">
+      <div className="ui-composer-row">
         <Input
           name="chat-message"
           aria-label="Chat message"
           autoComplete="off"
-          className="w-full"
+          className="w-full flex-1"
           hintId="chat-input-hint"
           placeholder={
             readOnly ? "Archived session (read-only)" : "Type a message…"
@@ -42,7 +42,7 @@ export function ChatInput() {
           size="lg"
           variant="primary"
           loading={isStreaming}
-          className="min-w-[116px] px-3 text-sm"
+          className="min-w-[132px] px-4 text-sm"
           disabled={readOnly || draft.trim().length === 0}
         >
           {isStreaming ? "Streaming…" : "Send"}
@@ -51,7 +51,7 @@ export function ChatInput() {
       <div id="chat-input-hint" className="ui-helper">
         {readOnly
           ? "Archived sessions are read-only."
-          : "Press Enter to send."}
+          : "Press Enter to send. Use Sessions to switch between live and archived transcripts."}
       </div>
     </form>
   );

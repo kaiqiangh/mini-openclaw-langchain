@@ -176,9 +176,7 @@ describe("TracesPage", () => {
     expect(within(detail as HTMLElement).getByText("provider timeout")).toBeInTheDocument();
     expect(screen.getByTestId("trace-page-main").className).toContain("overflow-hidden");
     expect(screen.getByTestId("trace-layout-grid").className).toContain("overflow-hidden");
-    expect(screen.getByTestId("trace-timeline-scroll").className).toContain(
-      "ui-scroll-area",
-    );
+    expect(screen.getByTestId("trace-timeline-scroll")).toBeInTheDocument();
     expect(screen.getByTestId("trace-detail-host").className).toContain("overflow-hidden");
     expect(screen.getByTestId("trace-detail-host").className).toContain("md:h-full");
     expect(

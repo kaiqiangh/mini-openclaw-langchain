@@ -485,8 +485,14 @@ export function InspectorPanel() {
       className={`panel-shell flex min-h-0 flex-col ${runtimeFullscreen ? "fixed inset-3 z-40 shadow-2xl" : ""}`}
     >
       <div className="ui-panel-header">
-        <h2 className="ui-panel-title">Inspector</h2>
-        <div className="flex items-center gap-2">
+        <div>
+          <h2 className="ui-panel-title">Inspector</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Review workspace files, patch runtime JSON, and compare the active
+            config against templates or other agents.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           {mode === "runtime" ? (
             <Badge tone={runtimeConfigDirty ? "warn" : "success"}>
               {runtimeConfigDirty ? "Unsaved" : "Saved"}
@@ -629,7 +635,7 @@ export function InspectorPanel() {
                 aria-labelledby="inspector-tab-runtime"
                 className="flex min-w-0 flex-col gap-3 pb-2"
               >
-                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
+                <div className="sticky top-0 z-10 flex flex-wrap items-center gap-1 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-2)] p-2">
                   <Button type="button" size="sm" onClick={formatRuntimeJson}>
                     Format
                   </Button>
@@ -703,9 +709,14 @@ export function InspectorPanel() {
                   </Button>
                 </div>
 
-                <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="ui-label">Runtime Controls</span>
+                <section className="ui-section-card panel-shell">
+                  <div className="ui-section-header">
+                    <div className="min-w-0">
+                      <span className="ui-section-title">Runtime Controls</span>
+                      <div className="ui-section-description">
+                        Load templates, compare baselines, and patch multiple agents from the editor.
+                      </div>
+                    </div>
                     <Button
                       type="button"
                       size="sm"
@@ -717,7 +728,7 @@ export function InspectorPanel() {
                     </Button>
                   </div>
                   {runtimeSections.controls ? (
-                    <div className="grid gap-2 md:grid-cols-2">
+                    <div className="ui-section-content grid gap-2 md:grid-cols-2">
                       <label className="block">
                         <span className="ui-label">Template</span>
                         <Select
@@ -848,9 +859,14 @@ export function InspectorPanel() {
                   </div>
                 ) : null}
 
-                <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="ui-label">Runtime Config JSON</span>
+                <section className="ui-section-card panel-shell">
+                  <div className="ui-section-header">
+                    <div className="min-w-0">
+                      <span className="ui-section-title">Runtime Config JSON</span>
+                      <div className="ui-section-description">
+                        Edit the effective runtime document directly, then validate before saving.
+                      </div>
+                    </div>
                     <Button
                       type="button"
                       size="sm"
@@ -862,7 +878,8 @@ export function InspectorPanel() {
                     </Button>
                   </div>
                   {runtimeSections.editor ? (
-                    <div className="h-[48vh] min-h-[320px] max-h-[680px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
+                    <div className="ui-section-content">
+                      <div className="h-[48vh] min-h-[320px] max-h-[680px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-3)]">
                       <MonacoEditor
                         height="100%"
                         language="json"
@@ -888,12 +905,18 @@ export function InspectorPanel() {
                         }}
                       />
                     </div>
+                    </div>
                   ) : null}
                 </section>
 
-                <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="ui-label">Runtime Diff</span>
+                <section className="ui-section-card panel-shell">
+                  <div className="ui-section-header">
+                    <div className="min-w-0">
+                      <span className="ui-section-title">Runtime Diff</span>
+                      <div className="ui-section-description">
+                        Compare changed keys before applying runtime updates.
+                      </div>
+                    </div>
                     <Button
                       type="button"
                       size="sm"
@@ -905,62 +928,64 @@ export function InspectorPanel() {
                     </Button>
                   </div>
                   {runtimeSections.diff ? (
-                    runtimeDiff ? (
-                      <div className="max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-xs">
-                        <div className="mb-2 flex flex-wrap items-center gap-2">
-                          <Badge tone="neutral">Added {runtimeDiff.summary.added}</Badge>
-                          <Badge tone="warn">Removed {runtimeDiff.summary.removed}</Badge>
-                          <Badge tone="accent">Changed {runtimeDiff.summary.changed}</Badge>
-                          <Badge tone="success">Total {runtimeDiff.summary.total}</Badge>
+                    <div className="ui-section-content">
+                      {runtimeDiff ? (
+                        <div className="max-h-64 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3 text-xs">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <Badge tone="neutral">Added {runtimeDiff.summary.added}</Badge>
+                            <Badge tone="warn">Removed {runtimeDiff.summary.removed}</Badge>
+                            <Badge tone="accent">Changed {runtimeDiff.summary.changed}</Badge>
+                            <Badge tone="success">Total {runtimeDiff.summary.total}</Badge>
+                          </div>
+                          <div className="space-y-2">
+                            {Object.entries(runtimeDiff.changed)
+                              .slice(0, 60)
+                              .map(([path, value]) => (
+                                <div
+                                  key={`changed-${path}`}
+                                  className="rounded border border-[var(--border)] p-2"
+                                >
+                                  <div className="ui-mono text-[var(--text)]">{path}</div>
+                                  <div className="text-[var(--muted)]">
+                                    {JSON.stringify(value.from)} → {JSON.stringify(value.to)}
+                                  </div>
+                                </div>
+                              ))}
+                            {Object.entries(runtimeDiff.added)
+                              .slice(0, 40)
+                              .map(([path, value]) => (
+                                <div
+                                  key={`added-${path}`}
+                                  className="rounded border border-[var(--border)] p-2"
+                                >
+                                  <div className="ui-mono text-[var(--success)]">+ {path}</div>
+                                  <div className="text-[var(--muted)]">
+                                    {JSON.stringify(value)}
+                                  </div>
+                                </div>
+                              ))}
+                            {Object.entries(runtimeDiff.removed)
+                              .slice(0, 40)
+                              .map(([path, value]) => (
+                                <div
+                                  key={`removed-${path}`}
+                                  className="rounded border border-[var(--border)] p-2"
+                                >
+                                  <div className="ui-mono text-[var(--danger)]">- {path}</div>
+                                  <div className="text-[var(--muted)]">
+                                    {JSON.stringify(value)}
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
                         </div>
-                        <div className="space-y-2">
-                          {Object.entries(runtimeDiff.changed)
-                            .slice(0, 60)
-                            .map(([path, value]) => (
-                              <div
-                                key={`changed-${path}`}
-                                className="rounded border border-[var(--border)] p-2"
-                              >
-                                <div className="ui-mono text-[var(--text)]">{path}</div>
-                                <div className="text-[var(--muted)]">
-                                  {JSON.stringify(value.from)} → {JSON.stringify(value.to)}
-                                </div>
-                              </div>
-                            ))}
-                          {Object.entries(runtimeDiff.added)
-                            .slice(0, 40)
-                            .map(([path, value]) => (
-                              <div
-                                key={`added-${path}`}
-                                className="rounded border border-[var(--border)] p-2"
-                              >
-                                <div className="ui-mono text-[var(--success)]">+ {path}</div>
-                                <div className="text-[var(--muted)]">
-                                  {JSON.stringify(value)}
-                                </div>
-                              </div>
-                            ))}
-                          {Object.entries(runtimeDiff.removed)
-                            .slice(0, 40)
-                            .map(([path, value]) => (
-                              <div
-                                key={`removed-${path}`}
-                                className="rounded border border-[var(--border)] p-2"
-                              >
-                                <div className="ui-mono text-[var(--danger)]">- {path}</div>
-                                <div className="text-[var(--muted)]">
-                                  {JSON.stringify(value)}
-                                </div>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <EmptyState
-                        title="No Diff Loaded"
-                        description="Run Compare Runtime to view differences."
-                      />
-                    )
+                      ) : (
+                        <EmptyState
+                          title="No Diff Loaded"
+                          description="Run Compare Runtime to view differences."
+                        />
+                      )}
+                    </div>
                   ) : null}
                 </section>
               </div>

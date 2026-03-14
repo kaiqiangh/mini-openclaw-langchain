@@ -252,8 +252,14 @@ export function Sidebar() {
   return (
     <aside className="panel-shell flex min-h-0 flex-col">
       <div className="ui-panel-header">
-        <h2 className="ui-panel-title">Agent Console</h2>
-        <div className="flex items-center gap-2">
+        <div>
+          <h2 className="ui-panel-title">Agent Console</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            Switch agents, manage bulk actions, and tune tool access without
+            leaving the workspace.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           <Badge tone="neutral" className="max-w-[180px] truncate">
             Agent: {currentAgentId}
           </Badge>
@@ -281,10 +287,15 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="ui-scroll-area flex min-h-0 flex-1 flex-col gap-4 p-4">
-        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="ui-label">Agents</span>
+      <div className="ui-scroll-area ui-section-stack flex min-h-0 flex-1 flex-col p-4">
+        <section className="ui-section-card panel-shell">
+          <div className="ui-section-header">
+            <div className="min-w-0">
+              <span className="ui-section-title">Agents</span>
+              <div className="ui-section-description">
+                Create focused agent workspaces and manage the current roster.
+              </div>
+            </div>
             <Button
               type="button"
               size="sm"
@@ -296,7 +307,7 @@ export function Sidebar() {
             </Button>
           </div>
           {sections.agents ? (
-            <>
+            <div className="ui-section-content">
               <label className="ui-label" htmlFor="agent-selector">
                 Agent
               </label>
@@ -353,7 +364,7 @@ export function Sidebar() {
                   Delete
                 </Button>
               </div>
-              <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+              <div className="mt-4 rounded-[var(--radius-2)] border border-[var(--border)] bg-[var(--surface-inset)] p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="ui-label">Bulk Actions</span>
                   <Badge tone="neutral">{selectedAgentIds.length} selected</Badge>
@@ -425,13 +436,19 @@ export function Sidebar() {
                   </p>
                 ) : null}
               </div>
-            </>
+            </div>
           ) : null}
         </section>
 
-        <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="ui-label">Agent Tools</span>
+        <section className="ui-section-card panel-shell">
+          <div className="ui-section-header">
+            <div className="min-w-0">
+              <span className="ui-section-title">Agent Tools</span>
+              <div className="ui-section-description">
+                Explicitly allow tools per trigger so chat, cron, and heartbeat
+                runs match the agent’s role.
+              </div>
+            </div>
             <div className="flex items-center gap-1">
               <Badge tone="neutral">{filteredTools.length}</Badge>
               <Button
@@ -446,7 +463,7 @@ export function Sidebar() {
             </div>
           </div>
           {sections.tools ? (
-            <>
+            <div className="ui-section-content">
               <TabsList
                 className="grid grid-cols-3"
                 ariaLabel="Tool trigger scope"
@@ -583,7 +600,7 @@ export function Sidebar() {
                     "Tip: use search + category filters, then toggle enabled checkboxes for this trigger."}
                 </p>
               </div>
-            </>
+            </div>
           ) : null}
         </section>
       </div>

@@ -185,7 +185,7 @@ describe("SchedulerPage", () => {
 
     const stack = container.querySelector("#main-content > section");
     expect(stack).not.toBeNull();
-    expect(stack?.className).toContain("space-y-3");
+    expect(stack?.className).toContain("ui-page-stack");
     expect(stack?.className).not.toContain("flex-col");
   });
 

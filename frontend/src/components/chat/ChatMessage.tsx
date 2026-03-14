@@ -175,13 +175,13 @@ function ChatMessageComponent({
 
   return (
     <article
-      className={`mb-3 rounded-md border p-3 text-sm sm:p-4 ${
+      className={`ui-message ${
         role === "user"
-          ? "ml-4 border-[var(--accent-strong)] bg-[var(--accent-soft)] md:ml-6"
-          : "mr-4 border-[var(--border)] bg-[var(--surface-3)] md:mr-6"
+          ? "ui-message-user ml-2 md:ml-6"
+          : "ui-message-assistant mr-2 md:mr-6"
       }`}
     >
-      <div className="mb-2 flex items-center gap-2">
+      <div className="ui-message-meta">
         <Badge tone={role === "user" ? "accent" : "neutral"}>{role}</Badge>
         <span className="ui-helper ui-mono">
           {role === "assistant" ? "agent-response" : "operator-input"}
@@ -195,7 +195,7 @@ function ChatMessageComponent({
           </time>
         ) : null}
       </div>
-      <div className="break-words leading-6 text-[var(--text)]">
+      <div className="ui-message-body break-words">
         {role === "assistant" ? (
           <MarkdownBody content={content} />
         ) : (
@@ -205,7 +205,7 @@ function ChatMessageComponent({
       {uniqueTools.length > 0 ||
       uniqueSelectedSkills.length > 0 ||
       uniqueSkills.length > 0 ? (
-        <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
+        <div className="ui-message-debug">
           <div className="ui-label">Debug Summary</div>
           <div className="mt-2 flex flex-wrap gap-2">
             {uniqueTools.map((tool) => (

@@ -12,6 +12,13 @@ import {
   TableWrap,
 } from "@/components/ui/primitives";
 import {
+  MetricCard,
+  MetricGrid,
+  PageHeader,
+  PageLayout,
+  PageStack,
+} from "@/components/ui/page-shell";
+import {
   getAgents,
   getUsageRecords,
   getUsageSummary,
@@ -382,15 +389,14 @@ export default function UsagePage() {
   }
 
   return (
-    <main
-      id="main-content"
-      className="flex min-h-0 flex-1 flex-col"
-    >
-      <section className="flex-1 min-h-0 min-w-0 space-y-3 overflow-y-auto p-3 pb-5">
-        <div className="panel-shell">
-          <div className="ui-panel-header">
-            <h1 className="ui-panel-title">Usage Analytics</h1>
-            <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
+    <PageLayout>
+      <PageStack>
+        <PageHeader
+          eyebrow="Usage analytics"
+          title="Usage"
+          description="Track model spend, token flow, and recent operational runs without leaving the operator console."
+          meta={
+            <>
               {loading ? (
                 <Badge tone="accent">Running</Badge>
               ) : (
@@ -398,6 +404,10 @@ export default function UsagePage() {
               )}
               {error ? <Badge tone="danger">Error</Badge> : null}
               <Badge tone="neutral">Records {records.length}</Badge>
+            </>
+          }
+          actions={
+            <>
               <Button
                 type="button"
                 size="sm"
@@ -423,6 +433,13 @@ export default function UsagePage() {
               >
                 Collapse All Sections
               </Button>
+            </>
+          }
+        />
+        <div className="panel-shell">
+          <div className="ui-panel-header">
+            <h1 className="ui-panel-title">Filters</h1>
+            <div className="flex w-full flex-wrap items-center justify-end gap-2 lg:w-auto">
               <Button
                 type="button"
                 size="sm"
@@ -580,73 +597,53 @@ export default function UsagePage() {
             </Button>
           </div>
           {sections.summary ? (
-            <div
-              className="grid gap-3 p-4"
-              style={USAGE_SUMMARY_GRID_STYLE}
-            >
+            <div className="p-4">
               {loading ? (
-                Array.from({ length: 5 }).map((_, index) => (
-                  <div key={index} className="panel-shell p-4">
-                    <Skeleton className="h-3 w-1/2" />
-                    <Skeleton className="mt-3 h-8 w-4/5" />
-                    <Skeleton className="mt-3 h-3 w-3/5" />
-                  </div>
-                ))
+                <div className="grid gap-3" style={USAGE_SUMMARY_GRID_STYLE}>
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={index} className="panel-shell p-4">
+                      <Skeleton className="h-3 w-1/2" />
+                      <Skeleton className="mt-3 h-8 w-4/5" />
+                      <Skeleton className="mt-3 h-3 w-3/5" />
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <>
-                  <div className="panel-shell p-4">
-                    <div className="ui-label">Priced Cost (USD)</div>
-                    <div className="ui-tabular mt-1 text-lg font-semibold">
-                      {formatUsd(totals.cost_usd)}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Priced runs {formatNumber(totals.priced_runs)} /{" "}
-                      {formatNumber(totals.runs)}
-                    </div>
-                  </div>
-                  <div className="panel-shell p-4">
-                    <div className="ui-label">Input Tokens</div>
-                    <div className="ui-tabular mt-1 text-lg font-semibold">
-                      {formatNumber(totals.input_tokens)}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Uncached {formatNumber(totals.input_uncached_tokens)}
-                    </div>
-                  </div>
-                  <div className="panel-shell p-4">
-                    <div className="ui-label">Cache Read</div>
-                    <div className="ui-tabular mt-1 text-lg font-semibold">
-                      {formatNumber(totals.input_cache_read_tokens)}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Cache Write{" "}
-                      {formatNumber(
-                        totals.input_cache_write_tokens_5m +
-                          totals.input_cache_write_tokens_1h +
-                          totals.input_cache_write_tokens_unknown,
-                      )}
-                    </div>
-                  </div>
-                  <div className="panel-shell p-4">
-                    <div className="ui-label">Output Tokens</div>
-                    <div className="ui-tabular mt-1 text-lg font-semibold">
-                      {formatNumber(totals.output_tokens)}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Reasoning {formatNumber(totals.reasoning_tokens)}
-                    </div>
-                  </div>
-                  <div className="panel-shell p-4">
-                    <div className="ui-label">Total / Tool Input</div>
-                    <div className="ui-tabular mt-1 text-lg font-semibold">
-                      {formatNumber(totals.total_tokens)} /{" "}
-                      {formatNumber(totals.tool_input_tokens)}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Unpriced runs {formatNumber(totals.unpriced_runs)}
-                    </div>
-                  </div>
-                </>
+                <MetricGrid style={USAGE_SUMMARY_GRID_STYLE}>
+                  <MetricCard
+                    label="Priced Cost (USD)"
+                    value={formatUsd(totals.cost_usd)}
+                    meta={`Priced runs ${formatNumber(totals.priced_runs)} / ${formatNumber(totals.runs)}`}
+                    tone="accent"
+                  />
+                  <MetricCard
+                    label="Input Tokens"
+                    value={formatNumber(totals.input_tokens)}
+                    meta={`Uncached ${formatNumber(totals.input_uncached_tokens)}`}
+                  />
+                  <MetricCard
+                    label="Cache Read"
+                    value={formatNumber(totals.input_cache_read_tokens)}
+                    meta={`Cache Write ${formatNumber(
+                      totals.input_cache_write_tokens_5m +
+                        totals.input_cache_write_tokens_1h +
+                        totals.input_cache_write_tokens_unknown,
+                    )}`}
+                    tone="signal"
+                  />
+                  <MetricCard
+                    label="Output Tokens"
+                    value={formatNumber(totals.output_tokens)}
+                    meta={`Reasoning ${formatNumber(totals.reasoning_tokens)}`}
+                  />
+                  <MetricCard
+                    label="Total / Tool Input"
+                    value={`${formatNumber(totals.total_tokens)} / ${formatNumber(
+                      totals.tool_input_tokens,
+                    )}`}
+                    meta={`Unpriced runs ${formatNumber(totals.unpriced_runs)}`}
+                  />
+                </MetricGrid>
               )}
             </div>
           ) : null}
@@ -983,7 +980,7 @@ export default function UsagePage() {
           </div>
         </div>
         {selectedRun ? (
-          <aside className="fixed inset-y-3 right-3 z-50 w-[min(560px,92vw)] rounded-xl border border-[var(--border-strong)] bg-[var(--surface-1)] shadow-2xl">
+          <aside className="ui-drawer panel-shell md:inset-y-3 md:right-3 md:left-auto md:w-[min(560px,92vw)]">
             <div className="ui-panel-header">
               <h2 className="ui-panel-title">Run Detail</h2>
               <Button type="button" size="sm" onClick={() => setSelectedRun(null)}>
@@ -1035,7 +1032,7 @@ export default function UsagePage() {
             </div>
           </aside>
         ) : null}
-      </section>
-    </main>
+      </PageStack>
+    </PageLayout>
   );
 }
