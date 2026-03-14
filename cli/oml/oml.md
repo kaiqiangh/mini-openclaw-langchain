@@ -13,6 +13,7 @@
 
 ```bash
 ./oml help
+./oml onboard --agent alpha
 ./oml start
 ./oml status
 ./oml logs --follow
@@ -33,6 +34,68 @@ Prints:
 - `backend_api`: version parsed from `backend/app.py`
 - `frontend`: version from `frontend/package.json`
 - `git_sha`: current short commit SHA
+
+### `./oml onboard [options]`
+
+Creates or reconfigures `backend/workspaces/<agent_id>/config.json`.
+
+Behavior:
+
+- Bash CLI only in this release
+- interactive by default when a TTY is attached
+- non-interactive when `--non-interactive` is passed or no TTY is available
+- derives defaults from `backend/config.json`
+- optionally layers a template from `backend/agent_templates/*.json`
+- existing agents offer `edit`, `reset`, or `cancel`
+- non-interactive reruns require `--force`
+
+QuickStart prompts:
+
+- `agent_id`
+- base template or repo defaults
+- default LLM route
+- fallback LLM routes
+- `rag_mode`
+- tool preset: `safe`, `balanced`, `builder`
+
+Advanced overrides:
+
+- `agent_runtime.max_steps`
+- `llm_runtime.timeout_seconds`
+- `heartbeat.enabled`
+- `cron.enabled`
+- `tool_execution.terminal.sandbox_mode`
+- `tool_execution.terminal.command_policy_mode`
+- explicit `chat`, `heartbeat`, and `cron` enabled tool lists
+
+Common flags:
+
+- `--agent <id>`
+- `--template <name>|none`
+- `--llm-default <route>`
+- `--fallback <route>` (repeatable, or use `none` to clear)
+- `--rag-mode on|off`
+- `--tool-preset safe|balanced|builder`
+- `--advanced`
+- `--chat-tools <csv>|none`
+- `--heartbeat-tools <csv>|none`
+- `--cron-tools <csv>|none`
+- `--max-steps <n>`
+- `--timeout-seconds <n>`
+- `--terminal-sandbox-mode hybrid_auto|darwin_sandbox|linux_bwrap|unsafe_none`
+- `--terminal-policy-mode auto|allowlist|denylist`
+- `--heartbeat on|off`
+- `--cron on|off`
+- `--non-interactive`
+- `--force`
+
+Examples:
+
+```bash
+./oml onboard --agent alpha
+./oml onboard --non-interactive --agent alpha --template research --llm-default deepseek.chat --fallback openai.gpt_4o_mini
+./oml onboard --non-interactive --force --agent alpha --tool-preset builder --rag-mode on
+```
 
 ### `./oml start [all|backend|frontend]`
 
@@ -170,6 +233,8 @@ Windows users can run the native PowerShell entrypoint:
 .\oml.ps1 stop
 ```
 
+`onboard` is not yet implemented in `.\oml.ps1`.
+
 ## Exit Codes
 
 - `0`: success
@@ -204,6 +269,7 @@ rm -f .oml/run/*.pid
 ## Manual Acceptance Checklist
 
 - `./oml help` renders expected command table
+- `./oml onboard --non-interactive --agent alpha` creates `backend/workspaces/alpha/config.json`
 - `./oml version` prints all four version fields
 - `./oml start` starts backend+frontend and passes health checks
 - `./oml status` reports both as running

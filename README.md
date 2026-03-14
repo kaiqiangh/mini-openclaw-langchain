@@ -124,10 +124,13 @@ Stack: Python 3.13 · FastAPI · LangChain 1.2 · SQLite · Next.js 15 · React
 ### Option A — One command (recommended)
 
 ```bash
+./oml onboard --agent alpha
 ./oml start
 ```
 
-This starts both backend and frontend, runs health checks, and serves the app at **http://{YOUR_URL}:8000**.
+`./oml onboard` is the Bash CLI onboarding wizard for agent-specific config. It writes `backend/workspaces/<agent_id>/config.json` from repo defaults in `backend/config.json`, with optional template overlays and advanced overrides.
+
+`./oml start` then starts both backend and frontend, runs health checks, and serves the app at **http://{YOUR_URL}:8000**.
 
 ### Option B — Docker (production-like)
 
@@ -248,10 +251,11 @@ Mini-OpenClaw applies a defense-in-depth approach:
 
 ## CLI Reference (`./oml`)
 
-The repo-local CLI manages the full lifecycle of your local deployment. A PowerShell equivalent (`.\oml.ps1`) is available for Windows.
+The repo-local CLI manages the full lifecycle of your local deployment. A PowerShell equivalent (`.\oml.ps1`) is available for Windows, but `onboard` is Bash-only in this release.
 
 | Command                  | Description                                            |
 | ------------------------ | ------------------------------------------------------ |
+| `./oml onboard [opts]`   | Interactive or scripted per-agent config onboarding    |
 | `./oml start [target]`   | Start `all`, `backend`, or `frontend` in detached mode |
 | `./oml stop [target]`    | Graceful stop (SIGTERM → SIGKILL fallback)             |
 | `./oml restart [target]` | Stop + start                                           |
@@ -261,6 +265,41 @@ The repo-local CLI manages the full lifecycle of your local deployment. A PowerS
 | `./oml doctor`           | Validate prerequisites, `.env`, and port conflicts     |
 | `./oml ports`            | Print effective URLs and ports                         |
 | `./oml version`          | Print component versions                               |
+
+### Agent onboarding
+
+Use `./oml onboard` to create or reconfigure `backend/workspaces/<agent_id>/config.json`.
+
+- interactive by default when a TTY is attached
+- non-interactive when `--non-interactive` is passed or no TTY is available
+- safe reruns: existing agents offer `edit`, `reset`, or `cancel`
+- non-interactive reruns require `--force`
+
+Examples:
+
+```bash
+./oml onboard --agent alpha
+./oml onboard --non-interactive --agent alpha --template research --llm-default deepseek.chat --fallback openai.gpt_4o_mini
+./oml onboard --non-interactive --force --agent alpha --tool-preset builder --rag-mode on
+```
+
+QuickStart asks for:
+
+- `agent_id`
+- repo defaults vs template
+- default LLM route
+- fallback LLM routes
+- `rag_mode`
+- tool preset: `safe`, `balanced`, or `builder`
+
+Advanced mode can override:
+
+- `agent_runtime.max_steps`
+- `llm_runtime.timeout_seconds`
+- `heartbeat.enabled`
+- `cron.enabled`
+- terminal sandbox and policy mode
+- explicit chat / heartbeat / cron tool lists
 
 ### Runtime config
 
@@ -275,6 +314,8 @@ OML_HEALTH_TIMEOUT_SECONDS=30
 OML_ENABLE_FRONTEND_PROXY=true   # true | false | inherit
 OML_FRONTEND_PROXY_URL=http://127.0.0.1:3000
 ```
+
+Agent runtime config created by `./oml onboard` is stored separately under `backend/workspaces/<agent_id>/config.json`.
 
 Exit codes: `0` success · `1` invalid args · `2` missing binary · `3` health timeout · `4` unsafe stop · `5` update failure · `6` doctor critical failure
 
