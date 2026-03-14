@@ -555,8 +555,6 @@ cmd_onboard() {
   local summary_rag_mode=""
   local default_prompt=""
 
-  require_bin uv || return 2
-
   if [ ! -t 0 ] || [ ! -t 1 ]; then
     interactive=0
   fi
@@ -851,20 +849,6 @@ cmd_onboard() {
     esac
   fi
 
-  if ! raw_templates="$(run_onboard_helper list-templates)"; then
-    return 4
-  fi
-  if ! raw_routes="$(run_onboard_helper list-llm-routes)"; then
-    return 4
-  fi
-  if ! raw_tools="$(run_onboard_helper list-tools)"; then
-    return 4
-  fi
-
-  templates_display="$(lines_to_csv "$raw_templates")"
-  routes_display="$(lines_to_csv "$raw_routes")"
-  tools_display="$(lines_to_csv "$raw_tools")"
-
   if [ -z "$agent_id" ]; then
     if [ "$interactive" -eq 0 ]; then
       error "--agent is required in non-interactive mode"
@@ -881,6 +865,22 @@ cmd_onboard() {
     error "agent_id must match [A-Za-z0-9_-]{1,64}"
     return 1
   fi
+
+  require_bin uv || return 2
+
+  if ! raw_templates="$(run_onboard_helper list-templates)"; then
+    return 4
+  fi
+  if ! raw_routes="$(run_onboard_helper list-llm-routes)"; then
+    return 4
+  fi
+  if ! raw_tools="$(run_onboard_helper list-tools)"; then
+    return 4
+  fi
+
+  templates_display="$(lines_to_csv "$raw_templates")"
+  routes_display="$(lines_to_csv "$raw_routes")"
+  tools_display="$(lines_to_csv "$raw_tools")"
 
   if [ -n "$template_name" ] && [ "$template_name" != "none" ] && ! contains_line "$raw_templates" "$template_name"; then
     error "Unknown template: $template_name"
