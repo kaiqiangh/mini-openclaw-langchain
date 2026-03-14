@@ -305,27 +305,38 @@ validate_agent_id() {
 onboard_python_spec() {
   if [ -n "${OML_ONBOARD_PYTHON:-}" ]; then
     printf '%s' "$OML_ONBOARD_PYTHON"
-    return
+    return 0
   fi
   if [ -x "$REPO_ROOT/backend/.venv/bin/python" ]; then
     printf '%s' "$REPO_ROOT/backend/.venv/bin/python"
-    return
+    return 0
   fi
   if command -v python3 >/dev/null 2>&1; then
     printf '%s' "python3"
-    return
+    return 0
   fi
   if command -v python >/dev/null 2>&1; then
     printf '%s' "python"
-    return
+    return 0
   fi
-  printf '%s' "3"
+  if command -v uv >/dev/null 2>&1; then
+    printf '%s' "3"
+    return 0
+  fi
+  return 1
 }
 
 run_onboard_helper() {
   local python_spec
-  python_spec="$(onboard_python_spec)"
-  uv run --python "$python_spec" "$REPO_ROOT/cli/oml/onboard_helper.py" "$@"
+  if ! python_spec="$(onboard_python_spec)"; then
+    error "Missing required runtime for onboarding: install uv or python3"
+    return 2
+  fi
+  if command -v uv >/dev/null 2>&1; then
+    uv run --python "$python_spec" "$REPO_ROOT/cli/oml/onboard_helper.py" "$@"
+    return $?
+  fi
+  "$python_spec" "$REPO_ROOT/cli/oml/onboard_helper.py" "$@"
 }
 
 contains_line() {
@@ -865,8 +876,6 @@ cmd_onboard() {
     error "agent_id must match [A-Za-z0-9_-]{1,64}"
     return 1
   fi
-
-  require_bin uv || return 2
 
   if ! raw_templates="$(run_onboard_helper list-templates)"; then
     return 4

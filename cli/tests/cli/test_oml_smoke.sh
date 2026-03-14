@@ -105,7 +105,7 @@ if ! grep -q -- "--agent is required" /tmp/oml-onboard-missing-agent.out; then
   fail "onboard missing-agent output not found"
 fi
 
-$OML onboard --non-interactive --agent alpha --llm-default deepseek.chat --fallback openai.gpt_4o_mini --rag-mode on --tool-preset builder >/dev/null
+PATH="/usr/bin:/bin" "$OML" onboard --non-interactive --agent alpha --llm-default deepseek.chat --fallback openai.gpt_4o_mini --rag-mode on --tool-preset builder >/dev/null
 
 alpha_config="$TMP_REPO/backend/workspaces/alpha/config.json"
 if [ ! -f "$alpha_config" ]; then
