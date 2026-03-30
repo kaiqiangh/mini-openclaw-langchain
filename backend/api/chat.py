@@ -127,6 +127,9 @@ async def _should_emit_title(
     return user_message_count == 1
 
 
+_CRITICAL_EVENTS = frozenset({"done", "error"})
+
+
 async def _publish_event(
     state: _StreamRunState, event_type: str, data: dict[str, Any] | str
 ) -> None:
@@ -145,13 +148,25 @@ async def _publish_event(
         except asyncio.QueueFull:
             pass
 
+        # Queue is full — evict oldest and retry
         try:
-            _ = queue.get_nowait()
+            queue.get_nowait()
         except asyncio.QueueEmpty:
             pass
+
         try:
             queue.put_nowait(payload)
         except asyncio.QueueFull:
+            # For critical events, retry once more
+            if event_type in _CRITICAL_EVENTS:
+                try:
+                    queue.get_nowait()
+                    queue.put_nowait(payload)
+                except (asyncio.QueueFull, asyncio.QueueEmpty):
+                    logger.error(
+                        "Failed to deliver critical event %s to subscriber",
+                        event_type,
+                    )
             continue
 
 

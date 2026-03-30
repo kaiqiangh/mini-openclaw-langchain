@@ -108,6 +108,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             ("/tokens/", 120, 60),
             ("/files", 120, 60),
         ]
+        self._global_limit: tuple[int, int] = (300, 60)  # 300 req/min global
 
     def _resolve_limit(self, path: str) -> tuple[int, int] | None:
         if not path.startswith("/api/v1/agents/"):
@@ -122,11 +123,39 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return None
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        limit_conf = self._resolve_limit(request.url.path)
+        # Skip rate limiting for non-API routes and health/ready
+        path = request.url.path
+        if not path.startswith("/api/v1/"):
+            return await call_next(request)
+        if path in {"/api/v1/health", "/api/v1/ready"}:
+            return await call_next(request)
+
+        client = request.client.host if request.client else "unknown"
+
+        # Global rate limit
+        global_key = f"{client}:__global__"
+        global_decision = self._coordinator.check_rate_limit(
+            global_key,
+            limit=self._global_limit[0],
+            window_seconds=self._global_limit[1],
+        )
+        if not global_decision.allowed:
+            return JSONResponse(
+                status_code=429,
+                content=error_payload(
+                    code="rate_limit_exceeded",
+                    message="Global rate limit exceeded. Try again later.",
+                    details={"limit": self._global_limit[0], "window_seconds": self._global_limit[1]},
+                    request_id=_request_id(request),
+                ),
+                headers={"Retry-After": str(global_decision.retry_after_seconds)},
+            )
+
+        # Per-path rate limit
+        limit_conf = self._resolve_limit(path)
         if limit_conf is not None:
             limit, window_sec = limit_conf
-            client = request.client.host if request.client else "unknown"
-            bucket_key = f"{client}:{request.url.path}"
+            bucket_key = f"{client}:{path}"
             decision = self._coordinator.check_rate_limit(
                 bucket_key, limit=limit, window_seconds=window_sec
             )
