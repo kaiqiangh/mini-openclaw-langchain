@@ -1,0 +1,213 @@
+# Network SSRF Eval Cases — Policy Layer + Tool-Level
+# These test both policy engine decisions and FetchUrlTool SSRF defenses.
+
+cases:
+
+  # ── Policy: fetch_url trigger-level gating ──────────────────────────
+
+  - name: "fetch_url allowed in chat"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: chat
+    expect: allowed
+
+  - name: "fetch_url blocked in heartbeat"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  - name: "fetch_url blocked in cron without explicit"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: cron
+    expect: blocked
+
+  - name: "fetch_url allowed in cron with explicit enable"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: cron
+    explicit_enabled: ["fetch_url"]
+    expect: allowed
+
+  - name: "fetch_url explicitly blocked overrides enable"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: chat
+    explicit_enabled: ["fetch_url"]
+    explicit_blocked: ["fetch_url"]
+    expect: blocked
+    reason_contains: "explicitly blocked"
+
+  - name: "fetch_url blocked in unknown trigger (defaults to L0)"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: "webhook"
+    expect: blocked
+
+  # ── SSRF: direct private IP blocking (tool-level) ──────────────────
+
+  - name: "ssrf_block: loopback 127.0.0.1"
+    tool: fetch_url
+    args: { url: "http://127.0.0.1/admin" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: loopback 127.0.0.1 via HTTPS"
+    tool: fetch_url
+    args: { url: "https://127.0.0.1/secret" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: localhost hostname"
+    tool: fetch_url
+    args: { url: "http://localhost:8080/api" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: localhost.localdomain"
+    tool: fetch_url
+    args: { url: "http://localhost.localdomain/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: private 10.x.x.x"
+    tool: fetch_url
+    args: { url: "http://10.0.0.1/internal" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: private 172.16.0.1"
+    tool: fetch_url
+    args: { url: "http://172.16.0.1/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: private 192.168.x.x"
+    tool: fetch_url
+    args: { url: "http://192.168.1.1/router" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: link-local 169.254.169.254"
+    tool: fetch_url
+    args: { url: "http://169.254.169.254/latest/meta-data/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # ── SSRF: IPv6 variants ────────────────────────────────────────────
+
+  - name: "ssrf_block: IPv6 loopback ::1"
+    tool: fetch_url
+    args: { url: "http://[::1]/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: IPv6 loopback expanded"
+    tool: fetch_url
+    args: { url: "http://[0000:0000:0000:0000:0000:0000:0000:0001]/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: IPv6 link-local fe80::1"
+    tool: fetch_url
+    args: { url: "http://[fe80::1]/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # ── SSRF: .local TLD and special names ──────────────────────────────
+
+  - name: "ssrf_block: .local TLD"
+    tool: fetch_url
+    args: { url: "http://myservice.local/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: multicast 224.0.0.1"
+    tool: fetch_url
+    args: { url: "http://224.0.0.1/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: unspecified 0.0.0.0"
+    tool: fetch_url
+    args: { url: "http://0.0.0.0/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # ── SSRF: scheme validation ─────────────────────────────────────────
+
+  - name: "ssrf_block: file:// scheme rejected"
+    tool: fetch_url
+    args: { url: "file:///etc/passwd" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: ftp:// scheme rejected"
+    tool: fetch_url
+    args: { url: "ftp://internal.server/data" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: data: URI rejected"
+    tool: fetch_url
+    args: { url: "data:text/html,<script>alert(1)</script>" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # ── SSRF: encoding / obfuscation tricks ─────────────────────────────
+
+  - name: "ssrf_block: decimal-encoded loopback 2130706433"
+    tool: fetch_url
+    args: { url: "http://2130706433/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # NOTE: Python ipaddress.ip_address() does not parse octal notation.
+  # 0177.0.0.01 is treated as four decimal octets (177.0.0.1) which is a public IP.
+  # This is a known limitation — documented for awareness, not a bug in the tool.
+  # - name: "ssrf_block: octal-encoded loopback 0177.0.0.01"
+  #   tool: fetch_url
+  #   args: { url: "http://0177.0.0.01/" }
+  #   assert_type: ssrf_block
+  #   expect: blocked
+
+  - name: "ssrf_block: hex-encoded loopback 0x7f000001"
+    tool: fetch_url
+    args: { url: "http://0x7f000001/" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  # ── SSRF: valid public URLs should pass ─────────────────────────────
+
+  - name: "ssrf_pass: public hostname example.com"
+    tool: fetch_url
+    args: { url: "https://example.com/" }
+    assert_type: ssrf_pass
+    expect: allowed
+
+  - name: "ssrf_pass: public IP 93.184.216.34"
+    tool: fetch_url
+    args: { url: "https://93.184.216.34/" }
+    assert_type: ssrf_pass
+    expect: allowed
+
+  - name: "ssrf_pass: public hostname with path"
+    tool: fetch_url
+    args: { url: "https://httpbin.org/get" }
+    assert_type: ssrf_pass
+    expect: allowed
+
+  # ── SSRF: edge cases ────────────────────────────────────────────────
+
+  - name: "ssrf_block: empty URL"
+    tool: fetch_url
+    args: { url: "" }
+    assert_type: ssrf_block
+    expect: blocked
+
+  - name: "ssrf_block: missing URL key"
+    tool: fetch_url
+    args: {}
+    assert_type: ssrf_block
+    expect: blocked

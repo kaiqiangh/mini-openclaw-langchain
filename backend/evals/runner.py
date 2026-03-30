@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from tools.fetch_url_tool import FetchUrlTool
 from tools.policy import PermissionLevel, ToolPolicyEngine
 
 
@@ -75,16 +76,52 @@ def load_cases(cases_dir: Path = EVALS_DIR) -> list[dict[str, Any]]:
     return all_cases
 
 
+def _run_ssrf_assert(case: dict[str, Any], fetch_tool: FetchUrlTool) -> tuple[bool, str]:
+    """Run a URL through FetchUrlTool._validate_url and check if it's blocked or passes."""
+    url = str(case.get("args", {}).get("url", "")).strip()
+    expect = case.get("expect", "blocked")
+    try:
+        fetch_tool._validate_url(url)
+        actual = "allowed"
+    except ValueError as exc:
+        actual = "blocked"
+    passed = actual == expect
+    reason = f"URL '{url}' was {actual}"
+    return passed, reason
+
+
 def run_evals(cases_dir: Path = EVALS_DIR) -> EvalReport:
     engine = ToolPolicyEngine()
+    fetch_tool = FetchUrlTool()
     cases = load_cases(cases_dir)
     report = EvalReport()
 
     for case in cases:
         name = case.get("name", "unnamed")
         tool = case.get("tool", "")
-        trigger = case.get("trigger_type", "chat")
+        assert_type = case.get("assert_type", "policy")
         expect = case.get("expect", "allowed")
+        started = time.monotonic()
+
+        # SSRF assertion mode: test FetchUrlTool._validate_url directly
+        if assert_type in ("ssrf_block", "ssrf_pass"):
+            passed, reason = _run_ssrf_assert(case, fetch_tool)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            actual = "allowed" if assert_type == "ssrf_pass" else "blocked"
+            result = EvalResult(
+                name=name,
+                tool=tool,
+                expect=expect,
+                actual=actual,
+                passed=passed,
+                reason=reason,
+                duration_ms=duration_ms,
+            )
+            report.results.append(result)
+            continue
+
+        # Default: policy check
+        trigger = case.get("trigger_type", "chat")
         explicit_enabled = case.get("explicit_enabled")
         explicit_blocked = case.get("explicit_blocked")
         reason_contains = case.get("reason_contains", "")
