@@ -22,6 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from api import (
     agents,
+    audit,
     chat,
     compress,
     config_api,
@@ -321,6 +322,7 @@ async def lifespan(_: FastAPI):
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
+    audit.set_agent_manager(agent_manager)
 
     default_runtime.memory_indexer.rebuild_index(
         settings=default_runtime.runtime_config.retrieval.memory
@@ -455,6 +457,7 @@ app.include_router(config_api.router, prefix="/api/v1")
 app.include_router(usage.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(traces.router, prefix="/api/v1")
+app.include_router(audit.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 
 
