@@ -282,28 +282,7 @@ class AppConfig:
     default_llm_profile: str
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = value
-    return merged
-
-
-def _deep_diff(candidate: dict[str, Any], baseline: dict[str, Any]) -> dict[str, Any]:
-    diff: dict[str, Any] = {}
-    for key, value in candidate.items():
-        baseline_value = baseline.get(key)
-        if isinstance(value, dict) and isinstance(baseline_value, dict):
-            nested = _deep_diff(value, baseline_value)
-            if nested:
-                diff[key] = nested
-            continue
-        if value != baseline_value:
-            diff[key] = value
-    return diff
+from utils.dict_ops import deep_merge as _deep_merge, deep_diff as _deep_diff
 
 
 _LLM_ROUTE_KEYS = {

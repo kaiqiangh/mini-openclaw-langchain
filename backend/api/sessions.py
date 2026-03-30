@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import LegacySessionStateError, SessionManager
-from scheduler.cron import CronScheduler
 
 router = APIRouter(tags=["sessions"])
 
@@ -51,14 +50,12 @@ def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManage
 
 
 def _cron_session_titles(agent_manager: AgentManager, agent_id: str) -> dict[str, str]:
-    runtime = agent_manager.get_runtime(agent_id)
-    scheduler = CronScheduler(
-        base_dir=runtime.root_dir,
-        config=runtime.runtime_config.cron,
-        agent_manager=agent_manager,
-        session_manager=runtime.session_manager,
-        agent_id=runtime.agent_id,
-    )
+    """Get cron job titles from the existing scheduler instance if available."""
+    from api import scheduler_api
+
+    scheduler = scheduler_api.get_cron_scheduler(agent_id)
+    if scheduler is None:
+        return {}
     return {
         job.id: job.name.strip()
         for job in scheduler.list_jobs()

@@ -17,6 +17,7 @@ from config import (
 )
 from graph.agent import AgentManager
 from tools import build_tool_catalog, get_all_declared_tools
+from utils.dict_ops import deep_merge as _deep_merge
 
 router = APIRouter(tags=["agents"])
 
@@ -122,17 +123,6 @@ def _agent_tools_payload(manager: AgentManager, agent_id: str) -> dict[str, Any]
         config_base_dir=_base_dir(manager),
     )
     return {"agent_id": runtime.agent_id, **catalog}
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(base)
-    for key, value in override.items():
-        current = merged.get(key)
-        if isinstance(current, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(current, value)
-        else:
-            merged[key] = value
-    return merged
 
 
 def _flatten_diff(

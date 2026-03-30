@@ -23,6 +23,11 @@ _DEFAULT_HEARTBEAT_SCHEDULER: HeartbeatScheduler | None = None
 _DEFAULT_CRON_SCHEDULER: CronScheduler | None = None
 _HEARTBEAT_SCHEDULERS: dict[str, HeartbeatScheduler] = {}
 _CRON_SCHEDULERS: dict[str, CronScheduler] = {}
+
+
+def get_cron_scheduler(agent_id: str) -> CronScheduler | None:
+    """Return existing CronScheduler for agent, or None."""
+    return _CRON_SCHEDULERS.get(agent_id)
 _WINDOW_TO_MS = {
     "1h": 60 * 60 * 1000,
     "4h": 4 * 60 * 60 * 1000,
