@@ -15,3 +15,4 @@ html2text>=2025.4.15
 beautifulsoup4>=4.13.0,<5.0.0
 duckduckgo-search>=7.5.5,<8.0.0
 PyYAML>=6.0.2,<7.0.0
+aiofiles>=24.1.0
