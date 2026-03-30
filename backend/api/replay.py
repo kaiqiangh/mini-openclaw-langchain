@@ -84,7 +84,7 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     original_message = str(user_messages[-1].get("content", ""))
 
     replay_session_id = f"replay:{run_id}:{uuid.uuid4().hex[:8]}"
-    runtime.session_manager.create_session(replay_session_id, title=f"Replay of {run_id}")
+    await runtime.session_manager.create_session(replay_session_id, title=f"Replay of {run_id}")
 
     try:
         result = await manager.run_once(

@@ -71,14 +71,14 @@ def test_checkpoint_repository_rejects_legacy_session_json_messages(tmp_path: Pa
     manager.initialize(tmp_path)
 
     session_manager = manager.get_runtime("default").session_manager
-    session_manager.create_session("legacy-session", title="Legacy")
-    session = session_manager.load_session("legacy-session")
+    asyncio.run(session_manager.create_session("legacy-session", title="Legacy"))
+    session = asyncio.run(session_manager.load_session("legacy-session"))
     session["messages"] = [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": "second"},
     ]
     session["compressed_context"] = "older summary"
-    session_manager.save_session("legacy-session", session)
+    asyncio.run(session_manager.save_session("legacy-session", session))
 
     with pytest.raises(
         LegacySessionStateError,
@@ -132,7 +132,7 @@ def test_delete_session_removes_checkpoint_thread(tmp_path: Path):
     manager.initialize(tmp_path)
 
     session_manager = manager.get_runtime("default").session_manager
-    session_manager.create_session("delete-session", title="Delete Me")
+    asyncio.run(session_manager.create_session("delete-session", title="Delete Me"))
     asyncio.run(
         manager.update_graph_state(
             session_id="delete-session",
@@ -161,7 +161,7 @@ def test_repository_repairs_broken_tool_loop_state_on_access(tmp_path: Path):
     manager.initialize(tmp_path)
 
     session_manager = manager.get_runtime("default").session_manager
-    session_manager.create_session("broken-session", title="Broken")
+    asyncio.run(session_manager.create_session("broken-session", title="Broken"))
     asyncio.run(
         manager.update_graph_state(
             session_id="broken-session",

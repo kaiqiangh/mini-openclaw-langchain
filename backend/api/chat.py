@@ -115,7 +115,7 @@ async def _should_emit_title(
     session_id: str,
 ) -> bool:
     runtime = agent.get_runtime(agent_id)
-    session = runtime.session_manager.load_existing_session(session_id)
+    session = await runtime.session_manager.load_existing_session(session_id)
     if str(session.get("title", "New Session")).strip() != "New Session":
         return False
     snapshot = await agent.get_session_repository(agent_id).load_snapshot(
@@ -221,7 +221,7 @@ async def _run_stream_task(
                 session_id=state.session_id,
             ):
                 title = await agent.generate_title(state.message, agent_id=state.agent_id)
-                agent.get_runtime(state.agent_id).session_manager.update_title(
+                await agent.get_runtime(state.agent_id).session_manager.update_title(
                     state.session_id, title
                 )
                 await _publish_event(
@@ -280,7 +280,7 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
         runtime = agent.get_runtime(agent_id)
-        runtime.session_manager.load_existing_session(request.session_id)
+        await runtime.session_manager.load_existing_session(request.session_id)
     except FileNotFoundError as exc:
         raise ApiError(
             status_code=404, code="not_found", message=str(exc)

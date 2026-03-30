@@ -96,7 +96,7 @@ async def list_sessions(
     agent_manager, session_manager = _resolve_session_manager(agent_id)
     cron_titles = _cron_session_titles(agent_manager, agent_id)
     try:
-        raw_sessions = session_manager.list_sessions(scope=scope)
+        raw_sessions = await session_manager.list_sessions(scope=scope)
     except LegacySessionStateError as exc:
         raise _legacy_state_api_error(exc) from exc
     sessions = []
@@ -120,7 +120,7 @@ async def create_session(
     _, manager = _resolve_session_manager(agent_id)
     session_id = str(uuid.uuid4())
     title = request.title if request and request.title else "New Session"
-    payload = manager.create_session(session_id, title=title)
+    payload = await manager.create_session(session_id, title=title)
 
     response.headers["Location"] = f"/api/v1/agents/{agent_id}/sessions/{session_id}"
     return {
@@ -139,7 +139,7 @@ async def rename_session(
     if not path.exists():
         raise ApiError(status_code=404, code="not_found", message="Session not found")
 
-    session = manager.rename_session(session_id, req.title)
+    session = await manager.rename_session(session_id, req.title)
     return {"data": {"session_id": session_id, "title": session.get("title", "")}}
 
 
@@ -169,7 +169,7 @@ async def archive_session(
     session_id: str,
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
-    archived = manager.archive_session(session_id)
+    archived = await manager.archive_session(session_id)
     if not archived:
         raise ApiError(status_code=404, code="not_found", message="Session not found")
     return {"data": {"archived": True, "session_id": session_id}}
@@ -181,7 +181,7 @@ async def restore_session(
     session_id: str,
 ) -> dict[str, Any]:
     _, manager = _resolve_session_manager(agent_id)
-    restored = manager.restore_session(session_id)
+    restored = await manager.restore_session(session_id)
     if not restored:
         raise ApiError(
             status_code=404, code="not_found", message="Archived session not found"
@@ -308,5 +308,5 @@ async def generate_title(
         )
 
     title = await agent.generate_title(seed, agent_id=agent_id)
-    manager.update_title(session_id, title)
+    await manager.update_title(session_id, title)
     return {"data": {"session_id": session_id, "title": title}}

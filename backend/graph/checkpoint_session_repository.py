@@ -209,9 +209,9 @@ class CheckpointSessionRepository:
     ) -> dict[str, Any]:
         session_manager = self._session_manager(agent_id)
         session = (
-            session_manager.load_session(session_id, archived=archived)
+            await session_manager.load_session(session_id, archived=archived)
             if create_if_missing
-            else session_manager.load_existing_session(session_id, archived=archived)
+            else await session_manager.load_existing_session(session_id, archived=archived)
         )
 
         state = await self.get_state(
@@ -854,14 +854,14 @@ class CheckpointSessionRepository:
             )
             session_manager._write_json_file(archive_path, to_archive)  # noqa: SLF001
 
-        session = session_manager.load_session(session_id)
+        session = await session_manager.load_session(session_id)
         prior = str(session.get("compressed_context", "")).strip()
         normalized = summary.strip()
         if prior and normalized:
             session["compressed_context"] = f"{prior}\n---\n{normalized}"
         else:
             session["compressed_context"] = normalized or prior
-        session_manager.save_session(session_id, session)
+        await session_manager.save_session(session_id, session)
         compressed_context = str(session.get("compressed_context", "")).strip()
         await self.update_state(
             agent_id=agent_id,
@@ -883,7 +883,7 @@ class CheckpointSessionRepository:
         session_id: str,
         archived: bool = False,
     ) -> bool:
-        deleted = self._session_manager(agent_id).delete_session(
+        deleted = await self._session_manager(agent_id).delete_session(
             session_id, archived=archived
         )
         if deleted:

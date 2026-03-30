@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 import json
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,7 +14,7 @@ class LegacySessionStateError(RuntimeError):
 class SessionManager:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
-        self._lock = threading.RLock()
+        self._lock = asyncio.Lock()
         self.sessions_dir = base_dir / "sessions"
         self.archive_dir = self.sessions_dir / "archive"
         self.archived_sessions_dir = self.sessions_dir / "archived_sessions"
@@ -83,32 +83,32 @@ class SessionManager:
             )
         return raw
 
-    def create_session(
+    async def create_session(
         self,
         session_id: str,
         *,
         title: str = "New Session",
         archived: bool = False,
     ) -> dict[str, Any]:
-        with self._lock:
+        async with self._lock:
             payload = self._default_payload(title.strip() or "New Session")
             path = self._session_path(session_id, archived=archived)
             self._write_json_file(path, payload)
             return payload
 
-    def load_existing_session(
+    async def load_existing_session(
         self, session_id: str, *, archived: bool = False
     ) -> dict[str, Any]:
-        with self._lock:
+        async with self._lock:
             path = self._session_path(session_id, archived=archived)
             return self._read_session_payload(
                 path, session_id=session_id, archived=archived
             )
 
-    def load_session(
+    async def load_session(
         self, session_id: str, *, archived: bool = False
     ) -> dict[str, Any]:
-        with self._lock:
+        async with self._lock:
             path = self._session_path(session_id, archived=archived)
             if not path.exists():
                 if archived:
@@ -120,15 +120,15 @@ class SessionManager:
                 path, session_id=session_id, archived=archived
             )
 
-    def save_session(
+    async def save_session(
         self, session_id: str, payload: dict[str, Any], *, archived: bool = False
     ) -> None:
-        with self._lock:
+        async with self._lock:
             payload["updated_at"] = self._now()
             path = self._session_path(session_id, archived=archived)
             self._write_json_file(path, payload)
 
-    def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
+    async def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
         include_active = scope in {"active", "all"}
         include_archived = scope in {"archived", "all"}
         items: list[dict[str, Any]] = []
@@ -165,27 +165,27 @@ class SessionManager:
         items.sort(key=lambda item: item["updated_at"], reverse=True)
         return items
 
-    def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
-        session = self.load_session(session_id)
+    async def rename_session(self, session_id: str, title: str) -> dict[str, Any]:
+        session = await self.load_session(session_id)
         session["title"] = title.strip()
-        self.save_session(session_id, session)
+        await self.save_session(session_id, session)
         return session
 
-    def update_title(self, session_id: str, title: str) -> None:
-        session = self.load_session(session_id)
+    async def update_title(self, session_id: str, title: str) -> None:
+        session = await self.load_session(session_id)
         session["title"] = title.strip() or session.get("title", "New Session")
-        self.save_session(session_id, session)
+        await self.save_session(session_id, session)
 
-    def delete_session(self, session_id: str, *, archived: bool = False) -> bool:
-        with self._lock:
+    async def delete_session(self, session_id: str, *, archived: bool = False) -> bool:
+        async with self._lock:
             path = self._session_path(session_id, archived=archived)
             if not path.exists():
                 return False
             path.unlink()
             return True
 
-    def archive_session(self, session_id: str) -> bool:
-        with self._lock:
+    async def archive_session(self, session_id: str) -> bool:
+        async with self._lock:
             source = self._session_path(session_id, archived=False)
             target = self._session_path(session_id, archived=True)
             if not source.exists():
@@ -198,8 +198,8 @@ class SessionManager:
             source.unlink()
             return True
 
-    def restore_session(self, session_id: str) -> bool:
-        with self._lock:
+    async def restore_session(self, session_id: str) -> bool:
+        async with self._lock:
             source = self._session_path(session_id, archived=True)
             target = self._session_path(session_id, archived=False)
             if not source.exists():
@@ -212,6 +212,6 @@ class SessionManager:
             source.unlink()
             return True
 
-    def get_compressed_context(self, session_id: str) -> str:
-        session = self.load_session(session_id)
+    async def get_compressed_context(self, session_id: str) -> str:
+        session = await self.load_session(session_id)
         return str(session.get("compressed_context", "")).strip()

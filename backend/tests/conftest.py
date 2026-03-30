@@ -151,9 +151,9 @@ class FakeSessionRepository:
     ):
         _ = agent_id, graph_name
         session = (
-            self.manager.load_session(session_id, archived=archived)
+            await self.manager.load_session(session_id, archived=archived)
             if create_if_missing
-            else self.manager.load_existing_session(session_id, archived=archived)
+            else await self.manager.load_existing_session(session_id, archived=archived)
         )
         key = self._key(session_id, archived=archived)
         messages = [dict(item) for item in self._messages.get(key, [])]
@@ -180,9 +180,9 @@ class FakeSessionRepository:
     ) -> list[dict[str, object]]:
         _ = agent_id, graph_name
         if create_if_missing:
-            self.manager.load_session(session_id, archived=archived)
+            await self.manager.load_session(session_id, archived=archived)
         key = self._key(session_id, archived=archived)
-        session = self.manager.load_existing_session(session_id, archived=archived)
+        session = await self.manager.load_existing_session(session_id, archived=archived)
         messages = [dict(item) for item in self._messages.get(key, [])]
         return self._history_with_summary(messages, str(session.get("compressed_context", "")))
 
@@ -197,7 +197,7 @@ class FakeSessionRepository:
         key = self._key(session_id, archived=archived)
         self._messages.pop(key, None)
         self._live_responses.pop(key, None)
-        return self.manager.delete_session(session_id, archived=archived)
+        return await self.manager.delete_session(session_id, archived=archived)
 
     async def compress_history(
         self,
@@ -210,7 +210,7 @@ class FakeSessionRepository:
     ) -> dict[str, int]:
         _ = agent_id, graph_name
         key = self._key(session_id, archived=False)
-        session = self.manager.load_session(session_id)
+        session = await self.manager.load_session(session_id)
         messages = self._messages.get(key, [])
         archive_count = min(max(0, n), len(messages))
         to_archive = messages[:archive_count]
@@ -226,7 +226,7 @@ class FakeSessionRepository:
             session["compressed_context"] = f"{prior}\n---\n{normalized}"
         else:
             session["compressed_context"] = normalized or prior
-        self.manager.save_session(session_id, session)
+        await self.manager.save_session(session_id, session)
         self._messages[key] = list(remain)
         self._live_responses.pop(key, None)
         return {"archived_count": archive_count, "remaining_count": len(remain)}
@@ -243,7 +243,7 @@ class FakeSessionRepository:
         selected_skills: list[str] | None = None,
     ) -> None:
         _ = agent_id
-        self.manager.load_session(session_id)
+        await self.manager.load_session(session_id)
         key = self._key(session_id, archived=False)
         rows = self._messages.setdefault(key, [])
         rows.append(
@@ -265,7 +265,7 @@ class FakeSessionRepository:
         content: str,
     ) -> None:
         _ = agent_id
-        self.manager.load_session(session_id)
+        await self.manager.load_session(session_id)
         key = self._key(session_id, archived=False)
         self._live_responses[key] = {
             "run_id": run_id,

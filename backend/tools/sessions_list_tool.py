@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,53 @@ class SessionsListTool:
     name: str = "sessions_list"
     description: str = "List sessions for an agent (active, archived, or all)"
     permission_level: PermissionLevel = PermissionLevel.L0_READ
+
+    @staticmethod
+    def _list_sessions_sync(manager: SessionManager, *, scope: str = "active") -> list[dict[str, Any]]:
+        """Sync session listing for use in tool context (no event loop)."""
+        include_active = scope in {"active", "all"}
+        include_archived = scope in {"archived", "all"}
+        items: list[dict[str, Any]] = []
+
+        def _read_session_meta(path: Path) -> dict[str, Any] | None:
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    return raw
+            except Exception:
+                pass
+            return None
+
+        if include_active:
+            for path in sorted(manager.sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not path.is_file():
+                    continue
+                meta = _read_session_meta(path)
+                if meta is None:
+                    continue
+                items.append({
+                    "session_id": path.stem,
+                    "title": str(meta.get("title", "New Session")),
+                    "created_at": float(meta.get("created_at", 0)),
+                    "updated_at": float(meta.get("updated_at", 0)),
+                    "archived": False,
+                })
+        if include_archived:
+            for path in sorted(manager.archived_sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                if not path.is_file():
+                    continue
+                meta = _read_session_meta(path)
+                if meta is None:
+                    continue
+                items.append({
+                    "session_id": path.stem,
+                    "title": str(meta.get("title", "New Session")),
+                    "created_at": float(meta.get("created_at", 0)),
+                    "updated_at": float(meta.get("updated_at", 0)),
+                    "archived": True,
+                })
+        items.sort(key=lambda item: item["updated_at"], reverse=True)
+        return items
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
@@ -72,7 +120,7 @@ class SessionsListTool:
             )
 
         manager = SessionManager(agent_root)
-        sessions = manager.list_sessions(scope=scope)[:limit]
+        sessions = self._list_sessions_sync(manager, scope=scope)[:limit]
         return ToolResult.success(
             tool_name=self.name,
             data={
