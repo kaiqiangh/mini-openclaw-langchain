@@ -22,6 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from api import (
     agents,
+    approval,
     audit,
     chat,
     compress,
@@ -41,6 +42,7 @@ from control import LocalCoordinator, build_local_coordinator
 from graph.agent import AgentManager
 from scheduler.cron import CronScheduler
 from scheduler.heartbeat import HeartbeatScheduler
+from storage.approval_store import ApprovalStore
 from utils.redaction import redact_text
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -327,6 +329,7 @@ async def lifespan(_: FastAPI):
     audit.set_agent_manager(agent_manager)
     setup.set_base_dir(BASE_DIR)
     replay.set_agent_manager(agent_manager)
+    approval.set_dependencies(ApprovalStore(BASE_DIR))
 
     default_runtime.memory_indexer.rebuild_index(
         settings=default_runtime.runtime_config.retrieval.memory
@@ -464,6 +467,7 @@ app.include_router(traces.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(setup.router, prefix="/api/v1")
 app.include_router(replay.router, prefix="/api/v1")
+app.include_router(approval.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 
 
