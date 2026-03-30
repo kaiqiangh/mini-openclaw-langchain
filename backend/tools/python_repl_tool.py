@@ -116,10 +116,23 @@ def _execute_python_snippet(code: str, queue: mp.Queue) -> None:
 class PythonReplTool:
     timeout_seconds: int = 30
     output_char_limit: int = 5000
+    use_sandbox: bool = False
 
     name: str = "python_repl"
     description: str = "Execute Python snippets in constrained REPL scope"
     permission_level: PermissionLevel = PermissionLevel.L1_WRITE
+
+    def __post_init__(self):
+        import os
+        mode = os.environ.get("REPL_SANDBOX_MODE", "in_process").lower()
+        self.use_sandbox = mode in ("docker", "auto")
+        self._executor = None
+
+    def _get_executor(self):
+        if self._executor is None:
+            from .sandbox_executor import SandboxExecutor, SandboxConfig
+            self._executor = SandboxExecutor(SandboxConfig.from_env())
+        return self._executor
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
@@ -134,30 +147,31 @@ class PythonReplTool:
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        queue: mp.Queue = mp.Queue(maxsize=1)
-        process = mp.Process(target=_execute_python_snippet, args=(code, queue))
-        process.start()
-        process.join(timeout=self.timeout_seconds)
+        if self.use_sandbox:
+            executor = self._get_executor()
+            payload = executor.run(code)
+        else:
+            queue: mp.Queue = mp.Queue(maxsize=1)
+            process = mp.Process(target=_execute_python_snippet, args=(code, queue))
+            process.start()
+            process.join(timeout=self.timeout_seconds)
 
-        if process.is_alive():
-            process.terminate()
-            process.join()
-            return ToolResult.failure(
-                tool_name=self.name,
-                code="E_TIMEOUT",
-                message=f"Python execution timed out after {self.timeout_seconds}s",
-                duration_ms=int((time.monotonic() - started) * 1000),
-                retryable=True,
-            )
+            if process.is_alive():
+                process.terminate()
+                process.join()
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_TIMEOUT",
+                    message=f"Python execution timed out after {self.timeout_seconds}s",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    retryable=True,
+                )
 
-        payload: dict[str, Any] = {
-            "ok": False,
-            "error": "No output from Python process",
-        }
-        try:
-            payload = queue.get_nowait()
-        except Exception:
-            payload = {"ok": False, "error": "No output from Python process"}
+            payload: dict[str, Any] = {"ok": False, "error": "No output from Python process"}
+            try:
+                payload = queue.get_nowait()
+            except Exception:
+                payload = {"ok": False, "error": "No output from Python process"}
 
         if not payload.get("ok"):
             return ToolResult.failure(
