@@ -29,6 +29,7 @@ from api import (
     files,
     scheduler_api,
     sessions,
+    setup,
     traces,
     tokens,
     usage,
@@ -199,7 +200,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
-    _EXEMPT_PATHS = {"/api/v1/health", "/api/v1/ready"}
+    _EXEMPT_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/setup/status", "/api/v1/setup/configure"}
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         path = request.url.path
@@ -323,6 +324,7 @@ async def lifespan(_: FastAPI):
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
     audit.set_agent_manager(agent_manager)
+    setup.set_base_dir(BASE_DIR)
 
     default_runtime.memory_indexer.rebuild_index(
         settings=default_runtime.runtime_config.retrieval.memory
@@ -458,6 +460,7 @@ app.include_router(usage.router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(traces.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
+app.include_router(setup.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 
 
