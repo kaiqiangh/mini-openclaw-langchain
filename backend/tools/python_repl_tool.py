@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import multiprocessing as mp
+import resource
 import time
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -11,20 +12,93 @@ from .base import ToolContext
 from .contracts import ToolResult
 from .policy import PermissionLevel
 
+_ESCAPE_PATTERNS = (
+    "__class__",
+    "__bases__",
+    "__subclasses__",
+    "__mro__",
+    "__import__",
+    "__builtins__",
+    "getattr(",
+    "setattr(",
+    "delattr(",
+    "globals()",
+    "locals()",
+    "vars()",
+    "dir()",
+    "open(",
+    "compile(",
+    "eval(",
+    "exec(",
+)
+
+
+def _contains_escape_attempt(code: str) -> bool:
+    lowered = code.lower()
+    return any(pattern in lowered for pattern in _ESCAPE_PATTERNS)
+
+
+def _set_resource_limits(timeout_seconds: int) -> None:
+    try:
+        resource.setrlimit(resource.RLIMIT_CPU, (timeout_seconds, timeout_seconds))
+    except (ValueError, resource.error):
+        pass
+    try:
+        mem_limit = 256 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
+    except (ValueError, resource.error):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
+    except (ValueError, resource.error):
+        pass
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ValueError, resource.error):
+        pass
+
 
 def _execute_python_snippet(code: str, queue: mp.Queue) -> None:
+    if _contains_escape_attempt(code):
+        queue.put({"ok": False, "error": "Code contains disallowed patterns (introspection/escape)"})
+        return
+
+    try:
+        _set_resource_limits(30)
+    except Exception:
+        pass
+
     safe_globals = {
         "__builtins__": {
             "abs": abs,
             "all": all,
             "any": any,
+            "bool": bool,
+            "dict": dict,
+            "enumerate": enumerate,
+            "filter": filter,
+            "float": float,
+            "format": format,
+            "frozenset": frozenset,
+            "int": int,
+            "isinstance": isinstance,
+            "issubclass": issubclass,
             "len": len,
-            "min": min,
+            "list": list,
+            "map": map,
             "max": max,
-            "sum": sum,
-            "sorted": sorted,
-            "range": range,
+            "min": min,
             "print": print,
+            "range": range,
+            "reversed": reversed,
+            "round": round,
+            "set": set,
+            "sorted": sorted,
+            "str": str,
+            "sum": sum,
+            "tuple": tuple,
+            "type": type,
+            "zip": zip,
         }
     }
     safe_locals: dict[str, Any] = {}
