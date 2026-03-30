@@ -230,3 +230,4 @@ backend/workspaces/*
 # Keep application source libs tracked.
 !frontend/src/lib/
 !frontend/src/lib/**
+.env.local
