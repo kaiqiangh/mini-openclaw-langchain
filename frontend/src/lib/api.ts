@@ -884,6 +884,30 @@ export type ApprovalResolveResult = {
 
 export type ApprovalAction = "approve" | "deny";
 
+// ---- Setup types & API ----
+
+export type SetupStatus = {
+  needs_setup: boolean;
+  admin_token_configured: boolean;
+  llm_configured: boolean;
+  default_agent_exists: boolean;
+};
+
+export type ConfigureRequest = {
+  admin_token: string;
+  llm_provider: "deepseek" | "openai";
+  llm_api_key: string;
+  llm_base_url?: string;
+  llm_model?: string;
+};
+
+export type ConfigureResponse = {
+  configured: boolean;
+  admin_token_configured: boolean;
+  llm_provider: string;
+  message: string;
+};
+
 export async function listApprovals(
   agentId = "default",
 ): Promise<ApprovalRequest[]> {
@@ -904,6 +928,27 @@ export async function resolveApproval(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(decision),
+    },
+  );
+  return payload.data;
+}
+
+export async function getSetupStatus(): Promise<SetupStatus> {
+  const payload = await requestJson<{ data: SetupStatus }>(
+    `${API_BASE}/api/v1/setup/status`,
+  );
+  return payload.data;
+}
+
+export async function configureSystem(
+  req: ConfigureRequest,
+): Promise<ConfigureResponse> {
+  const payload = await requestJson<{ data: ConfigureResponse }>(
+    `${API_BASE}/api/v1/setup/configure`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
     },
   );
   return payload.data;
