@@ -1,4 +1,5 @@
 import { UsageRecord } from "@/lib/api";
+import { API_BASE } from "@/lib/api";
 
 export type RunWindow = "1h" | "4h" | "12h" | "24h" | "7d" | "30d";
 export type RunTriggerFilter = "all" | "chat" | "cron" | "heartbeat";
@@ -381,4 +382,73 @@ export function formatRunMetric(
     return "—";
   }
   return String(value);
+}
+
+// ── Run Comparison & Replay History ───────────────────────────────────
+
+export type RunDiffHunk = {
+  header: string;
+  lines: string[];
+};
+
+export type RunCompareData = {
+  run_a: {
+    run_id: string;
+    session_id: string;
+    output: string;
+    tool_calls: Array<Record<string, unknown>>;
+  };
+  run_b: {
+    run_id: string;
+    session_id: string;
+    output: string;
+    tool_calls: Array<Record<string, unknown>>;
+  };
+  diff: {
+    hunks: RunDiffHunk[];
+    total_additions: number;
+    total_deletions: number;
+  };
+};
+
+export type ReplayEntry = {
+  session_id: string;
+  original_run_id: string;
+  title: string;
+  created_at: number;
+  updated_at: number;
+};
+
+async function fetchCompareJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { credentials: "include" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed (${response.status})`);
+  }
+  return (await response.json()) as T;
+}
+
+function agentBase(agentId = "default"): string {
+  return `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}`;
+}
+
+export async function compareRuns(
+  runA: string,
+  runB: string,
+  agentId = "default",
+): Promise<RunCompareData> {
+  const payload = await fetchCompareJson<{ data: RunCompareData }>(
+    `${agentBase(agentId)}/runs/compare?run_a=${encodeURIComponent(runA)}&run_b=${encodeURIComponent(runB)}`,
+  );
+  return payload.data;
+}
+
+export async function listReplays(
+  agentId = "default",
+  limit = 50,
+): Promise<ReplayEntry[]> {
+  const payload = await fetchCompareJson<{ data: { replays: ReplayEntry[] } }>(
+    `${agentBase(agentId)}/runs/replays?limit=${limit}`,
+  );
+  return payload.data.replays;
 }
