@@ -119,6 +119,22 @@ class AuditStore:
             },
         )
 
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """Look up a run by ID from runs.jsonl."""
+        if not self.runs_file.exists():
+            return None
+        for line in reversed(self.runs_file.read_text(encoding="utf-8").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("run_id") == run_id:
+                return data
+        return None
+
     def ensure_schema_descriptor(self) -> None:
         descriptor = {
             "version": 1,

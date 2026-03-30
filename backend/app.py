@@ -27,6 +27,7 @@ from api import (
     compress,
     config_api,
     files,
+    replay,
     scheduler_api,
     sessions,
     setup,
@@ -325,6 +326,7 @@ async def lifespan(_: FastAPI):
     traces.set_agent_manager(agent_manager)
     audit.set_agent_manager(agent_manager)
     setup.set_base_dir(BASE_DIR)
+    replay.set_agent_manager(agent_manager)
 
     default_runtime.memory_indexer.rebuild_index(
         settings=default_runtime.runtime_config.retrieval.memory
@@ -461,6 +463,7 @@ app.include_router(agents.router, prefix="/api/v1")
 app.include_router(traces.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(setup.router, prefix="/api/v1")
+app.include_router(replay.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 
 
