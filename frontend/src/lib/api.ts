@@ -865,6 +865,50 @@ export async function setTracingConfig(
   return payload.data;
 }
 
+// ---- Approval types & API ----
+
+export type ApprovalRequest = {
+  request_id: string;
+  tool_name: string;
+  tool_args: Record<string, unknown>;
+  session_id: string;
+  run_id: string;
+  trigger_type: string;
+  created_at: number;
+};
+
+export type ApprovalResolveResult = {
+  request_id: string;
+  status: string;
+};
+
+export type ApprovalAction = "approve" | "deny";
+
+export async function listApprovals(
+  agentId = "default",
+): Promise<ApprovalRequest[]> {
+  const payload = await requestJson<{ data: ApprovalRequest[] }>(
+    `${agentBase(agentId)}/approvals`,
+  );
+  return payload.data;
+}
+
+export async function resolveApproval(
+  agentId: string,
+  requestId: string,
+  decision: { action: ApprovalAction; reason?: string },
+): Promise<ApprovalResolveResult> {
+  const payload = await requestJson<{ data: ApprovalResolveResult }>(
+    `${agentBase(agentId)}/approvals/${encodeURIComponent(requestId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(decision),
+    },
+  );
+  return payload.data;
+}
+
 export async function listCronJobs(agentId = "default"): Promise<CronJob[]> {
   const payload = await requestJson<{ data: { jobs: CronJob[] } }>(
     `${agentBase(agentId)}/scheduler/cron/jobs`,

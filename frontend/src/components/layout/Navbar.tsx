@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/", label: "Agents", exact: true },
   { href: "/sessions", label: "Sessions", exact: false },
   { href: "/runs", label: "Runs", exact: false },
+  { href: "/approval", label: "Approvals", exact: false },
   { href: "/traces", label: "Trace Explorer", exact: false },
   { href: "/scheduler", label: "Scheduler", exact: false },
   { href: "/usage", label: "Usage", exact: false },
