@@ -280,7 +280,11 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
         runtime = agent.get_runtime(agent_id)
-        runtime.session_manager.load_session(request.session_id)
+        runtime.session_manager.load_existing_session(request.session_id)
+    except FileNotFoundError as exc:
+        raise ApiError(
+            status_code=404, code="not_found", message=str(exc)
+        ) from exc
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
