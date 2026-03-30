@@ -68,7 +68,7 @@ class FetchUrlTool:
         try:
             infos = socket.getaddrinfo(lowered, None, type=socket.SOCK_STREAM)
         except OSError:
-            return False
+            return True  # Fail-closed: DNS failure blocks the host
         for info in infos:
             sockaddr = info[4]
             if not isinstance(sockaddr, tuple) or not sockaddr:

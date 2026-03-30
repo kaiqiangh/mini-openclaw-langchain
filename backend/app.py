@@ -345,7 +345,13 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Request-Id",
+        "X-Admin-Token",
+        "Accept",
+    ],
 )
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(AdminAuthMiddleware)
@@ -466,7 +472,7 @@ if _env_bool("APP_ENABLE_FRONTEND_PROXY", default=False):
                 httponly=True,
                 samesite="lax",
                 secure=request.url.scheme == "https",
-                path="/",
+                path="/api/v1",
                 max_age=60 * 60 * 12,
             )
         return response
