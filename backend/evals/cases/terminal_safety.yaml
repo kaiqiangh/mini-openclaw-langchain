@@ -1,0 +1,84 @@
+cases:
+  # Terminal blocked by default in chat (no explicit enable)
+  - name: "terminal blocked by default in chat"
+    tool: terminal
+    args: { command: "echo hello" }
+    trigger_type: chat
+    expect: blocked
+    reason_contains: "explicit enable"
+
+  # Terminal blocked in cron (L3 > L0)
+  - name: "terminal blocked in cron"
+    tool: terminal
+    args: { command: "echo hello" }
+    trigger_type: cron
+    expect: blocked
+
+  # Terminal blocked in heartbeat (L3 > L0)
+  - name: "terminal blocked in heartbeat"
+    tool: terminal
+    args: { command: "echo hello" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  # Terminal explicitly blocked
+  - name: "terminal explicitly blocked overrides enable"
+    tool: terminal
+    args: { command: "echo hello" }
+    trigger_type: chat
+    explicit_enabled: ["terminal"]
+    explicit_blocked: ["terminal"]
+    expect: blocked
+    reason_contains: "explicitly blocked"
+
+  # python_repl blocked by default in chat (L1 <= L2 is allowed)
+  # Actually python_repl is L1 which is <= L2, so it IS allowed in chat
+  - name: "python_repl allowed in chat"
+    tool: python_repl
+    args: { code: "print(1)" }
+    trigger_type: chat
+    expect: allowed
+
+  # web_search allowed in chat (L2 <= L2)
+  - name: "web_search allowed in chat"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: chat
+    expect: allowed
+
+  # web_search blocked in heartbeat (L2 > L0)
+  - name: "web_search blocked in heartbeat"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  # web_search blocked in cron without explicit
+  - name: "web_search blocked in cron without explicit"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: cron
+    expect: blocked
+
+  # read_files allowed in chat (L0 <= L2)
+  - name: "read_files allowed in chat"
+    tool: read_files
+    args: { path: "workspace/AGENTS.md" }
+    trigger_type: chat
+    expect: allowed
+
+  # fetch_url allowed in chat (L2 <= L2)
+  - name: "fetch_url allowed in chat"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: chat
+    expect: allowed
+
+  # Blocked tool always denied
+  - name: "blocked tool denied in chat"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: chat
+    explicit_blocked: ["web_search"]
+    expect: blocked
+    reason_contains: "explicitly blocked"

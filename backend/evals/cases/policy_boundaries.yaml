@@ -1,0 +1,69 @@
+cases:
+  - name: "web_search allowed in chat"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: chat
+    expect: allowed
+
+  - name: "web_search blocked in heartbeat"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  - name: "web_search allowed in cron with explicit"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: cron
+    explicit_enabled: ["web_search"]
+    expect: allowed
+
+  - name: "read_files allowed in chat"
+    tool: read_files
+    args: { path: "workspace/AGENTS.md" }
+    trigger_type: chat
+    expect: allowed
+
+  - name: "read_files blocked in cron without explicit"
+    tool: read_files
+    args: { path: "workspace/AGENTS.md" }
+    trigger_type: cron
+    expect: blocked
+
+  - name: "python_repl allowed in chat (L1 <= L2)"
+    tool: python_repl
+    args: { code: "print(1)" }
+    trigger_type: chat
+    expect: allowed
+
+  - name: "python_repl blocked in heartbeat"
+    tool: python_repl
+    args: { code: "print(1)" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  - name: "blocked tool always denied"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: chat
+    explicit_blocked: ["web_search"]
+    expect: blocked
+    reason_contains: "explicitly blocked"
+
+  - name: "fetch_url allowed in chat"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: chat
+    expect: allowed
+
+  - name: "fetch_url blocked in heartbeat"
+    tool: fetch_url
+    args: { url: "https://example.com" }
+    trigger_type: heartbeat
+    expect: blocked
+
+  - name: "unknown trigger defaults to L0"
+    tool: web_search
+    args: { query: "test" }
+    trigger_type: "unknown_trigger"
+    expect: blocked
