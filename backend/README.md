@@ -332,6 +332,23 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET /api/v1/agents/{agent_id}/traces/events/{event_id}`
   Returns one normalized persisted trace event from `audit.steps` or `runs.events`.
 
+### Approval Workflow
+
+- `GET /api/v1/agents/{agent_id}/approvals` — list pending approval requests
+- `POST /api/v1/agents/{agent_id}/approvals/{request_id}` — approve or deny (body: `{ action: "approve"|"deny", reason?: string }`)
+
+### Run Comparison & Replay
+
+- `GET /api/v1/agents/{agent_id}/runs/{run_id}` — run details + tool calls
+- `POST /api/v1/agents/{agent_id}/runs/{run_id}/replay` — re-execute a past run in isolated session
+- `GET /api/v1/agents/{agent_id}/runs/compare?run_a=...&run_b=...` — side-by-side diff of two run outputs
+- `GET /api/v1/agents/{agent_id}/runs/replays` — list replay sessions
+
+### Setup (Auth-Exempt)
+
+- `GET /api/v1/setup/status` — check if system needs initial configuration
+- `POST /api/v1/setup/configure` — write admin token + LLM provider config
+
 ### Scheduler
 
 - `GET|POST /api/v1/agents/{agent_id}/scheduler/cron/jobs`
@@ -384,6 +401,55 @@ Known limitations:
 
 - Sandbox guarantees are host-local and depend on available OS sandbox backend.
 - In `hybrid_auto` mode without a compatible backend, terminal execution is denied unless explicitly set to `unsafe_none`.
+
+## Tool Safety Eval Harness
+
+Adversarial test cases defined in YAML under `evals/cases/`:
+
+- `terminal_safety.yaml` — 11 cases: rm, sudo, shell syntax, network commands, trigger gating
+- `policy_boundaries.yaml` — 11 cases: permission level boundaries across triggers
+- `network_safety.yaml` — 32 SSRF cases: private IPs, IPv6, .local, scheme validation, encoding tricks
+
+Run all evals:
+
+```bash
+python -m evals.runner
+```
+
+Output: JSON report with pass/fail per case and overall safety score.
+
+The runner supports `assert_type` field for tool-level testing:
+- `ssrf_block` / `ssrf_pass` — directly tests `FetchUrlTool._validate_url()` without network calls
+- Default (no `assert_type`) — policy engine check
+
+## Docker REPL Sandbox
+
+Isolated Python execution via Docker containers. Configure with `REPL_SANDBOX_MODE`:
+
+| Mode        | Behavior                                                     |
+| ----------- | ------------------------------------------------------------ |
+| `in_process`| Default. Multiprocessing with resource limits.               |
+| `docker`    | Always use Docker container isolation.                        |
+| `auto`      | Use Docker if available, fall back to in-process.             |
+
+Docker flags: `--memory=256m --cpus=1 --network=none --read-only --cap-drop ALL`
+
+Build the sandbox image:
+
+```bash
+bash sandbox/build.sh
+```
+
+## Async I/O Utilities
+
+`utils/async_io.py` provides aiofiles-based async file operations:
+
+- `read_jsonl(path)` / `read_jsonl_reversed(path)` — async JSONL reading
+- `append_jsonl(path, record)` — async JSONL append
+- `atomic_write(path, content)` — crash-safe file write
+- `file_exists(path)` / `read_text(path)` — async file helpers
+
+These utilities are the foundation for future async migration of `SessionManager`, `AuditStore`, and `ApprovalStore`.
 
 ## Retrieval Notes
 

@@ -9,6 +9,9 @@ Next.js App Router frontend for Mini-OpenClaw.
 | `/`          | Agents console and config workspace: agent switching, tool controls, RAG/tracing toggles, and inspector editing.                |
 | `/sessions`  | Sessions hub and live chat home for opening active threads, reviewing archived transcripts, and resuming work in the workspace. |
 | `/runs`      | Unified run ledger across chat usage, cron jobs, and heartbeat executions, with scheduler token/cost enrichment and links back to sessions and traces. |
+| `/runs/compare` | Side-by-side diff comparison of two run outputs with unified diff view and tool call lists.                                 |
+| `/approval`  | Pending high-risk tool approval queue with approve/deny actions and auto-refresh.                                               |
+| `/setup`     | 3-step first-time setup wizard (admin token → LLM provider → verify). Auto-redirects if already configured.                    |
 | `/traces`    | Trace explorer route for persisted run/audit events, with typed trace event list/detail API integration in the frontend client. |
 | `/usage`     | Usage analytics, trend chart, CSV export.                                                                                       |
 | `/scheduler` | Cron + heartbeat control plane, observability aggregates, and run history.                                                      |
@@ -109,10 +112,17 @@ The UI accumulates assistant tokens incrementally while preserving run debug tra
 
 - agent/sessions/chat/files/tokens/usage/compress
 - config: rag mode + runtime config + runtime diff
-- traces: trace event list/detail (`/api/v1/agents/{agent_id}/traces/events`, `/api/v1/agents/{agent_id}/traces/events/{event_id}`)
+- traces: trace event list/detail
 - scheduler: cron jobs, runs/failures, heartbeat config/runs + metrics/timeseries
 - agent management: bulk delete/export/runtime patch and template discovery
-- auth bootstrap: `POST /api/auth/session` for local browser cookie bootstrap during frontend-only development
+- **approval**: `listApprovals()` / `resolveApproval()` for high-risk tool approval queue
+- **setup**: `getSetupStatus()` / `configureSystem()` for first-time wizard
+- auth bootstrap: `POST /api/auth/session` for local browser cookie bootstrap
+
+`src/lib/runs.ts` includes:
+
+- `compareRuns(runA, runB)` — fetch side-by-side diff
+- `listReplays()` — list replay sessions
 
 All agent-scoped calls append `agent_id`, and all API calls target `/api/v1/*`.
 Browser auth is cookie-based:
