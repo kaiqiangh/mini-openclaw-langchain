@@ -197,5 +197,16 @@
     "retry_base_seconds": 30,
     "retry_max_seconds": 3600,
     "failure_retention": 200
+  },
+  "delegation": {
+    "enabled": true,
+    "max_per_session": 5,
+    "default_timeout_seconds": 120,
+    "max_timeout_seconds": 600,
+    "allowed_tool_scopes": {
+      "researcher": ["web_search", "fetch_url", "read_files", "search_knowledge_base"],
+      "analyst": ["read_files", "read_pdf", "search_knowledge_base", "terminal"],
+      "writer": ["read_files", "search_knowledge_base", "apply_patch"]
+    }
   }
 }
