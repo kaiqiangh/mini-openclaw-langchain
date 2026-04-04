@@ -11,11 +11,6 @@ from pydantic import BaseModel, Field
 from tools.base import ToolContext
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
 from tools.delegate_registry import DelegateRegistry
-from tools.delegate_config import (
-    ALL_KNOWN_TOOLS,
-    DELEGATE_DEFAULTS,
-)
-from tools.delegate_registry import DelegateRegistry
 from tools.policy import PermissionLevel
 
 # Hard limit for task description length (chars)

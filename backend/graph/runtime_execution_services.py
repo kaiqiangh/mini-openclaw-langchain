@@ -14,7 +14,6 @@ from graph.prompt_builder import PromptBuilder
 from graph.runtime_types import ToolCapableChatModel
 from graph.usage_orchestrator import UsageOrchestrator
 from tools.delegate_registry import DelegateRegistry
-from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from llm_routing import (
     ResolvedLlmCandidate,
     ResolvedLlmRoute,
