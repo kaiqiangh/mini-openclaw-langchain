@@ -218,6 +218,7 @@ archive/
 # Node.js runtime artifacts
 node_modules/
 frontend/.next/
+frontend/tsconfig.tsbuildinfo
 frontend/out/
 frontend/coverage/
 
@@ -231,3 +232,6 @@ backend/workspaces/*
 !frontend/src/lib/
 !frontend/src/lib/**
 .env.local
+
+.superpowers
+.worktrees
