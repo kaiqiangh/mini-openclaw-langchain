@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { compareRuns, type RunCompareData, type RunDiffHunk } from "@/lib/runs";
 
@@ -68,6 +68,14 @@ function OutputPanel({
 }
 
 export default function ComparePage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-[60vh] items-center justify-center text-sm text-[var(--muted)]">Loading…</div>}>
+      <ComparePageInner />
+    </Suspense>
+  );
+}
+
+function ComparePageInner() {
   const searchParams = useSearchParams();
   const runA = searchParams.get("run_a") ?? "";
   const runB = searchParams.get("run_b") ?? "";

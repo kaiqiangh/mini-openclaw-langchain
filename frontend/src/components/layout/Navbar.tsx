@@ -1,6 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
+function useIsClaudeTheme() {
+  const [isClaude, setIsClaude] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const checkTheme = () =>
+      document.body.getAttribute("data-theme") === "claude";
+    setIsClaude(checkTheme());
+    const observer = new MutationObserver(checkTheme);
+    observer.observe(document.body, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return isClaude;
+}
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -32,14 +46,14 @@ function isActivePath(
 }
 
 function navLinkClass(active: boolean) {
-  return `rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors duration-200 sm:text-sm ${
-    active
-      ? "border-[var(--accent-strong)] bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-      : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
-  }`;
+  if (active) {
+    return 'inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-medium transition-colors duration-200 sm:text-sm';
+  }
+  return 'inline-flex items-center px-2 py-1.5 text-sm transition-colors duration-200 no-underline';
 }
 
 export function Navbar() {
+  const isClaude = useIsClaudeTheme();
   const {
     ragEnabled,
     toggleRag,
@@ -114,8 +128,47 @@ export function Navbar() {
       <div className="flex flex-col gap-3 px-3 py-3 sm:px-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:gap-3">
-            <div className="min-w-0 text-sm font-semibold tracking-[0.05em] text-[var(--text)]">
-              mini OpenClaw
+            <div className="flex min-w-0 items-center gap-2">
+              {isClaude ? (
+                <svg
+                  width="32"
+                  height="32"
+                  viewBox="0 0 64 64"
+                  className="flex-shrink-0"
+                  aria-label="mini OpenClaw logo"
+                >
+                  <rect width="64" height="64" rx="14" fill="var(--accent, #c96442)" />
+                  <path
+                    d="M18 18 Q30 32 18 46"
+                    fill="none"
+                    stroke="var(--surface-1, #faf9f5)"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M28 14 Q40 32 28 50"
+                    fill="none"
+                    stroke="var(--surface-1, #faf9f5)"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M38 18 Q48 32 38 46"
+                    fill="none"
+                    stroke="var(--surface-1, #faf9f5)"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              ) : null}
+              <span
+                className="min-w-0 text-sm sm:text-base"
+                style={isClaude
+                  ? { fontFamily: 'Georgia, serif', letterSpacing: '-0.005em', fontWeight: 500 }
+                  : {}}
+              >
+                mini OpenClaw
+              </span>
             </div>
             <Badge
               tone="neutral"
@@ -243,6 +296,17 @@ export function Navbar() {
                 href={href}
                 className={navLinkClass(active)}
                 aria-current={active ? "page" : undefined}
+                style={
+                  active
+                    ? {
+                        borderColor: "var(--accent-strong)",
+                        backgroundColor: "var(--accent-soft)",
+                        color: "var(--accent-strong)",
+                      }
+                    : {
+                        color: "var(--muted)",
+                      }
+                }
               >
                 {item.label}
               </Link>

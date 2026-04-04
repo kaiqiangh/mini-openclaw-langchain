@@ -1488,7 +1488,7 @@ export default function SchedulerPage() {
         </div>
         {selectedJob ? (
           <div
-            className="fixed inset-0 z-50 bg-[rgba(2,6,23,0.36)] backdrop-blur-[1px]"
+            className="fixed inset-0 z-50 bg-[var(--overlay)] backdrop-blur-[1px]"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) {
                 setSelectedJob(null);
@@ -1625,7 +1625,7 @@ export default function SchedulerPage() {
         ) : null}
         {editorOpen ? (
           <div
-            className="fixed inset-0 z-50 bg-[rgba(2,6,23,0.42)] backdrop-blur-[2px]"
+            className="fixed inset-0 z-50 bg-[var(--overlay-strong)] backdrop-blur-[2px]"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) {
                 closeJobEditor();
