@@ -153,7 +153,7 @@ def build_delegate_tool(
                 ensure_ascii=False,
             )
         if len(task) > 4000:
-            task = task[:4000]
+            return json.dumps({"error": "task exceeds maximum length of 4000 characters"}, ensure_ascii=False)
         if "delegate" in allowed_tools:
             return json.dumps(
                 {

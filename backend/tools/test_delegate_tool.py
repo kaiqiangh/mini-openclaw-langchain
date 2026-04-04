@@ -55,3 +55,13 @@ def test_launches_successfully(tmp_path: Path):
     assert "delegate_id" in data
     assert "session_id" in data
     assert registry.get_status(data["delegate_id"]).status == "running"
+
+
+def test_rejects_task_too_long(tmp_path: Path):
+    registry = DelegateRegistry(base_dir=tmp_path)
+    am = MagicMock()
+    tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
+    long_task = "x" * 4001
+    result = tool.func(task=long_task, role="researcher", allowed_tools=["web_search"])
+    data = json.loads(result)
+    assert "error" in data
