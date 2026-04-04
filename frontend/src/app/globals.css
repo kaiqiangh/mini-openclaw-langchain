@@ -151,7 +151,7 @@ body[data-theme="claude"] {
   --danger: #b53333;
   --danger-soft: rgba(181, 51, 51, 0.14);
 
-  --focus-ring: 0 0 0 2px var(--surface-3), 0 0 0 4px rgba(56, 152, 236, 0.44);
+  --focus-ring: 0 0 0 2px var(--surface-3), 0 0 0 4px rgba(201, 100, 66, 0.4);
   --pixel-overlay: none;
 
   --radius-1: 4px;
@@ -245,11 +245,6 @@ body[data-theme="claude"] .ui-badge {
 
 body[data-theme="claude"] .ui-badge::before {
   border-radius: 999px;
-}
-
-body[data-theme="claude"] .ui-tab.active {
-  background: var(--accent);
-  background-image: none;
 }
 
 body[data-theme="claude"] .ui-tabs {
