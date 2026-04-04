@@ -28,12 +28,14 @@ import {
   getRagMode,
   getSessionHistory,
   getSessions,
+  listDelegates,
   readWorkspaceFile,
   restoreSession,
   saveWorkspaceFile,
   SessionMeta,
   setRagMode,
   streamChat,
+  type DelegateSummary,
 } from "@/lib/api";
 
 export type ChatToolCall = {
@@ -88,6 +90,8 @@ type AppState = {
   fileDirty: boolean;
   error: string | null;
   maxStepsPrompt: MaxStepsPromptState | null;
+  delegates: DelegateSummary[];
+  setDelegates: (delegates: DelegateSummary[]) => void;
   reloadAgents: () => Promise<void>;
   setCurrentAgent: (agentId: string) => Promise<void>;
   createAgentById: (agentId: string) => Promise<void>;
@@ -272,6 +276,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [maxStepsPrompt, setMaxStepsPrompt] =
     useState<MaxStepsPromptState | null>(null);
+  const [delegates, setDelegatesState] = useState<DelegateSummary[]>([]);
   const agentSwitchEpochRef = useRef(0);
   const streamEpochRef = useRef(0);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -1051,6 +1056,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!hasStreaming) {
           void refreshSessions("active", currentAgentId);
         }
+
+        // Poll for delegate sub-agents
+        try {
+          const d = await listDelegates(currentAgentId, currentSessionId);
+          if (!cancelled && d.delegates.length > 0) {
+            setDelegatesState(d.delegates);
+          }
+        } catch {
+          // Best-effort — ignore delegate polling errors
+        }
       } catch {
         // Keep background polling best-effort only.
       }
@@ -1161,6 +1176,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fileDirty,
       error,
       maxStepsPrompt,
+      delegates,
+      setDelegates: setDelegatesState,
       reloadAgents,
       setCurrentAgent,
       createAgentById,
@@ -1198,6 +1215,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fileDirty,
       error,
       maxStepsPrompt,
+      delegates,
+      setDelegatesState,
       reloadAgents,
       setCurrentAgent,
       createAgentById,

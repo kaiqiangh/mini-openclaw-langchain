@@ -1100,6 +1100,46 @@ export async function getSchedulerMetricsTimeseries(
   return payload.data;
 }
 
+// ---- Delegate sub-agent API ----
+
+export interface DelegateSummary {
+  delegate_id: string;
+  role: string;
+  task: string;
+  status: "running" | "completed" | "failed" | "timeout";
+  sub_session_id: string;
+  created_at: number;
+}
+
+export interface DelegateDetail extends DelegateSummary {
+  agent_id: string;
+  parent_session_id: string;
+  allowed_tools: string[];
+  result_summary?: string;
+  steps_completed?: number;
+  tools_used?: string[];
+  duration_ms?: number;
+  token_usage?: Record<string, number>;
+  error_message?: string;
+  result_file?: string;
+}
+
+export async function listDelegates(agentId: string, sessionId: string): Promise<{ delegates: DelegateSummary[] }> {
+  const resp = await fetchWithAdminSession(
+    `${API_BASE}/api/v1/agents/${agentId}/sessions/${sessionId}/delegates`,
+  );
+  if (!resp.ok) throw new Error(`GET delegates: ${resp.status}`);
+  return resp.json();
+}
+
+export async function getDelegateDetail(agentId: string, sessionId: string, delegateId: string): Promise<DelegateDetail> {
+  const resp = await fetchWithAdminSession(
+    `${API_BASE}/api/v1/agents/${agentId}/sessions/${sessionId}/delegates/${delegateId}`,
+  );
+  if (!resp.ok) throw new Error(`GET delegate detail: ${resp.status}`);
+  return resp.json();
+}
+
 export async function streamChat(
   message: string,
   sessionId: string,

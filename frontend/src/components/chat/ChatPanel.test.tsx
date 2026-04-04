@@ -19,6 +19,14 @@ const mockStore = vi.hoisted(() => ({
   isStreaming: false,
   sessionsScope: "active" as "active" | "archived",
   maxStepsPrompt: null,
+  delegates: [] as Array<{
+    delegate_id: string;
+    role: string;
+    task: string;
+    status: "running" | "completed" | "failed" | "timeout";
+    sub_session_id: string;
+    created_at: number;
+  }>,
   continueAfterMaxSteps: vi.fn(async () => undefined),
   cancelAfterMaxSteps: vi.fn(async () => undefined),
 }));
@@ -74,6 +82,7 @@ describe("ChatPanel", () => {
     mockStore.isStreaming = false;
     mockStore.sessionsScope = "active";
     mockStore.maxStepsPrompt = null;
+    mockStore.delegates = [];
   });
 
   it("keeps the reader position when they are away from the live edge", () => {

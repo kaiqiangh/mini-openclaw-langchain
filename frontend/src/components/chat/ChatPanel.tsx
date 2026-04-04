@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAppStore } from "@/lib/store";
 import { Badge, Button, EmptyState } from "@/components/ui/primitives";
 import { activityTone } from "@/lib/badge-tones";
+import { DelegateBadge } from "@/components/delegates/DelegateBadge";
 
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
@@ -20,6 +21,7 @@ export function ChatPanel() {
     isStreaming,
     sessionsScope,
     maxStepsPrompt,
+    delegates,
     continueAfterMaxSteps,
     cancelAfterMaxSteps,
   } = useAppStore();
@@ -120,6 +122,28 @@ export function ChatPanel() {
             renderedMessages
           )}
         </div>
+
+        {delegates.length > 0 && (
+          <div className="border-t border-[var(--border)] px-3 py-2">
+            <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+              Delegated Tasks
+            </div>
+            <div className="flex flex-col gap-1">
+              {delegates.map((d) => (
+                <div
+                  key={d.delegate_id}
+                  className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-2 py-1.5"
+                >
+                  <DelegateBadge status={d.status} role={d.role} />
+                  <span className="truncate text-xs text-[var(--muted-soft)]">{d.task}</span>
+                  {d.status === "running" && (
+                    <span className="ml-auto animate-pulse text-[var(--accent)] text-xs">●</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="px-4 pb-4">
           {!atLiveEdge && messages.length > 0 ? (
