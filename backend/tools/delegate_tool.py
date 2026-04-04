@@ -11,7 +11,15 @@ from pydantic import BaseModel, Field
 from tools.base import ToolContext
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
 from tools.delegate_registry import DelegateRegistry
+from tools.delegate_config import (
+    ALL_KNOWN_TOOLS,
+    DELEGATE_DEFAULTS,
+)
+from tools.delegate_registry import DelegateRegistry
 from tools.policy import PermissionLevel
+
+# Hard limit for task description length (chars)
+_DELEGATE_MAX_TASK_CHARS = 4000
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +100,13 @@ def build_delegate_tool(
                 agent_id=agent_manager.default_agent_id,
                 graph_name="default",
             )
-            result = await graph_runtime.invoke(request)
+
+            if timeout_seconds is not None:
+                result = await asyncio.wait_for(
+                    graph_runtime.invoke(request), timeout=float(timeout_seconds),
+                )
+            else:
+                result = await graph_runtime.invoke(request)
 
             # Extract results
             messages = getattr(result, "messages", [])
@@ -124,6 +138,7 @@ def build_delegate_tool(
 
         except asyncio.TimeoutError:
             registry.mark_timeout(delegate_id)
+            return
         except Exception as exc:
             logger.exception(f"Sub-agent {delegate_id} failed")
             registry.mark_failed(delegate_id, str(exc))
@@ -152,8 +167,11 @@ def build_delegate_tool(
                 {"error": "allowed_tools is required and must be non-empty"},
                 ensure_ascii=False,
             )
-        if len(task) > 4000:
-            return json.dumps({"error": "task exceeds maximum length of 4000 characters"}, ensure_ascii=False)
+        if len(task) > _DELEGATE_MAX_TASK_CHARS:
+            return json.dumps(
+                {"error": f"task exceeds maximum length of {_DELEGATE_MAX_TASK_CHARS} characters"},
+                ensure_ascii=False,
+            )
         if "delegate" in allowed_tools:
             return json.dumps(
                 {
