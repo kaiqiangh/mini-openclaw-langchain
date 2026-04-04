@@ -122,6 +122,185 @@ body[data-pixel-texture="off"] {
   --pixel-overlay: none;
 }
 
+/* ── Claude / Anthropic warm editorial theme ── */
+
+body[data-theme="claude"] {
+  --bg: #f5f4ed;
+  --bg-alt: #e8e6dc;
+  --surface-1: rgba(250, 249, 245, 0.96);
+  --surface-2: rgba(250, 249, 245, 0.98);
+  --surface-3: #faf9f5;
+  --surface-header: #faf9f5;
+
+  --text: #141413;
+  --muted: #5e5d59;
+  --muted-soft: #87867f;
+
+  --border: #f0eee6;
+  --border-strong: #e8e6dc;
+
+  --accent: #c96442;
+  --accent-strong: #b5553a;
+  --accent-soft: rgba(201, 100, 66, 0.13);
+  --accent-link: #d97757;
+
+  --success: #5b8a3c;
+  --success-soft: rgba(91, 138, 60, 0.14);
+  --warn: #a65a09;
+  --warn-soft: rgba(166, 90, 9, 0.16);
+  --danger: #b53333;
+  --danger-soft: rgba(181, 51, 51, 0.14);
+
+  --focus-ring: 0 0 0 2px var(--surface-3), 0 0 0 4px rgba(56, 152, 236, 0.44);
+  --pixel-overlay: none;
+
+  --radius-1: 4px;
+  --radius-2: 8px;
+  --radius-3: 12px;
+  --radius-4: 16px;
+
+  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+body[data-theme="claude"] {
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  body[data-theme="claude"] {
+    --bg: #141413;
+    --bg-alt: #1e1e1d;
+    --surface-1: rgba(48, 48, 46, 0.86);
+    --surface-2: rgba(48, 48, 46, 0.95);
+    --surface-3: #30302e;
+    --surface-header: #262625;
+
+    --text: #faf9f5;
+    --muted: #b0aea5;
+    --muted-soft: #9a9990;
+
+    --border: #30302e;
+    --border-strong: #3a3a38;
+
+    --accent: #d97757;
+    --accent-strong: #c96442;
+    --accent-soft: rgba(217, 119, 87, 0.2);
+    --accent-link: #d97757;
+
+    --success: #7ab648;
+    --success-soft: rgba(122, 182, 72, 0.16);
+    --warn: #e8a83e;
+    --warn-soft: rgba(232, 168, 62, 0.18);
+    --danger: #e06060;
+    --danger-soft: rgba(224, 96, 96, 0.19);
+
+    --focus-ring: 0 0 0 2px var(--surface-3), 0 0 0 4px rgba(217, 119, 87, 0.4);
+
+    background: var(--bg);
+  }
+}
+
+/* Claude theme component overrides */
+
+body[data-theme="claude"] .ui-panel,
+body[data-theme="claude"] .panel-shell {
+  box-shadow: 0 0 0 1px var(--border);
+  background: var(--surface-2);
+}
+
+body[data-theme="claude"] .ui-btn {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+body[data-theme="claude"] .ui-btn:hover:not(:disabled) {
+  transform: none;
+}
+
+body[data-theme="claude"] .ui-btn-primary {
+  background: var(--accent);
+  background-image: none;
+  border-color: var(--accent);
+  color: var(--surface-3);
+}
+
+body[data-theme="claude"] .ui-btn-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+body[data-theme="claude"] .ui-input,
+body[data-theme="claude"] .ui-select {
+  border-radius: 12px;
+  min-height: 48px;
+  padding: 9px 14px;
+  font-size: 16px;
+}
+
+body[data-theme="claude"] .ui-badge {
+  font-family: var(--font-ui);
+  border-radius: 999px;
+}
+
+body[data-theme="claude"] .ui-badge::before {
+  border-radius: 999px;
+}
+
+body[data-theme="claude"] .ui-tab.active {
+  background: var(--accent);
+  background-image: none;
+}
+
+body[data-theme="claude"] .ui-tabs {
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+  gap: 0;
+  grid-template-columns: unset;
+  display: flex;
+}
+
+body[data-theme="claude"] .ui-tab {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 8px 16px;
+  min-height: auto;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+body[data-theme="claude"] .ui-tab:hover {
+  color: var(--text);
+  border-color: transparent;
+  background: none;
+}
+
+body[data-theme="claude"] .ui-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  background: transparent;
+  font-weight: 500;
+}
+
+body[data-theme="claude"] .ui-table thead th {
+  background: transparent;
+}
+
+body[data-theme="claude"] .ui-md-pre {
+  background: #30302e;
+  border-color: #3a3a38;
+}
+
+body[data-theme="claude"] .ui-md-inline {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
 * {
   box-sizing: border-box;
 }
