@@ -40,6 +40,7 @@ from api.errors import ApiError, error_payload
 from config import load_config, validate_required_secrets
 from control import LocalCoordinator, build_local_coordinator
 from graph.agent import AgentManager
+from tools.delegate_registry import DelegateRegistry
 from scheduler.cron import CronScheduler
 from scheduler.heartbeat import HeartbeatScheduler
 from storage.approval_store import ApprovalStore
@@ -314,6 +315,10 @@ async def lifespan(_: FastAPI):
         raise RuntimeError(f"Missing required secrets: {joined}")
 
     agent_manager.initialize(BASE_DIR)
+
+    delegate_registry = DelegateRegistry(base_dir=BASE_DIR)
+    agent_manager.runtime_services.delegate_registry = delegate_registry
+
     default_runtime = agent_manager.get_runtime("default")
 
     chat.set_agent_manager(agent_manager)

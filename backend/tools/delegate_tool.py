@@ -270,3 +270,41 @@ def build_delegate_tool(
         func=_run_sync,
         args_schema=DelegateArgs,
     )
+
+
+class DelegateStatusArgs(BaseModel):
+    delegate_id: str = Field(description="Delegate ID returned from delegate tool")
+
+
+def build_delegate_status_tool(*, registry: DelegateRegistry) -> StructuredTool:
+    def _run_status(delegate_id: str) -> str:
+        state = registry.get_status(delegate_id)
+        if not state:
+            return json.dumps({"error": f"Delegate not found: {delegate_id}"}, ensure_ascii=False)
+
+        result: dict[str, Any] = {
+            "delegate_id": state.delegate_id,
+            "status": state.status,
+            "role": state.role,
+            "task": state.task,
+            "sub_session_id": state.sub_session_id,
+            "created_at": state.created_at,
+        }
+        if state.status in ("completed", "failed", "timeout"):
+            result["completed_at"] = state.completed_at
+            result["duration_ms"] = state.duration_ms
+        if state.status == "completed":
+            result["result_summary"] = state.result_summary
+            result["steps_completed"] = state.steps_completed
+            result["tools_used"] = state.tools_used
+            result["token_usage"] = state.token_usage
+        if state.status in ("failed", "timeout"):
+            result["error_message"] = state.error_message or "Sub-agent timed out"
+        return json.dumps(result, ensure_ascii=False)
+
+    return StructuredTool.from_function(
+        name="delegate_status",
+        description="Check the status of a delegated sub-agent by its delegate_id",
+        func=_run_status,
+        args_schema=DelegateStatusArgs,
+    )

@@ -28,6 +28,8 @@ from llm_routing import (
     inspect_profile_availability,
     should_fallback_for_error,
 )
+from tools.base import ToolContext
+from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from usage.pricing import calculate_cost_breakdown, infer_provider
 
 
@@ -528,6 +530,26 @@ class DefaultGraphRuntime(GraphRuntime):
                 goto="finalize_error",
             )
 
+        delegate_tools = []
+        drv = getattr(self.services, "delegate_registry", None)
+        am = getattr(self.services, "_agent_manager", None)
+        if drv:
+            delegate_tools.append(build_delegate_status_tool(registry=drv))
+            if am:
+                ctx = ToolContext(
+                    workspace_root=runtime_state.root_dir,
+                    trigger_type=request.trigger_type,
+                    explicit_enabled_tools=(),
+                    explicit_blocked_tools=(),
+                    run_id=run_id,
+                    session_id=request.session_id,
+                )
+                delegate_tools.append(build_delegate_tool(
+                    agent_manager=am,
+                    registry=drv,
+                    base_dir=self.services.require_base_dir(),
+                    context=ctx,
+                ))
         tool_service = ToolExecutionService.build(
             config_base_dir=self.services.require_base_dir(),
             runtime_root=runtime_state.root_dir,
@@ -536,6 +558,7 @@ class DefaultGraphRuntime(GraphRuntime):
             run_id=run_id,
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
+            delegate_tools=delegate_tools if delegate_tools else None,
         )
         usage_state = dict(state.get("usage_state", {}))
         usage_sources = dict(state.get("usage_sources", {}))

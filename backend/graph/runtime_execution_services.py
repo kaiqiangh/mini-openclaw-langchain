@@ -13,6 +13,8 @@ from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
 from graph.prompt_builder import PromptBuilder
 from graph.runtime_types import ToolCapableChatModel
 from graph.usage_orchestrator import UsageOrchestrator
+from tools.delegate_registry import DelegateRegistry
+from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from llm_routing import (
     ResolvedLlmCandidate,
     ResolvedLlmRoute,
@@ -51,6 +53,8 @@ class RuntimeExecutionServices:
         runtime_getter: Callable[[str], RuntimeWithServices],
         prompt_builder: PromptBuilder,
         usage_orchestrator: UsageOrchestrator,
+        delegate_registry: DelegateRegistry | None = None,
+        agent_manager: Any | None = None,
     ) -> None:
         self._base_dir_getter = base_dir_getter
         self._app_config_getter = app_config_getter
@@ -58,6 +62,8 @@ class RuntimeExecutionServices:
         self.prompt_builder = prompt_builder
         self.usage_orchestrator = usage_orchestrator
         self.session_repository: SessionRepositoryHandle | None = None
+        self.delegate_registry = delegate_registry
+        self._agent_manager = agent_manager
 
     def set_session_repository(self, repository: SessionRepositoryHandle) -> None:
         self.session_repository = repository

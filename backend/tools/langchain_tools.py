@@ -638,6 +638,7 @@ def build_langchain_tools(
     tools: list[MiniTool],
     runner: ToolRunner,
     context: ToolContext,
+    delegate_tools: list[StructuredTool] | None = None,
 ) -> list[StructuredTool]:
     by_name = {tool.name: tool for tool in tools}
     structured: list[StructuredTool] = []
@@ -688,4 +689,6 @@ def build_langchain_tools(
         by_name=by_name, structured=structured, runner=runner, context=context
     )
 
+    if delegate_tools:
+        structured.extend(delegate_tools)
     return structured

@@ -78,6 +78,7 @@ class ToolExecutionService:
         run_id: str,
         session_id: str,
         runtime_audit_store: AuditStore,
+        delegate_tools: list[Any] | None = None,
     ) -> "ToolExecutionService":
         mini_tools = get_all_tools(
             runtime_root,
@@ -103,6 +104,7 @@ class ToolExecutionService:
                 run_id=run_id,
                 session_id=session_id,
             ),
+            delegate_tools=delegate_tools,
         )
         return cls(
             tools=langchain_tools,
