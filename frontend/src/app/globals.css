@@ -45,6 +45,8 @@
   --accent: #1f6fff;
   --accent-strong: #1456d9;
   --accent-soft: rgba(31, 111, 255, 0.13);
+  --overlay: rgba(2, 6, 23, 0.36);
+  --overlay-strong: rgba(2, 6, 23, 0.42);
 
   --success: #147a3f;
   --success-soft: rgba(20, 122, 63, 0.14);
@@ -76,9 +78,11 @@
     --border: #27384f;
     --border-strong: #3a5376;
 
-    --accent: #58a0ff;
+      --accent: #58a0ff;
     --accent-strong: #468ded;
     --accent-soft: rgba(88, 160, 255, 0.18);
+    --overlay: rgba(2, 6, 23, 0.54);
+    --overlay-strong: rgba(2, 6, 23, 0.62);
 
     --success: #4ad484;
     --success-soft: rgba(74, 212, 132, 0.16);
@@ -186,6 +190,8 @@ body[data-theme="claude"] {
     --accent: #d97757;
     --accent-strong: #c96442;
     --accent-soft: rgba(217, 119, 87, 0.2);
+    --overlay: rgba(0, 0, 0, 0.36);
+    --overlay-strong: rgba(0, 0, 0, 0.42);
     --accent-link: #d97757;
 
     --success: #7ab648;
