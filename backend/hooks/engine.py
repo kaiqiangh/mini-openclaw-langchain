@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.machinery
 import importlib.util
 import json
 import logging
@@ -13,6 +14,13 @@ from typing import Any
 from hooks.types import HookConfig, HookEvent, HookResult, HookType
 
 logger = logging.getLogger(__name__)
+
+# Prevent bytecode caching for dynamically loaded hook handlers.
+# Hook modules need to be reloaded on file change, but stale .pyc files
+# in __pycache__ can cause the old module to be cached even after
+# sys.modules cleanup and mtime checks. Disabling bytecode generation
+# ensures SourceFileLoader always reads the .py source directly.
+sys.dont_write_bytecode = True
 
 # Module-level handler cache
 _HANDLER_CACHE: dict[str, Any] = {}
@@ -110,14 +118,19 @@ class HookEngine:
         if not hooks:
             return HookResult(allow=True)
 
+        all_modifications: dict[str, Any] = {}
+        last_result: HookResult | None = None
+
         for hook_config in hooks:
             try:
                 handler = self._load_handler(hook_config.handler)
                 result = self._invoke_with_timeout(handler, event, hook_config.timeout_ms)
                 if not result.allow:
                     return result
+                # Accumulate modifications from all hooks
                 if result.modifications:
                     event.payload = {**event.payload, **result.modifications}
+                    all_modifications.update(result.modifications)
                 # Keep last result (e.g., timeout reason) as fallback
                 last_result = result
             except Exception as exc:
@@ -125,7 +138,11 @@ class HookEngine:
                 return HookResult(allow=False, reason=str(exc))
 
         # If last hook produced a non-empty reason (e.g. timeout), preserve it
-        return last_result if last_result.reason else HookResult(allow=True)
+        # but return with ALL accumulated modifications
+        if last_result:
+            if last_result.reason or all_modifications:
+                return last_result.model_copy(update={"modifications": all_modifications})
+        return HookResult(allow=True, modifications=all_modifications)
 
     def _invoke_with_timeout(
         self, handler: Any, event: HookEvent, timeout_ms: int

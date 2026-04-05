@@ -193,8 +193,12 @@ class CompactionPipeline:
         system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
         non_system = [m for m in messages if not isinstance(m, SystemMessage)]
 
-        keep = non_system[-keep_last:] if len(non_system) > keep_last else non_system
-        dropped = non_system[:-keep_last] if len(non_system) > keep_last else []
+        if keep_last > 0:
+            keep = non_system[-keep_last:]
+            dropped = non_system[:-keep_last]
+        else:
+            keep = []
+            dropped = non_system
 
         remaining = list(system_msgs)
         if summary_text:

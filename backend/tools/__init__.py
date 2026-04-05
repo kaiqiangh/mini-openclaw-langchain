@@ -200,6 +200,36 @@ def build_tool_catalog(
                 "trigger_status": trigger_status,
             }
         )
+
+    # ── Inject delegation tools (StructuredTools built at runtime, not MiniTools) ──
+    _DELEGATE_TOOLS = [
+        ("delegate", "Delegate a sub-task to an isolated agent instance with scoped tool access. Runs independently. Use delegate_status to check progress. No nesting."),
+        ("delegate_status", "Check the status of a delegated sub-agent by its delegate_id."),
+    ]
+    existing_names = {r["name"] for r in rows}
+    for tool_name, tool_desc in _DELEGATE_TOOLS:
+        if tool_name in existing_names:
+            continue
+        trigger_status: dict[str, Any] = {}
+        for trigger in TRIGGER_TYPES:
+            tool_in_trigger = tool_name in set(trigger_explicit_tools.get(trigger, []))
+            is_blocked = tool_name in set(trigger_blocked_tools.get(trigger, []))
+            trigger_status[trigger] = {
+                "enabled": tool_in_trigger,
+                "explicitly_enabled": tool_in_trigger,
+                "explicitly_blocked": is_blocked,
+                "allowed_by_policy": tool_in_trigger and not is_blocked,
+                "reason": "" if tool_in_trigger and not is_blocked else "Not enabled for this trigger",
+            }
+            if tool_in_trigger:
+                trigger_effective_tools[trigger].append(tool_name)
+        rows.append({
+            "name": tool_name,
+            "description": tool_desc,
+            "permission_level": "L1_WRITE",
+            "trigger_status": trigger_status,
+        })
+
     return {
         "triggers": list(TRIGGER_TYPES),
         "enabled_tools": trigger_effective_tools,
