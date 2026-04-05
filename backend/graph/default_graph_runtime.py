@@ -31,6 +31,8 @@ from llm_routing import (
 from tools.base import ToolContext
 from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from usage.pricing import calculate_cost_breakdown, infer_provider
+from hooks.engine import HookEngine
+from hooks.types import HookEvent
 
 
 class DefaultGraphRuntime(GraphRuntime):
@@ -41,11 +43,13 @@ class DefaultGraphRuntime(GraphRuntime):
         pipelines: RuntimeLcelPipelines,
         skill_selector: SkillSelector,
         checkpointer: RuntimeCheckpointer | None = None,
+        hook_engine: HookEngine | None = None,
     ) -> None:
         self.services = services
         self.pipelines = pipelines
         self.skill_selector = skill_selector
         self.checkpointer = checkpointer
+        self.hook_engine = hook_engine
         self._graphs: dict[object | None, Any] = {None: self._compile_graph(None)}
 
     async def invoke(self, request: RuntimeRequest) -> RuntimeResult:
@@ -295,6 +299,32 @@ class DefaultGraphRuntime(GraphRuntime):
                 },
                 goto="finalize_error",
             )
+
+        run_id = str(uuid.uuid4())
+        run_id_candidate = run_id
+        if self.hook_engine and self.hook_engine.is_enabled:
+            hook_event = HookEvent(
+                hook_type="pre_run",
+                agent_id=request.agent_id,
+                session_id=request.session_id,
+                run_id=str(run_id_candidate),
+                payload={"message_length": len(str(request.message))},
+            )
+            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            if not hook_result.allow:
+                return Command(
+                    update={
+                        "route": route,
+                        "run_id": run_id,
+                        "error": RuntimeErrorInfo(
+                            error=f"Hook denied pre_run: {hook_result.reason}",
+                            code="hook_denied",
+                            run_id=run_id,
+                            attempt=0,
+                        ),
+                    },
+                    goto="finalize_error",
+                )
 
         seed_candidate = route.candidates[0] if route.candidates else None
         provider = "unknown"
@@ -579,7 +609,47 @@ class DefaultGraphRuntime(GraphRuntime):
         )
 
         chain = self.pipelines.model_chain(llm=active_llm, tools=tool_service.tools)
+
+        # PrePromptSubmit hook
+        if self.hook_engine and self.hook_engine.is_enabled:
+            hook_event = HookEvent(
+                hook_type="pre_prompt_submit",
+                agent_id=state["request"].agent_id,
+                session_id=state["request"].session_id,
+                run_id=state.get("run_id", ""),
+                payload={
+                    "message_count": len(state.get("input_messages", [])),
+                },
+            )
+            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            if not hook_result.allow:
+                self._emit("hook_denied", {"hook_type": "pre_prompt_submit", "reason": hook_result.reason})
+                return Command(
+                    goto="finalize_error",
+                    update={
+                        "error": RuntimeErrorInfo(
+                            error=f"Hook denied pre_prompt_submit: {hook_result.reason}",
+                            code="hook_denied",
+                            run_id=state.get("run_id", ""),
+                        ),
+                    },
+                )
+
         emitted_agent_update = False
+
+        # Apply prompt modifications from hook (only if hook was active)
+        if self.hook_engine and self.hook_engine.is_enabled and hook_result.modifications.get(
+            "system_prompt_prefix"
+        ):
+            prefix = hook_result.modifications["system_prompt_prefix"]
+            input_messages = list(state.get("input_messages", []))
+            if input_messages:
+                first_msg = input_messages[0]
+                if hasattr(first_msg, "content"):
+                    first_msg = type(first_msg)(content=prefix + str(first_msg.content))
+                    input_messages[0] = first_msg
+                state = {**state, "input_messages": input_messages}
+
         pending_new_response = bool(state.get("pending_new_response", False))
         token_source = str(state.get("token_source") or "").strip() or None
         fallback_final_text = str(state.get("fallback_final_text", ""))
@@ -913,10 +983,39 @@ class DefaultGraphRuntime(GraphRuntime):
                 "usage": dict(state.get("usage_payload", {})),
             },
         )
+
+        # Stop hook (async)
+        if self.hook_engine and self.hook_engine.is_enabled:
+            hook_event = HookEvent(
+                hook_type="stop",
+                agent_id=state["request"].agent_id,
+                session_id=state["request"].session_id,
+                run_id=state.get("run_id", ""),
+                payload={
+                    "status": "success",
+                    "text_len": len(state.get("final_text", "")),
+                },
+            )
+            self.hook_engine.dispatch_async(hook_event)
+
         return {}
 
     def _finalize_error(self, state: RuntimeGraphState) -> dict[str, Any]:
         error = state.get("error")
         if isinstance(error, RuntimeErrorInfo):
             self._emit("error", error.as_payload())
+
+        # Stop hook (async)
+        if self.hook_engine and self.hook_engine.is_enabled:
+            hook_event = HookEvent(
+                hook_type="stop",
+                agent_id=state["request"].agent_id,
+                session_id=state["request"].session_id,
+                run_id=state.get("run_id", ""),
+                payload={
+                    "status": "error",
+                },
+            )
+            self.hook_engine.dispatch_async(hook_event)
+
         return {}
