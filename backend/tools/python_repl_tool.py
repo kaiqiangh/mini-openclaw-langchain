@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import __main__
 import io
 import multiprocessing as mp
+import os
 import resource
+import sys
 import time
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -58,9 +61,30 @@ def _set_resource_limits(timeout_seconds: int) -> None:
         pass
 
 
-def _execute_python_snippet(code: str, queue: mp.Queue) -> None:
+def _main_module_supports_spawn() -> bool:
+    main_file = getattr(__main__, "__file__", None)
+    if not main_file or str(main_file).startswith("<"):
+        return False
+    return os.path.exists(main_file)
+
+
+def _get_mp_context() -> mp.context.BaseContext:
+    methods = set(mp.get_all_start_methods())
+    if sys.platform.startswith("linux") and "forkserver" in methods and _main_module_supports_spawn():
+        return mp.get_context("forkserver")
+    if "spawn" in methods and _main_module_supports_spawn():
+        return mp.get_context("spawn")
+    if "fork" in methods:
+        return mp.get_context("fork")
+    return mp.get_context()
+
+
+def _execute_python_snippet(code: str, conn: Any) -> None:
+    payload: dict[str, Any]
     if _contains_escape_attempt(code):
-        queue.put({"ok": False, "error": "Code contains disallowed patterns (introspection/escape)"})
+        payload = {"ok": False, "error": "Code contains disallowed patterns (introspection/escape)"}
+        conn.send(payload)
+        conn.close()
         return
 
     try:
@@ -107,9 +131,13 @@ def _execute_python_snippet(code: str, queue: mp.Queue) -> None:
         with redirect_stdout(buffer):
             exec(code, safe_globals, safe_locals)
     except Exception as exc:  # noqa: BLE001
-        queue.put({"ok": False, "error": str(exc)})
+        payload = {"ok": False, "error": str(exc)}
+        conn.send(payload)
+        conn.close()
         return
-    queue.put({"ok": True, "output": buffer.getvalue().strip()})
+    payload = {"ok": True, "output": buffer.getvalue().strip()}
+    conn.send(payload)
+    conn.close()
 
 
 @dataclass
@@ -151,14 +179,17 @@ class PythonReplTool:
             executor = self._get_executor()
             payload = executor.run(code)
         else:
-            queue: mp.Queue = mp.Queue(maxsize=1)
-            process = mp.Process(target=_execute_python_snippet, args=(code, queue))
+            ctx = _get_mp_context()
+            recv_conn, send_conn = ctx.Pipe(duplex=False)
+            process = ctx.Process(target=_execute_python_snippet, args=(code, send_conn))
             process.start()
+            send_conn.close()
             process.join(timeout=self.timeout_seconds)
 
             if process.is_alive():
                 process.terminate()
                 process.join()
+                recv_conn.close()
                 return ToolResult.failure(
                     tool_name=self.name,
                     code="E_TIMEOUT",
@@ -169,9 +200,12 @@ class PythonReplTool:
 
             payload: dict[str, Any] = {"ok": False, "error": "No output from Python process"}
             try:
-                payload = queue.get_nowait()
+                if recv_conn.poll():
+                    payload = recv_conn.recv()
             except Exception:
                 payload = {"ok": False, "error": "No output from Python process"}
+            finally:
+                recv_conn.close()
 
         if not payload.get("ok"):
             return ToolResult.failure(
