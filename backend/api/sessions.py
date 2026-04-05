@@ -310,3 +310,150 @@ async def generate_title(
     title = await agent.generate_title(seed, agent_id=agent_id)
     await manager.update_title(session_id, title)
     return {"data": {"session_id": session_id, "title": title}}
+
+
+# ── Compaction & Rewind ─────────────────────────────────────────
+
+
+class CompactSessionRequest(BaseModel):
+    """Optional body for manual compaction (keep future extensibility)."""
+    dry_run: bool = False
+
+
+class RewindRequest(BaseModel):
+    checkpoint_id: str = Field(min_length=1)
+
+
+@router.post("/agents/{agent_id}/sessions/{session_id}/compact")
+async def trigger_compact(
+    agent_id: str,
+    session_id: str,
+    body: CompactSessionRequest | None = None,
+) -> dict[str, Any]:
+    """Manually trigger compaction for a session."""
+    agent, _ = _resolve_session_manager(agent_id)
+    runtime = agent.get_runtime(agent_id)
+
+    model_name = "gpt-4o"
+    runtime_config = runtime.runtime_config
+    for candidate_entry in runtime_config.llm_candidates:
+        profile = getattr(candidate_entry, "profile", None)
+        if profile is not None and getattr(profile, "model", None):
+            model_name = profile.model
+            break
+
+    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
+
+    from graph.compaction import CompactionPipeline
+    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
+
+    # Load current session messages from the repository
+    repository = agent.get_session_repository(agent_id)
+    try:
+        snapshot = await repository.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=True,
+        )
+    except FileNotFoundError as exc:
+        raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+
+    messages = list(snapshot.messages) if snapshot.messages else []
+    from langchain_core.messages import messages_from_dict
+    lc_messages = messages_from_dict(messages) if messages else []
+
+    result = await pipeline.compact_round(lc_messages, run_id="manual", step=0)
+
+    if result.was_compacted:
+        from langchain_core.messages import messages_to_dict
+        compacted_dicts = messages_to_dict(result.messages)
+        # Persist the compacted messages back via the session repository
+        await repository.update_state(
+            agent_id=agent_id,
+            session_id=session_id,
+            values={"model_messages": compacted_dicts},
+        )
+
+    return {
+        "data": {
+            "compacted": result.was_compacted,
+            "checkpoint_id": result.checkpoint_id,
+            "messages_before": len(messages),
+            "messages_after": len(result.messages),
+        }
+    }
+
+
+@router.get("/agents/{agent_id}/sessions/{session_id}/checkpoints")
+async def list_checkpoints(
+    agent_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """List available checkpoints for a session's agent."""
+    agent, _ = _resolve_session_manager(agent_id)
+    runtime = agent.get_runtime(agent_id)
+
+    model_name = "gpt-4o"
+    runtime_config = runtime.runtime_config
+    for candidate_entry in runtime_config.llm_candidates:
+        profile = getattr(candidate_entry, "profile", None)
+        if profile is not None and getattr(profile, "model", None):
+            model_name = profile.model
+            break
+
+    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
+
+    from graph.compaction import CompactionPipeline
+    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
+    checkpoints = await pipeline.list_checkpoints()
+
+    return {"data": checkpoints}
+
+
+@router.post("/agents/{agent_id}/sessions/{session_id}/rewind")
+async def rewind_session(
+    agent_id: str,
+    session_id: str,
+    body: RewindRequest,
+) -> dict[str, Any]:
+    """Restore session from a checkpoint."""
+    agent, _ = _resolve_session_manager(agent_id)
+    runtime = agent.get_runtime(agent_id)
+
+    model_name = "gpt-4o"
+    runtime_config = runtime.runtime_config
+    for candidate_entry in runtime_config.llm_candidates:
+        profile = getattr(candidate_entry, "profile", None)
+        if profile is not None and getattr(profile, "model", None):
+            model_name = profile.model
+            break
+
+    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
+
+    from graph.compaction import CompactionPipeline
+    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
+
+    try:
+        messages = await pipeline.load_checkpoint(body.checkpoint_id)
+    except FileNotFoundError:
+        raise ApiError(status_code=404, code="not_found", message=f"Checkpoint not found: {body.checkpoint_id}")
+    except RuntimeError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc))
+
+    from langchain_core.messages import messages_to_dict
+    message_dicts = messages_to_dict(messages)
+
+    repository = agent.get_session_repository(agent_id)
+    await repository.update_state(
+        agent_id=agent_id,
+        session_id=session_id,
+        values={"model_messages": message_dicts},
+    )
+
+    return {
+        "data": {
+            "restored": True,
+            "checkpoint_id": body.checkpoint_id,
+            "message_count": len(messages),
+        }
+    }

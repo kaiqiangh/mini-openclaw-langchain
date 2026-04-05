@@ -9,6 +9,7 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
+from graph.compaction import CompactionPipeline, CompactionSummary
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.retrieval_orchestrator import RetrievalOrchestrator
 from graph.runtime_types import (
@@ -188,11 +189,13 @@ class DefaultGraphRuntime(GraphRuntime):
         builder.add_node("tool_step", self._tool_step)
         builder.add_node("finalize_success", self._finalize_success)
         builder.add_node("finalize_error", self._finalize_error)
+        builder.add_node("__compact__", self._compact_step)
         builder.add_edge(START, "prepare_request")
         builder.add_edge("retrieve_context", "select_skills")
         builder.add_edge("select_skills", "compose_inputs")
         builder.add_edge("compose_inputs", "model_step")
         builder.add_edge("tool_step", "compose_inputs")
+        builder.add_edge("__compact__", "compose_inputs")
         builder.add_edge("finalize_success", END)
         builder.add_edge("finalize_error", END)
         return builder.compile(checkpointer=checkpointer)
@@ -838,6 +841,40 @@ class DefaultGraphRuntime(GraphRuntime):
                     usage_store=runtime_state.usage_store,
                 )
 
+            # Check token budget before finalizing — route to compaction if needed
+            messages_for_budget = list(state.get("input_messages", [])) + [final_message]
+            msg_model = usage_state.get("model", "gpt-4o")
+            compact_pipeline = CompactionPipeline(model_name=msg_model)
+            needs_compact, _ = compact_pipeline.needs_compaction(messages_for_budget)
+            if needs_compact:
+                return Command(
+                    update={
+                        "run_id": run_id,
+                        "active_model": active_model,
+                        "attempt_number": attempt_number,
+                        "loop_count": loop_count,
+                        "retry_index": 0,
+                        "model_messages": [*model_messages, final_message],
+                        "pending_tool_calls": [],
+                        "pending_new_response": False,
+                        "token_source": token_source or "fallback",
+                        "fallback_final_text": fallback_final_text,
+                        "final_text": final_text,
+                        "usage_state": usage_state,
+                        "usage_sources": usage_sources,
+                        "usage_signature": next_signature,
+                        "usage_payload": usage_payload,
+                        "emitted_reasoning": emitted_reasoning,
+                        "input_messages": messages_for_budget,
+                        "structured_response": (
+                            self.pipelines.structured_answer(final_text)
+                            if request.output_format == "json"
+                            else None
+                        ),
+                    },
+                    goto="__compact__",
+                )
+
             return Command(
                 update={
                     "run_id": run_id,
@@ -999,6 +1036,75 @@ class DefaultGraphRuntime(GraphRuntime):
             self.hook_engine.dispatch_async(hook_event)
 
         return {}
+
+    def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any]:
+        """Compaction node: reduce message count when budget exceeded."""
+        runtime = self.services.get_runtime(state["request"].agent_id)
+        model_name = runtime.resolve_model_name() if hasattr(runtime, "resolve_model_name") else "gpt-4o"
+        workspace = runtime.root_dir / "storage" / "checkpoints" if hasattr(runtime, "root_dir") else None
+
+        pipeline = CompactionPipeline(
+            model_name=model_name,
+            checkpoint_dir=workspace,
+        )
+
+        messages = list(state.get("input_messages", []))
+
+        # PreCompact hooks
+        if self.hook_engine and self.hook_engine.is_enabled:
+            hook_event = HookEvent(
+                hook_type="pre_compact",
+                agent_id=state["request"].agent_id,
+                session_id=state["request"].session_id,
+                payload={"token_count": pipeline.count_messages_tokens(messages)},
+            )
+            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            if not hook_result.allow:
+                return {"compaction_deferred": True}
+
+        # Create a summarize functor if we have an LLM available
+        summarize_fn = None
+        if hasattr(self, "pipelines") and hasattr(self.pipelines, "model"):
+            try:
+                from graph.lcel_compaction import build_summarize_pipeline
+                summarize_fn = build_summarize_pipeline(self.pipelines.model)
+            except Exception:
+                pass
+
+        # Run compaction in async context
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        result = loop.run_until_complete(
+            pipeline.compact_round(
+                messages,
+                run_id=state.get("run_id", ""),
+                step=state.get("loop_count", 0),
+                summarize_fn=summarize_fn,
+            )
+        )
+
+        # Distill to memory
+        if result.summary and result.was_compacted and workspace:
+            memory_file = runtime.root_dir / "memory" / "MEMORY.md"
+            loop.run_until_complete(pipeline.distill(result.summary, memory_file=memory_file))
+
+        self._emit("compaction", {
+            "checkpoint_id": result.checkpoint_id,
+            "was_compacted": result.was_compacted,
+            "message_count_before": len(messages),
+            "message_count_after": len(result.messages),
+            "summary": result.summary.summary if result.summary else None,
+        })
+
+        return {
+            "input_messages": result.messages,
+            "last_checkpoint_id": result.checkpoint_id,
+            "compaction_deferred": False,
+        }
 
     def _finalize_error(self, state: RuntimeGraphState) -> dict[str, Any]:
         error = state.get("error")
