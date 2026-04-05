@@ -222,6 +222,23 @@ def test_agents_endpoint_and_session_isolation(client):
     assert "memory/MEMORY.md" in other_files
 
 
+def test_hidden_sessions_are_excluded_from_session_list_api(client, api_app):
+    runtime = api_app["agent_manager"].get_runtime("default")
+    hidden_id = "hidden-child-session"
+    asyncio.run(
+        runtime.session_manager.create_session(
+            hidden_id,
+            title="Hidden child",
+            hidden=True,
+            internal=True,
+        )
+    )
+
+    listed = client.get("/api/v1/agents/default/sessions")
+    assert listed.status_code == 200
+    assert all(item["session_id"] != hidden_id for item in listed.json()["data"])
+
+
 def test_cron_sessions_use_job_name_in_session_lists(client):
     created_job = client.post(
         "/api/v1/agents/default/scheduler/cron/jobs",

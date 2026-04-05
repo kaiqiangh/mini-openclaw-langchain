@@ -654,6 +654,61 @@ export async function getSessionHistory(
   return payload.data;
 }
 
+export interface SessionCompactionResult {
+  compacted: boolean;
+  checkpoint_id: string | null;
+  messages_before: number;
+  messages_after: number;
+}
+
+export interface SessionCheckpoint {
+  checkpoint_id: string;
+  run_id: string;
+  step: number;
+  message_count: number;
+}
+
+export async function compactSession(
+  sessionId: string,
+  agentId = "default",
+): Promise<SessionCompactionResult> {
+  const payload = await requestJson<{ data: SessionCompactionResult }>(
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/compact`,
+    {
+      method: "POST",
+      body: JSON.stringify({ dry_run: false }),
+    },
+  );
+  return payload.data;
+}
+
+export async function listSessionCheckpoints(
+  sessionId: string,
+  agentId = "default",
+): Promise<SessionCheckpoint[]> {
+  const payload = await requestJson<{ data: SessionCheckpoint[] }>(
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/checkpoints`,
+  );
+  return payload.data;
+}
+
+export async function rewindSessionToCheckpoint(
+  sessionId: string,
+  checkpointId: string,
+  agentId = "default",
+): Promise<{ restored: boolean; checkpoint_id: string; message_count: number }> {
+  const payload = await requestJson<{
+    data: { restored: boolean; checkpoint_id: string; message_count: number };
+  }>(
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/rewind`,
+    {
+      method: "POST",
+      body: JSON.stringify({ checkpoint_id: checkpointId }),
+    },
+  );
+  return payload.data;
+}
+
 export async function generateSessionTitle(
   sessionId: string,
   agentId = "default",
@@ -1138,6 +1193,77 @@ export async function getDelegateDetail(agentId: string, sessionId: string, dele
   );
   if (!resp.ok) throw new Error(`GET delegate detail: ${resp.status}`);
   return resp.json();
+}
+
+export interface HookConfigRecord {
+  id: string;
+  type: string;
+  handler: string;
+  mode: string;
+  timeout_ms: number;
+}
+
+export interface HookAuditRow {
+  schema?: string;
+  run_id?: string;
+  session_id?: string;
+  trigger_type?: string;
+  event: string;
+  details?: Record<string, unknown>;
+  timestamp_ms?: number;
+}
+
+export async function listHooks(agentId = "default"): Promise<HookConfigRecord[]> {
+  return requestJson<HookConfigRecord[]>(
+    `${API_BASE}/api/v1/hooks?agent_id=${encodeURIComponent(agentId)}`,
+  );
+}
+
+export async function createHook(
+  agentId: string,
+  body: {
+    id: string;
+    type: string;
+    handler: string;
+    mode?: string;
+    timeout_ms?: number;
+  },
+): Promise<HookConfigRecord> {
+  return requestJson<HookConfigRecord>(
+    `${API_BASE}/api/v1/hooks?agent_id=${encodeURIComponent(agentId)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export async function deleteHook(agentId: string, hookId: string): Promise<{ deleted: string }> {
+  return requestJson<{ deleted: string }>(
+    `${API_BASE}/api/v1/hooks/${encodeURIComponent(hookId)}?agent_id=${encodeURIComponent(agentId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+export async function testHook(agentId: string, hookId: string): Promise<{ hook_id: string; allow: boolean; reason: string }> {
+  return requestJson<{ hook_id: string; allow: boolean; reason: string }>(
+    `${API_BASE}/api/v1/hooks/${encodeURIComponent(hookId)}/test?agent_id=${encodeURIComponent(agentId)}`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function getHookAudit(
+  agentId = "default",
+  limit = 20,
+): Promise<HookAuditRow[]> {
+  const payload = await requestJson<{ data: HookAuditRow[] }>(
+    `${API_BASE}/api/v1/hooks/audit?agent_id=${encodeURIComponent(agentId)}&limit=${encodeURIComponent(String(limit))}`,
+  );
+  return payload.data;
 }
 
 export async function streamChat(

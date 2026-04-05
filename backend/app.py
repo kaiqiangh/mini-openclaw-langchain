@@ -27,6 +27,7 @@ from api import (
     chat,
     compress,
     config_api,
+    delegates,
     files,
     hooks,
     replay,
@@ -325,6 +326,8 @@ async def lifespan(_: FastAPI):
     chat.set_agent_manager(agent_manager)
     chat.set_coordinator(local_coordinator)
     sessions.set_agent_manager(agent_manager)
+    delegates.set_agent_manager(agent_manager)
+    delegates.set_delegate_registry(delegate_registry)
     files.set_dependencies(BASE_DIR, agent_manager)
     tokens.set_dependencies(BASE_DIR, agent_manager)
     compress.set_agent_manager(agent_manager)
@@ -333,6 +336,7 @@ async def lifespan(_: FastAPI):
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
     audit.set_agent_manager(agent_manager)
+    hooks.set_agent_manager(agent_manager)
     setup.set_base_dir(BASE_DIR)
     replay.set_agent_manager(agent_manager)
     approval.set_dependencies(ApprovalStore(BASE_DIR))
@@ -463,6 +467,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(sessions.router, prefix="/api/v1")
+app.include_router(delegates.router, prefix="/api/v1")
 app.include_router(files.router, prefix="/api/v1")
 app.include_router(tokens.router, prefix="/api/v1")
 app.include_router(compress.router, prefix="/api/v1")

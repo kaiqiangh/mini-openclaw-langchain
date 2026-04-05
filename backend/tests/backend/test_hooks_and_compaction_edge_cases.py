@@ -248,7 +248,7 @@ class TestCompactionEdgeCases:
             assert cp_id  # ID is always generated
             assert pipeline.checkpoint_dir is None
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_checkpoint_load_from_empty_directory(self, tmp_path):
         """Loading from empty checkpoint dir should raise FileNotFoundError."""
@@ -258,7 +258,7 @@ class TestCompactionEdgeCases:
             with pytest.raises(FileNotFoundError):
                 await pipeline.load_checkpoint("nonexistent")
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_checkpoint_list_from_empty_directory(self, tmp_path):
         pipeline = CompactionPipeline(model_name="gpt-4o", checkpoint_dir=tmp_path)
@@ -267,7 +267,7 @@ class TestCompactionEdgeCases:
             cps = await pipeline.list_checkpoints()
             assert cps == []
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_checkpoint_id_format(self, tmp_path):
         """Checkpoint ID should follow expected pattern."""
@@ -279,7 +279,7 @@ class TestCompactionEdgeCases:
             assert cp_id.startswith("ckpt_my-run-")
             assert "0042" in cp_id
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_llm_summarize_raises_by_default(self):
         """llm_summarize should raise NotImplementedError when no LCEL binding."""
@@ -289,7 +289,7 @@ class TestCompactionEdgeCases:
                     [HumanMessage(content="test")]
                 )
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_distill_appends_multiple_times(self, tmp_path):
         """Multiple distill calls should append, not overwrite."""
@@ -303,7 +303,7 @@ class TestCompactionEdgeCases:
             await pipeline.distill(s1, memory_file=memory_file)
             await pipeline.distill(s2, memory_file=memory_file)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
         content = memory_file.read_text()
         assert "First" in content
         assert "Second" in content
@@ -322,7 +322,7 @@ class TestCompactionEdgeCases:
         async def run():
             await pipeline.distill(summary, memory_file=memory_file)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
         content = memory_file.read_text()
         assert "🐛" in content
         assert "rm -rf" in content
@@ -363,7 +363,7 @@ class TestCompactionEdgeCases:
             assert len(result.messages) == 6
             assert any("summarized large content" in str(m.content) for m in result.messages)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
     def test_needs_compaction_with_custom_budget_factor(self):
         """budget_factor=1.0 means compact at 100% of 80% budget."""
@@ -392,4 +392,4 @@ class TestCompactionEdgeCases:
             assert result.summary is None
             assert result.messages is messages
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())

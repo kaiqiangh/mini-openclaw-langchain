@@ -27,6 +27,14 @@ const navigationState = vi.hoisted(() => ({
 const storeState = vi.hoisted(() => ({
   currentAgentId: "default",
   currentSessionId: null as string | null,
+  delegates: [] as Array<{
+    delegate_id: string;
+    role: string;
+    task: string;
+    status: "running" | "completed" | "failed" | "timeout";
+    sub_session_id: string;
+    created_at: number;
+  }>,
   sessionsScope: "active" as "active" | "archived",
   messages: [] as Array<{
     id: string;
@@ -85,6 +93,7 @@ const {
   mockGetAgents,
   mockGetSessions,
   mockGetSessionHistory,
+  mockGetDelegateDetail,
   mockCreateSession,
   mockArchiveSession,
   mockRestoreSession,
@@ -115,6 +124,18 @@ const {
       ],
     }),
   ),
+  mockGetDelegateDetail: vi.fn(async () => ({
+    delegate_id: "del-1",
+    agent_id: "default",
+    parent_session_id: "s-1",
+    role: "researcher",
+    task: "Investigate flow",
+    status: "completed",
+    sub_session_id: "sub-1",
+    created_at: 1_710_000_000_000,
+    allowed_tools: ["web_search"],
+    result_summary: "Found the issue.",
+  })),
   mockCreateSession: vi.fn(async (_title?: string, agentId = "default") => {
     const created: SessionRecord = {
       session_id: "new-session",
@@ -180,6 +201,7 @@ const {
         debugEvents: [],
       },
     ];
+    storeState.delegates = [];
   }),
   mockContinueAfterMaxSteps: vi.fn(async () => true),
   mockCancelAfterMaxSteps: vi.fn(async () => undefined),
@@ -214,6 +236,7 @@ vi.mock("@/lib/api", () => ({
   getAgents: mockGetAgents,
   getSessions: mockGetSessions,
   getSessionHistory: mockGetSessionHistory,
+  getDelegateDetail: mockGetDelegateDetail,
   createSession: mockCreateSession,
   archiveSession: mockArchiveSession,
   restoreSession: mockRestoreSession,
@@ -290,6 +313,7 @@ describe("SessionsPage", () => {
     window.localStorage.clear();
     storeState.currentAgentId = "default";
     storeState.currentSessionId = null;
+    storeState.delegates = [];
     storeState.sessionsScope = "active";
     storeState.messages = [];
     storeState.isStreaming = false;

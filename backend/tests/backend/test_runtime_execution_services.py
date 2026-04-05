@@ -5,8 +5,11 @@ from pathlib import Path
 
 from langchain_core.messages import AIMessage
 
+from config import load_runtime_config
 from graph.agent import AgentManager
 from graph.callbacks import AuditCallbackHandler, UsageCaptureCallbackHandler
+from graph.tool_execution import ToolExecutionService
+from storage.run_store import AuditStore
 from storage.usage_store import UsageQuery
 
 
@@ -158,3 +161,25 @@ def test_runtime_execution_services_records_usage(monkeypatch, tmp_path: Path):
     rows = runtime.usage_store.query_records(query=UsageQuery(limit=10))
     assert rows
     assert rows[-1]["run_id"] == "run-3"
+
+
+def test_tool_execution_service_build_honors_explicit_delegate_scope(
+    tmp_path: Path,
+):
+    _seed_base(tmp_path)
+    runtime = load_runtime_config(tmp_path / "config.json")
+
+    service = ToolExecutionService.build(
+        config_base_dir=tmp_path,
+        runtime_root=tmp_path,
+        runtime=runtime,
+        trigger_type="chat",
+        agent_id="default",
+        run_id="run-1",
+        session_id="session-1",
+        runtime_audit_store=AuditStore(tmp_path),
+        explicit_enabled_tools=["terminal"],
+        explicit_blocked_tools=[],
+    )
+
+    assert [tool.name for tool in service.tools] == ["terminal"]

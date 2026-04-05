@@ -323,6 +323,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const hasStreaming = history.messages.some((msg) =>
         Boolean(msg.streaming),
       );
+      setDelegatesState([]);
       setMessages(mapped);
       setCurrentSessionId(sessionId);
       setIsStreaming(hasStreaming);
@@ -341,6 +342,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setSessionsScopeState("active");
       setSessions([]);
       setCurrentSessionId(null);
+      setDelegatesState([]);
       setMessages([]);
       setIsStreaming(false);
       setSelectedFilePathState("memory/MEMORY.md");
@@ -1056,16 +1058,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!hasStreaming) {
           void refreshSessions("active", currentAgentId);
         }
-
-        // Poll for delegate sub-agents
-        try {
-          const d = await listDelegates(currentAgentId, currentSessionId);
-          if (!cancelled && d.delegates.length > 0) {
-            setDelegatesState(d.delegates);
-          }
-        } catch {
-          // Best-effort — ignore delegate polling errors
-        }
       } catch {
         // Keep background polling best-effort only.
       }
@@ -1086,6 +1078,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     initialized,
     isStreaming,
     refreshSessions,
+    sessionsScope,
+  ]);
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!currentSessionId) {
+      setDelegatesState([]);
+      return;
+    }
+    if (sessionsScope === "archived") {
+      setDelegatesState([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollDelegates = async () => {
+      try {
+        const response = await listDelegates(currentAgentId, currentSessionId);
+        if (cancelled) return;
+        setDelegatesState(response.delegates);
+      } catch (error) {
+        if (cancelled) return;
+        setDelegatesState([]);
+        console.warn("Failed to poll delegates", error);
+      }
+    };
+
+    void pollDelegates();
+    const timer = window.setInterval(() => {
+      void pollDelegates();
+    }, isStreaming ? 1500 : 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    currentAgentId,
+    currentSessionId,
+    initialized,
+    isStreaming,
     sessionsScope,
   ]);
 

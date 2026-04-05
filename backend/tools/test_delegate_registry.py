@@ -74,3 +74,36 @@ def test_max_per_session_enforced(tmp_path: Path):
     assert not registry.check_max_per_session("alpha", "sess_1", max_count=2)
     # 2 running, max=3 → allowed
     assert registry.check_max_per_session("alpha", "sess_1", max_count=3)
+
+
+def test_registry_hydrates_from_disk(tmp_path: Path):
+    original = DelegateRegistry(base_dir=tmp_path)
+    reg = original.register(
+        "alpha",
+        "sess_parent",
+        "Research APIs",
+        "researcher",
+        ["web_search"],
+        ["fetch_url"],
+        30,
+    )
+    original.mark_completed(
+        reg["delegate_id"],
+        {
+            "summary": "Found useful docs",
+            "steps": 4,
+            "tools_used": ["web_search"],
+            "token_usage": {"prompt_tokens": 9, "completion_tokens": 2},
+        },
+    )
+
+    restored = DelegateRegistry(base_dir=tmp_path)
+    status = restored.get_status(reg["delegate_id"])
+    assert status is not None
+    assert status.status == "completed"
+    assert status.parent_session_id == "sess_parent"
+    assert status.allowed_tools == ["web_search"]
+    assert status.blocked_tools == ["fetch_url"]
+    assert status.result_summary == "Found useful docs"
+    listed = restored.list_for_session("alpha", "sess_parent")
+    assert [item.delegate_id for item in listed] == [reg["delegate_id"]]

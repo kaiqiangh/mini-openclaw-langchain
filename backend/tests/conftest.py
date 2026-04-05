@@ -20,10 +20,13 @@ if str(BACKEND_DIR) not in sys.path:
 
 from api import (
     agents,
+    audit,
     chat,
     compress,
     config_api,
+    delegates,
     files,
+    hooks,
     scheduler_api,
     sessions,
     traces,
@@ -34,10 +37,12 @@ from api.errors import ApiError, error_payload  # noqa: E402
 from config import RuntimeConfig, load_runtime_config  # noqa: E402
 from graph.memory_indexer import MemoryIndexer  # noqa: E402
 from graph.session_manager import SessionManager  # noqa: E402
+from hooks.engine import HookEngine  # noqa: E402
 from scheduler.cron import CronScheduler  # noqa: E402
 from scheduler.heartbeat import HeartbeatScheduler  # noqa: E402
 from storage.run_store import AuditStore  # noqa: E402
 from storage.usage_store import UsageStore  # noqa: E402
+from tools.delegate_registry import DelegateRegistry  # noqa: E402
 
 if TYPE_CHECKING:
     from graph.agent import AgentManager
@@ -87,6 +92,7 @@ class FakeSessionRepository:
         tool_calls: list[dict[str, object]] | None = None,
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
+        delegate: dict[str, object] | None = None,
     ) -> dict[str, object]:
         entry: dict[str, object] = {
             "role": role,
@@ -99,6 +105,8 @@ class FakeSessionRepository:
             entry["skill_uses"] = list(dict.fromkeys(skill_uses))
         if selected_skills:
             entry["selected_skills"] = list(dict.fromkeys(selected_skills))
+        if delegate:
+            entry["delegate"] = dict(delegate)
         return entry
 
     @staticmethod
@@ -241,6 +249,7 @@ class FakeSessionRepository:
         tool_calls: list[dict[str, object]] | None = None,
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
+        delegate: dict[str, object] | None = None,
     ) -> None:
         _ = agent_id
         await self.manager.load_session(session_id)
@@ -253,6 +262,7 @@ class FakeSessionRepository:
                 tool_calls=tool_calls,
                 skill_uses=skill_uses,
                 selected_skills=selected_skills,
+                delegate=delegate,
             )
         )
 
@@ -289,6 +299,7 @@ class FakeAgentManager:
         self.config = _Config()
         self._runtimes: dict[str, FakeRuntime] = {}
         self._session_repositories: dict[str, FakeSessionRepository] = {}
+        self._hook_engines: dict[str, HookEngine] = {}
         self.get_runtime("default")
 
     def _agent_root(self, agent_id: str) -> Path:
@@ -347,7 +358,20 @@ class FakeAgentManager:
         )
         runtime.audit_store.ensure_schema_descriptor()
         self._runtimes[agent_id] = runtime
+        hook_engine = self._hook_engines.get(agent_id)
+        if hook_engine is not None:
+            hook_engine.is_enabled = bool(runtime.runtime_config.hooks.enabled)
         return runtime
+
+    def get_hook_engine(self, agent_id: str = "default") -> HookEngine:
+        runtime = self.get_runtime(agent_id)
+        engine = self._hook_engines.get(runtime.agent_id)
+        if engine is None:
+            engine = HookEngine(agent_id=runtime.agent_id, workspace_root=runtime.root_dir)
+            self._hook_engines[runtime.agent_id] = engine
+        engine.is_enabled = bool(runtime.runtime_config.hooks.enabled)
+        engine.load_config()
+        return engine
 
     def get_agent_config_path(self, agent_id: str = "default") -> Path:
         root = self._ensure_agent_root(agent_id)
@@ -604,10 +628,13 @@ def api_app(backend_base_dir: Path):
     app = FastAPI()
 
     agent_manager = FakeAgentManager(backend_base_dir)
+    delegate_registry = DelegateRegistry(backend_base_dir)
     typed_agent_manager = cast("AgentManager", agent_manager)
 
     chat.set_agent_manager(typed_agent_manager)
     sessions.set_agent_manager(typed_agent_manager)
+    delegates.set_agent_manager(typed_agent_manager)
+    delegates.set_delegate_registry(delegate_registry)
     files.set_dependencies(backend_base_dir, typed_agent_manager)
     tokens.set_dependencies(backend_base_dir, typed_agent_manager)
     compress.set_agent_manager(typed_agent_manager)
@@ -615,6 +642,8 @@ def api_app(backend_base_dir: Path):
     usage.set_agent_manager(typed_agent_manager)
     agents.set_agent_manager(typed_agent_manager)
     traces.set_agent_manager(typed_agent_manager)
+    audit.set_agent_manager(typed_agent_manager)
+    hooks.set_agent_manager(typed_agent_manager)
     runtime = agent_manager.get_runtime("default")
     heartbeat_scheduler = HeartbeatScheduler(
         base_dir=runtime.root_dir,
@@ -671,6 +700,7 @@ def api_app(backend_base_dir: Path):
 
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(sessions.router, prefix="/api/v1")
+    app.include_router(delegates.router, prefix="/api/v1")
     app.include_router(files.router, prefix="/api/v1")
     app.include_router(tokens.router, prefix="/api/v1")
     app.include_router(compress.router, prefix="/api/v1")
@@ -678,12 +708,15 @@ def api_app(backend_base_dir: Path):
     app.include_router(usage.router, prefix="/api/v1")
     app.include_router(agents.router, prefix="/api/v1")
     app.include_router(traces.router, prefix="/api/v1")
+    app.include_router(audit.router, prefix="/api/v1")
+    app.include_router(hooks.router, prefix="/api/v1")
     app.include_router(scheduler_api.router, prefix="/api/v1")
 
     return {
         "app": app,
         "base_dir": backend_base_dir,
         "agent_manager": agent_manager,
+        "delegate_registry": delegate_registry,
         "heartbeat_scheduler": heartbeat_scheduler,
         "cron_scheduler": cron_scheduler,
     }

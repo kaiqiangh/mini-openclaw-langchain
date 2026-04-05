@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, message_chunk_to_message
@@ -64,6 +65,35 @@ class DefaultGraphRuntime(GraphRuntime):
         """Check if hooks are enabled for a given agent."""
         engine = self._resolve_hook_engine(agent_id)
         return engine is not None and engine.is_enabled
+
+    @staticmethod
+    def _hook_timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _append_hook_audit_event(
+        self,
+        *,
+        trigger_type: str,
+        hook_event: HookEvent,
+        status: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        runtime = self.services.get_runtime(hook_event.agent_id)
+        runtime.audit_store.append_step(
+            run_id=hook_event.run_id or "",
+            session_id=hook_event.session_id or "",
+            trigger_type=trigger_type,
+            event=f"hook_{hook_event.hook_type}",
+            details={
+                "agent_id": hook_event.agent_id,
+                "hook_type": hook_event.hook_type,
+                "status": status,
+                "session_id": hook_event.session_id or "",
+                "run_id": hook_event.run_id or "",
+                "timestamp": hook_event.timestamp,
+                **(details or {}),
+            },
+        )
 
     async def invoke(self, request: RuntimeRequest) -> RuntimeResult:
         session_repository = self.services.require_session_repository()
@@ -324,9 +354,19 @@ class DefaultGraphRuntime(GraphRuntime):
                 agent_id=request.agent_id,
                 session_id=request.session_id,
                 run_id=str(run_id_candidate),
+                timestamp=self._hook_timestamp(),
                 payload={"message_length": len(str(request.message))},
             )
             hook_result = hook_engine.dispatch_sync(hook_event)
+            self._append_hook_audit_event(
+                trigger_type=request.trigger_type,
+                hook_event=hook_event,
+                status="allow" if hook_result.allow else "deny",
+                details={
+                    "message_length": len(str(request.message)),
+                    "reason": hook_result.reason,
+                },
+            )
             if not hook_result.allow:
                 return Command(
                     update={
@@ -579,33 +619,45 @@ class DefaultGraphRuntime(GraphRuntime):
         delegate_tools = []
         drv = getattr(self.services, "delegate_registry", None)
         am = getattr(self.services, "_agent_manager", None)
-        if drv:
-            delegate_tools.append(build_delegate_status_tool(registry=drv))
-            if am:
-                ctx = ToolContext(
-                    workspace_root=runtime_state.root_dir,
-                    trigger_type=request.trigger_type,
-                    explicit_enabled_tools=(),
-                    explicit_blocked_tools=(),
-                    run_id=run_id,
-                    session_id=request.session_id,
-                )
+        delegation_config = effective_runtime.delegation
+        request_explicit_enabled = request.explicit_enabled_tools
+        request_explicit_blocked = request.explicit_blocked_tools
+        if (
+            drv
+            and request_explicit_enabled is None
+            and request_explicit_blocked is None
+        ):
+            ctx = ToolContext(
+                workspace_root=runtime_state.root_dir,
+                trigger_type=request.trigger_type,
+                agent_id=request.agent_id,
+                explicit_enabled_tools=(),
+                explicit_blocked_tools=(),
+                run_id=run_id,
+                session_id=request.session_id,
+            )
+            delegate_tools.append(build_delegate_status_tool(registry=drv, context=ctx))
+            if am and delegation_config.enabled:
                 delegate_tools.append(build_delegate_tool(
                     agent_manager=am,
                     registry=drv,
                     base_dir=self.services.require_base_dir(),
                     context=ctx,
                 ))
+        hook_engine = self._resolve_hook_engine(request.agent_id)
         tool_service = ToolExecutionService.build(
             config_base_dir=self.services.require_base_dir(),
             runtime_root=runtime_state.root_dir,
             runtime=effective_runtime,
             trigger_type=request.trigger_type,
+            agent_id=request.agent_id,
             run_id=run_id,
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
             delegate_tools=delegate_tools if delegate_tools else None,
-            hook_engine=self.hook_engine,
+            hook_engine=hook_engine,
+            explicit_enabled_tools=request_explicit_enabled,
+            explicit_blocked_tools=request_explicit_blocked,
         )
         usage_state = dict(state.get("usage_state", {}))
         usage_sources = dict(state.get("usage_sources", {}))
@@ -629,17 +681,28 @@ class DefaultGraphRuntime(GraphRuntime):
 
         # PrePromptSubmit hook
         hook_engine = self._resolve_hook_engine(state["request"].agent_id)
+        hook_result = None
         if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="pre_prompt_submit",
                 agent_id=state["request"].agent_id,
                 session_id=state["request"].session_id,
                 run_id=state.get("run_id", ""),
+                timestamp=self._hook_timestamp(),
                 payload={
                     "message_count": len(state.get("input_messages", [])),
                 },
             )
             hook_result = hook_engine.dispatch_sync(hook_event)
+            self._append_hook_audit_event(
+                trigger_type=state["request"].trigger_type,
+                hook_event=hook_event,
+                status="allow" if hook_result.allow else "deny",
+                details={
+                    "message_count": len(state.get("input_messages", [])),
+                    "reason": hook_result.reason,
+                },
+            )
             if not hook_result.allow:
                 self._emit("hook_denied", {"hook_type": "pre_prompt_submit", "reason": hook_result.reason})
                 return Command(
@@ -656,7 +719,7 @@ class DefaultGraphRuntime(GraphRuntime):
         emitted_agent_update = False
 
         # Apply prompt modifications from hook (only if hook was active)
-        if self.hook_engine and self.hook_engine.is_enabled and hook_result.modifications.get(
+        if hook_result is not None and hook_result.modifications.get(
             "system_prompt_prefix"
         ):
             prefix = hook_result.modifications["system_prompt_prefix"]
@@ -1000,10 +1063,13 @@ class DefaultGraphRuntime(GraphRuntime):
             runtime_root=runtime_state.root_dir,
             runtime=runtime_state.runtime_config,
             trigger_type=request.trigger_type,
+            agent_id=request.agent_id,
             run_id=str(state.get("run_id", "")),
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
             hook_engine=hook_engine,
+            explicit_enabled_tools=request.explicit_enabled_tools,
+            explicit_blocked_tools=request.explicit_blocked_tools,
         )
         envelopes, tool_messages = await tool_service.execute_pending(
             list(state.get("pending_tool_calls", []))
@@ -1039,18 +1105,26 @@ class DefaultGraphRuntime(GraphRuntime):
         )
 
         # Stop hook (async)
-        if self.hook_engine and self.hook_engine.is_enabled:
+        hook_engine = self._resolve_hook_engine(request.agent_id)
+        if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="stop",
                 agent_id=state["request"].agent_id,
                 session_id=state["request"].session_id,
                 run_id=state.get("run_id", ""),
+                timestamp=self._hook_timestamp(),
                 payload={
                     "status": "success",
                     "text_len": len(state.get("final_text", "")),
                 },
             )
-            self.hook_engine.dispatch_async(hook_event)
+            hook_engine.dispatch_async(hook_event)
+            self._append_hook_audit_event(
+                trigger_type=request.trigger_type,
+                hook_event=hook_event,
+                status="dispatched",
+                details={"result_status": "success", "text_len": len(state.get("final_text", ""))},
+            )
 
         return {}
 
@@ -1068,14 +1142,26 @@ class DefaultGraphRuntime(GraphRuntime):
         messages = list(state.get("input_messages", []))
 
         # PreCompact hooks
-        if self.hook_engine and self.hook_engine.is_enabled:
+        hook_engine = self._resolve_hook_engine(state["request"].agent_id)
+        if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="pre_compact",
                 agent_id=state["request"].agent_id,
                 session_id=state["request"].session_id,
+                run_id=str(state.get("run_id", "")),
+                timestamp=self._hook_timestamp(),
                 payload={"token_count": pipeline.count_messages_tokens(messages)},
             )
-            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            hook_result = hook_engine.dispatch_sync(hook_event)
+            self._append_hook_audit_event(
+                trigger_type=state["request"].trigger_type,
+                hook_event=hook_event,
+                status="allow" if hook_result.allow else "deny",
+                details={
+                    "token_count": pipeline.count_messages_tokens(messages),
+                    "reason": hook_result.reason,
+                },
+            )
             if not hook_result.allow:
                 return {"compaction_deferred": True}
 
@@ -1129,16 +1215,24 @@ class DefaultGraphRuntime(GraphRuntime):
             self._emit("error", error.as_payload())
 
         # Stop hook (async)
-        if self.hook_engine and self.hook_engine.is_enabled:
+        hook_engine = self._resolve_hook_engine(state["request"].agent_id)
+        if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="stop",
                 agent_id=state["request"].agent_id,
                 session_id=state["request"].session_id,
                 run_id=state.get("run_id", ""),
+                timestamp=self._hook_timestamp(),
                 payload={
                     "status": "error",
                 },
             )
-            self.hook_engine.dispatch_async(hook_event)
+            hook_engine.dispatch_async(hook_event)
+            self._append_hook_audit_event(
+                trigger_type=state["request"].trigger_type,
+                hook_event=hook_event,
+                status="dispatched",
+                details={"result_status": "error"},
+            )
 
         return {}

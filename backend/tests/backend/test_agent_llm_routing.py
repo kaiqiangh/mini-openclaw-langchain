@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -276,3 +277,50 @@ def test_list_agents_reports_invalid_llm_routes_without_blocking_other_agents(
     assert rows["healthy"]["llm_status"]["runnable"] is True
     assert rows["broken"]["llm_status"]["valid"] is False
     assert "missing-profile" in " ".join(rows["broken"]["llm_status"]["errors"])
+
+
+def test_list_agents_excludes_hidden_sessions_from_counts(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    _seed_base(
+        tmp_path,
+        {"llm_defaults": {"default": "openai", "fallbacks": []}},
+    )
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    default_runtime = manager.get_runtime("default")
+    visible_session = default_runtime.session_manager.sessions_dir / "visible.json"
+    hidden_session = default_runtime.session_manager.sessions_dir / "hidden.json"
+    now = time.time()
+    visible_session.write_text(
+        json.dumps(
+            {
+                "title": "Visible",
+                "created_at": now,
+                "updated_at": now,
+                "compressed_context": "",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    hidden_session.write_text(
+        json.dumps(
+            {
+                "title": "Hidden",
+                "created_at": now,
+                "updated_at": now,
+                "compressed_context": "",
+                "hidden": True,
+                "internal": True,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = {row["agent_id"]: row for row in manager.list_agents()}
+    assert rows["default"]["active_sessions"] == 1

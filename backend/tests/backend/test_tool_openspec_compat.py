@@ -270,6 +270,20 @@ def test_read_files_single_and_multi_path_modes(tmp_path):
 
 def test_management_tools_return_workspace_state(tmp_path):
     _seed_workspace(tmp_path)
+    _write_session_metadata(
+        tmp_path / "workspaces" / "default" / "sessions" / "hidden-child.json",
+        "Hidden Child",
+    )
+    hidden_path = (
+        tmp_path / "workspaces" / "default" / "sessions" / "hidden-child.json"
+    )
+    payload = json.loads(hidden_path.read_text(encoding="utf-8"))
+    payload["hidden"] = True
+    payload["internal"] = True
+    hidden_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     tool_map, _ = _build_tool_map(tmp_path)
 
     sessions = _parse_result(
@@ -288,6 +302,10 @@ def test_management_tools_return_workspace_state(tmp_path):
     agents = _parse_result(tool_map["agents_list"].invoke({}))  # type: ignore[call-arg]
     assert agents["ok"] is True
     assert agents["data"]["count"] >= 1
+    default_agent = next(
+        item for item in agents["data"]["agents"] if item["agent_id"] == "default"
+    )
+    assert default_agent["active_sessions"] == 1
 
     cron_jobs = _parse_result(
         tool_map["scheduler_cron_jobs"].invoke({})  # type: ignore[call-arg]

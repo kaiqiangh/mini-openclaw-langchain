@@ -20,6 +20,8 @@ import {
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
 import { SessionUsageSummary } from "@/components/chat/SessionUsageSummary";
+import { DelegateBadge } from "@/components/delegates/DelegateBadge";
+import { DelegateResultCard } from "@/components/delegates/DelegateResultCard";
 import {
   Badge,
   Button,
@@ -34,12 +36,19 @@ import {
   AgentMeta,
   archiveSession,
   ChatHistoryResponse,
+  compactSession,
   createSession,
+  type DelegateDetail,
+  type DelegateSummary,
   deleteSession,
   getAgents,
+  getDelegateDetail,
   getSessionHistory,
   getSessions,
+  listSessionCheckpoints,
   restoreSession,
+  rewindSessionToCheckpoint,
+  type SessionCheckpoint,
   SessionMeta,
 } from "@/lib/api";
 import {
@@ -316,16 +325,163 @@ function LiveConversation({
   );
 }
 
+type DelegateActivityPanelProps = {
+  delegates: DelegateSummary[];
+  selectedDelegateId: string | null;
+  delegateDetail: DelegateDetail | null;
+  detailLoading: boolean;
+  detailError: string;
+  onSelect: (delegateId: string) => void;
+  pageHref: string;
+};
+
+function DelegateActivityPanel({
+  delegates,
+  selectedDelegateId,
+  delegateDetail,
+  detailLoading,
+  detailError,
+  onSelect,
+  pageHref,
+}: DelegateActivityPanelProps) {
+  if (delegates.length === 0) return null;
+
+  const selectedSummary =
+    delegates.find((delegate) => delegate.delegate_id === selectedDelegateId) ??
+    delegates[0] ??
+    null;
+
+  return (
+    <section className="border-b border-[var(--border)] px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="ui-label">Delegate Activity</div>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Hidden child work for this parent session, attached back to the timeline.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge tone="neutral">{delegates.length} delegates</Badge>
+          <Link href={pageHref} className="ui-link text-sm">
+            Open page
+          </Link>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(260px,320px)_minmax(0,1fr)]">
+        <div className="space-y-2">
+          {delegates.map((delegate) => {
+            const selected = delegate.delegate_id === selectedSummary?.delegate_id;
+            return (
+              <button
+                key={delegate.delegate_id}
+                type="button"
+                className={`w-full rounded-md border p-3 text-left transition-colors ${
+                  selected
+                    ? "border-[var(--accent-strong)] bg-[var(--accent-soft)]"
+                    : "border-[var(--border)] bg-[var(--surface-3)] hover:border-[var(--border-strong)]"
+                }`}
+                onClick={() => onSelect(delegate.delegate_id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-[var(--text)]">
+                      {delegate.task}
+                    </div>
+                    <div className="mt-2">
+                      <DelegateBadge status={delegate.status} role={delegate.role} />
+                    </div>
+                  </div>
+                  <span className="ui-mono text-[11px] text-[var(--muted)]">
+                    {formatTimestamp(delegate.created_at)}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+          {detailError ? (
+            <div className="ui-alert" role="alert">
+              {detailError}
+            </div>
+          ) : detailLoading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : delegateDetail ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <DelegateBadge
+                  status={delegateDetail.status}
+                  role={delegateDetail.role}
+                />
+                {delegateDetail.duration_ms ? (
+                  <Badge tone="neutral">
+                    {(delegateDetail.duration_ms / 1000).toFixed(1)}s
+                  </Badge>
+                ) : null}
+                {delegateDetail.steps_completed ? (
+                  <Badge tone="neutral">
+                    {delegateDetail.steps_completed} steps
+                  </Badge>
+                ) : null}
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="ui-label">Task</div>
+                  <p className="mt-1 text-sm text-[var(--text)]">
+                    {delegateDetail.task}
+                  </p>
+                </div>
+                <div>
+                  <div className="ui-label">Allowed Tools</div>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {delegateDetail.allowed_tools.map((toolName) => (
+                      <Badge key={toolName} tone="neutral" className="ui-mono">
+                        {toolName}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {delegateDetail.status === "running" ? (
+                <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--muted)]">
+                  Delegate is still running. This panel refreshes from the parent
+                  session scope.
+                </div>
+              ) : null}
+              <DelegateResultCard delegate={delegateDetail} />
+            </>
+          ) : (
+            <EmptyState
+              title="Select a delegate"
+              description="Choose one of the hidden child runs to inspect its result."
+            />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 type SessionDetailProps = {
   agentId: string;
   scope: SessionScope;
   session: SessionMeta | null;
   history: ChatHistoryResponse | null;
+  checkpoints: SessionCheckpoint[];
+  checkpointsLoading: boolean;
+  checkpointsError: string;
   busyAction: string | null;
   status: string;
   runtimeBadge: SessionRuntimeBadge | null;
+  onCompact: () => void;
   onArchive: () => void;
   onRestore: () => void;
+  onRewind: (checkpointId: string) => void;
   onDelete: () => void;
   onClose?: () => void;
   children: ReactNode;
@@ -336,11 +492,16 @@ function SessionDetail({
   scope,
   session,
   history,
+  checkpoints,
+  checkpointsLoading,
+  checkpointsError,
   busyAction,
   status,
   runtimeBadge,
+  onCompact,
   onArchive,
   onRestore,
+  onRewind,
   onDelete,
   onClose,
   children,
@@ -374,6 +535,16 @@ function SessionDetail({
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {scope === "active" ? (
+            <Button
+              type="button"
+              size="sm"
+              loading={busyAction === "compact"}
+              onClick={onCompact}
+            >
+              Compact
+            </Button>
+          ) : null}
           {scope === "active" ? (
             <Button
               type="button"
@@ -457,6 +628,56 @@ function SessionDetail({
             </section>
           ) : null}
 
+          {scope === "active" ? (
+            <section className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="ui-label">Checkpoints</div>
+                <Badge tone="neutral">{checkpoints.length}</Badge>
+              </div>
+              {checkpointsError ? (
+                <div className="ui-alert mt-2" role="alert">
+                  {checkpointsError}
+                </div>
+              ) : checkpointsLoading ? (
+                <div className="mt-2 space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : checkpoints.length === 0 ? (
+                <p className="mt-2 text-sm text-[var(--muted)]">
+                  No checkpoints available for this session yet.
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {checkpoints.map((checkpoint) => (
+                    <li
+                      key={checkpoint.checkpoint_id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <div className="ui-mono text-xs text-[var(--text)]">
+                          {checkpoint.checkpoint_id}
+                        </div>
+                        <div className="mt-1 text-xs text-[var(--muted)]">
+                          Run {checkpoint.run_id} · step {checkpoint.step} ·{" "}
+                          {checkpoint.message_count} messages
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        loading={busyAction === `rewind:${checkpoint.checkpoint_id}`}
+                        onClick={() => onRewind(checkpoint.checkpoint_id)}
+                      >
+                        Restore
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+
           {scope === "archived" ? (
             <div className="mt-3 rounded-md border border-[var(--border)] bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--muted)]">
               Archived sessions are read-only. Restore this session before continuing work.
@@ -506,11 +727,16 @@ function SessionDetailShell({
         scope={scope}
         session={session}
         history={history}
+        checkpoints={props.checkpoints}
+        checkpointsLoading={props.checkpointsLoading}
+        checkpointsError={props.checkpointsError}
         busyAction={busyAction}
         status={status}
         runtimeBadge={runtimeBadge}
+        onCompact={props.onCompact}
         onArchive={onArchive}
         onRestore={onRestore}
+        onRewind={props.onRewind}
         onDelete={onDelete}
         onClose={onClose}
       >
@@ -526,11 +752,16 @@ function SessionDetailShell({
         scope={scope}
         session={session}
         history={history}
+        checkpoints={props.checkpoints}
+        checkpointsLoading={props.checkpointsLoading}
+        checkpointsError={props.checkpointsError}
         busyAction={busyAction}
         status={status}
         runtimeBadge={runtimeBadge}
+        onCompact={props.onCompact}
         onArchive={onArchive}
         onRestore={onRestore}
+        onRewind={props.onRewind}
         onDelete={onDelete}
         onClose={onClose}
       >
@@ -572,6 +803,7 @@ function SessionsPageContent() {
   const {
     currentAgentId,
     currentSessionId,
+    delegates,
     sessionsScope,
     messages: liveMessages,
     isStreaming,
@@ -594,6 +826,13 @@ function SessionsPageContent() {
   const [status, setStatus] = useState("");
   const [listError, setListError] = useState("");
   const [detailError, setDetailError] = useState("");
+  const [checkpoints, setCheckpoints] = useState<SessionCheckpoint[]>([]);
+  const [checkpointsLoading, setCheckpointsLoading] = useState(false);
+  const [checkpointsError, setCheckpointsError] = useState("");
+  const [selectedDelegateId, setSelectedDelegateId] = useState<string | null>(null);
+  const [delegateDetail, setDelegateDetail] = useState<DelegateDetail | null>(null);
+  const [delegateDetailLoading, setDelegateDetailLoading] = useState(false);
+  const [delegateDetailError, setDelegateDetailError] = useState("");
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const scope = normalizeScope(searchParams.get("scope"));
@@ -645,6 +884,11 @@ function SessionsPageContent() {
     currentAgentId === agentId &&
     sessionsScope === scope &&
     currentSessionId === selectedSessionId;
+  const liveDelegates =
+    scope === "active" && liveSessionReady ? delegates : [];
+  const selectedDelegateSummary =
+    liveDelegates.find((delegate) => delegate.delegate_id === selectedDelegateId) ??
+    null;
   const runtimeBadge = resolveSessionRuntimeBadge({
     scope,
     hasSession: Boolean(selectedSession),
@@ -779,6 +1023,115 @@ function SessionsPageContent() {
       cancelled = true;
     };
   }, [agentId, scope, selectedSessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCheckpoints() {
+      if (scope !== "active" || !selectedSessionId) {
+        setCheckpoints([]);
+        setCheckpointsError("");
+        setCheckpointsLoading(false);
+        return;
+      }
+
+      setCheckpointsLoading(true);
+      setCheckpointsError("");
+      try {
+        const rows = await listSessionCheckpoints(selectedSessionId, agentId);
+        if (cancelled) return;
+        setCheckpoints(rows);
+      } catch (error) {
+        if (cancelled) return;
+        setCheckpoints([]);
+        setCheckpointsError(
+          error instanceof Error ? error.message : "Failed to load checkpoints",
+        );
+      } finally {
+        if (!cancelled) {
+          setCheckpointsLoading(false);
+        }
+      }
+    }
+
+    void loadCheckpoints();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, scope, selectedSessionId]);
+
+  useEffect(() => {
+    if (liveDelegates.length === 0) {
+      setSelectedDelegateId(null);
+      setDelegateDetail(null);
+      setDelegateDetailError("");
+      setDelegateDetailLoading(false);
+      return;
+    }
+    if (
+      selectedDelegateId &&
+      liveDelegates.some((delegate) => delegate.delegate_id === selectedDelegateId)
+    ) {
+      return;
+    }
+    setSelectedDelegateId(liveDelegates[0]?.delegate_id ?? null);
+  }, [liveDelegates, selectedDelegateId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDelegateDetail() {
+      if (
+        scope !== "active" ||
+        !liveSessionReady ||
+        !selectedSessionId ||
+        !selectedDelegateId
+      ) {
+        setDelegateDetail(null);
+        setDelegateDetailError("");
+        setDelegateDetailLoading(false);
+        return;
+      }
+
+      setDelegateDetailLoading(true);
+      setDelegateDetailError("");
+      try {
+        const nextDetail = await getDelegateDetail(
+          agentId,
+          selectedSessionId,
+          selectedDelegateId,
+        );
+        if (cancelled) return;
+        setDelegateDetail(nextDetail);
+      } catch (error) {
+        if (cancelled) return;
+        setDelegateDetail(null);
+        setDelegateDetailError(
+          error instanceof Error
+            ? error.message
+            : "Failed to load delegate detail",
+        );
+      } finally {
+        if (!cancelled) {
+          setDelegateDetailLoading(false);
+        }
+      }
+    }
+
+    void loadDelegateDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    agentId,
+    liveSessionReady,
+    scope,
+    selectedDelegateId,
+    selectedDelegateSummary,
+    selectedSessionId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -923,21 +1276,89 @@ function SessionsPageContent() {
     }
   }
 
+  async function handleCompactSession() {
+    if (!selectedSessionId || scope !== "active") return;
+    setBusyAction("compact");
+    setStatus("");
+    try {
+      const result = await compactSession(selectedSessionId, agentId);
+      await refreshCurrentSessions("active");
+      const nextCheckpoints = await listSessionCheckpoints(selectedSessionId, agentId);
+      setCheckpoints(nextCheckpoints);
+      setStatus(
+        result.compacted
+          ? `Compacted session. ${result.messages_before} -> ${result.messages_after} messages.`
+          : "Compaction completed without reducing messages.",
+      );
+      if (liveSessionReady) {
+        await selectSession(selectedSessionId);
+      }
+    } catch (error) {
+      setListError(
+        error instanceof Error ? error.message : "Failed to compact session",
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleRewindSession(checkpointId: string) {
+    if (!selectedSessionId || scope !== "active") return;
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("Restore this checkpoint and replace the current session state?")
+    ) {
+      return;
+    }
+    setBusyAction(`rewind:${checkpointId}`);
+    setStatus("");
+    try {
+      const result = await rewindSessionToCheckpoint(
+        selectedSessionId,
+        checkpointId,
+        agentId,
+      );
+      if (liveSessionReady) {
+        await selectSession(selectedSessionId);
+      }
+      setStatus(
+        `Restored checkpoint ${result.checkpoint_id} (${result.message_count} messages).`,
+      );
+    } catch (error) {
+      setListError(
+        error instanceof Error ? error.message : "Failed to restore checkpoint",
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   const detailContent =
     scope === "active" ? (
-      <LiveConversation
-        messages={liveSessionReady ? liveMessages : []}
-        loading={activeSyncing}
-        error={detailError || liveError || ""}
-        isStreaming={liveSessionReady ? isStreaming : false}
-        maxStepsPrompt={liveSessionReady ? maxStepsPrompt : null}
-        onContinue={() => {
-          void continueAfterMaxSteps();
-        }}
-        onCancel={() => {
-          void cancelAfterMaxSteps();
-        }}
-      />
+      <>
+        <DelegateActivityPanel
+          delegates={liveDelegates}
+          selectedDelegateId={selectedDelegateId}
+          delegateDetail={delegateDetail}
+          detailLoading={delegateDetailLoading}
+          detailError={delegateDetailError}
+          onSelect={setSelectedDelegateId}
+          pageHref={`/delegates?agent=${encodeURIComponent(agentId)}&session=${encodeURIComponent(selectedSessionId)}`}
+        />
+        <LiveConversation
+          messages={liveSessionReady ? liveMessages : []}
+          loading={activeSyncing}
+          error={detailError || liveError || ""}
+          isStreaming={liveSessionReady ? isStreaming : false}
+          maxStepsPrompt={liveSessionReady ? maxStepsPrompt : null}
+          onContinue={() => {
+            void continueAfterMaxSteps();
+          }}
+          onCancel={() => {
+            void cancelAfterMaxSteps();
+          }}
+        />
+      </>
     ) : (
       <TranscriptFeed
         messages={archivedMessages}
@@ -1117,12 +1538,17 @@ function SessionsPageContent() {
             scope={scope}
             session={selectedSession}
             history={history}
+            checkpoints={checkpoints}
+            checkpointsLoading={checkpointsLoading}
+            checkpointsError={checkpointsError}
             messages={detailMessages}
             busyAction={busyAction}
             status={status}
             runtimeBadge={runtimeBadge}
+            onCompact={handleCompactSession}
             onArchive={handleArchiveSession}
             onRestore={handleRestoreSession}
+            onRewind={handleRewindSession}
             onDelete={handleDeleteSession}
           >
             {detailContent}
@@ -1137,12 +1563,17 @@ function SessionsPageContent() {
             scope={scope}
             session={selectedSession}
             history={history}
+            checkpoints={checkpoints}
+            checkpointsLoading={checkpointsLoading}
+            checkpointsError={checkpointsError}
             messages={detailMessages}
             busyAction={busyAction}
             status={status}
             runtimeBadge={runtimeBadge}
+            onCompact={handleCompactSession}
             onArchive={handleArchiveSession}
             onRestore={handleRestoreSession}
+            onRewind={handleRewindSession}
             onDelete={handleDeleteSession}
             onClose={() => navigateWithUpdates({ session: undefined })}
           >

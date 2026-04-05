@@ -16,6 +16,14 @@ const navigationState = vi.hoisted(() => ({
 const storeState = vi.hoisted(() => ({
   currentAgentId: "default",
   currentSessionId: null as string | null,
+  delegates: [] as Array<{
+    delegate_id: string;
+    role: string;
+    task: string;
+    status: "running" | "completed" | "failed" | "timeout";
+    sub_session_id: string;
+    created_at: number;
+  }>,
   sessionsScope: "active" as "active" | "archived",
   messages: [] as Array<{
     id: string;
@@ -37,6 +45,7 @@ const {
   mockGetAgents,
   mockGetSessions,
   mockGetSessionHistory,
+  mockGetDelegateDetail,
   mockSendMessage,
   mockSelectSession,
   mockSetCurrentAgent,
@@ -66,6 +75,17 @@ const {
     session_id: "s-1",
     agent_id: "default",
     messages: [],
+  })),
+  mockGetDelegateDetail: vi.fn(async () => ({
+    delegate_id: "del-1",
+    agent_id: "default",
+    parent_session_id: "s-1",
+    role: "researcher",
+    task: "Investigate flow",
+    status: "running",
+    sub_session_id: "sub-1",
+    created_at: 1_710_000_000_000,
+    allowed_tools: ["web_search", "fetch_url"],
   })),
   mockSendMessage: vi.fn(async (content: string) => {
     storeState.messages = [
@@ -111,6 +131,16 @@ const {
         debugEvents: [],
       },
     ];
+    storeState.delegates = [
+      {
+        delegate_id: "del-1",
+        role: "researcher",
+        task: "Investigate flow",
+        status: "running",
+        sub_session_id: "sub-1",
+        created_at: 1_710_000_000_000,
+      },
+    ];
   }),
   mockSetCurrentAgent: vi.fn(async (agentId: string) => {
     storeState.currentAgentId = agentId;
@@ -148,6 +178,7 @@ vi.mock("@/lib/api", () => ({
   getAgents: mockGetAgents,
   getSessions: mockGetSessions,
   getSessionHistory: mockGetSessionHistory,
+  getDelegateDetail: mockGetDelegateDetail,
   createSession: vi.fn(),
   archiveSession: vi.fn(),
   restoreSession: vi.fn(),
@@ -175,6 +206,7 @@ describe("SessionsPage live chat", () => {
     );
     storeState.currentAgentId = "default";
     storeState.currentSessionId = null;
+    storeState.delegates = [];
     storeState.sessionsScope = "active";
     storeState.messages = [];
     storeState.isStreaming = false;
@@ -198,6 +230,19 @@ describe("SessionsPage live chat", () => {
     await waitFor(() =>
       expect(mockSendMessage).toHaveBeenCalledWith("Hello operator"),
     );
+  });
+
+  it("shows delegate activity inside the active session detail view", async () => {
+    const { rerender } = render(<SessionsPage />);
+
+    await waitFor(() => expect(mockSelectSession).toHaveBeenCalledWith("s-1"));
+    rerender(<SessionsPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Delegate Activity").length).toBeGreaterThan(0),
+    );
+    expect(screen.getAllByText("Investigate flow").length).toBeGreaterThan(0);
+    expect(mockGetDelegateDetail).toHaveBeenCalledWith("default", "s-1", "del-1");
   });
 
   it("recovers the current live session when the route omits the session id", async () => {

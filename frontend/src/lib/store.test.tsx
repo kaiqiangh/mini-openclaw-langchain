@@ -17,6 +17,7 @@ const {
   mockRestoreSession,
   mockDeleteSession,
   mockGetSessionHistory,
+  mockListDelegates,
   mockReadWorkspaceFile,
   mockSaveWorkspaceFile,
   mockSetRagMode,
@@ -89,6 +90,7 @@ const {
     session_id: "s1",
     messages: [],
   })),
+  mockListDelegates: vi.fn(async () => ({ delegates: [] })),
   mockReadWorkspaceFile: vi.fn(
     async (path: string, agentId?: string) =>
       `content:${agentId ?? "default"}:${path}`,
@@ -112,6 +114,7 @@ vi.mock("@/lib/api", () => ({
   restoreSession: mockRestoreSession,
   deleteSession: mockDeleteSession,
   getSessionHistory: mockGetSessionHistory,
+  listDelegates: mockListDelegates,
   readWorkspaceFile: mockReadWorkspaceFile,
   saveWorkspaceFile: mockSaveWorkspaceFile,
   setRagMode: mockSetRagMode,
@@ -193,6 +196,29 @@ function WorkspaceSessionProbe() {
         }
       >
         open-session
+      </button>
+    </div>
+  );
+}
+
+function DelegateProbe() {
+  const store = useAppStore();
+  if (!store.initialized) return <div>booting</div>;
+
+  return (
+    <div>
+      <div data-testid="delegate-count">{store.delegates.length}</div>
+      <div data-testid="streaming-state">{String(store.isStreaming)}</div>
+      <button
+        onClick={() =>
+          void store.openSessionInWorkspace({
+            agentId: "elon",
+            sessionId: "e1",
+            scope: "active",
+          })
+        }
+      >
+        open-live-session
       </button>
     </div>
   );
@@ -378,6 +404,43 @@ describe("store editor save flow", () => {
     );
     await waitFor(() =>
       expect(mockGetSessionHistory).toHaveBeenCalledWith("e1", true, "elon"),
+    );
+  });
+
+  it("polls delegates for the active session even when streaming is false", async () => {
+    mockListDelegates.mockResolvedValue({
+      delegates: [
+        {
+          delegate_id: "del-1",
+          role: "researcher",
+          task: "Investigate momentum",
+          status: "running",
+          sub_session_id: "sub-1",
+          created_at: 1_710_000_000_000,
+        },
+      ],
+    });
+
+    render(
+      <AppProvider>
+        <DelegateProbe />
+      </AppProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("booting")).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByText("open-live-session"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("streaming-state")).toHaveTextContent("false"),
+    );
+    await waitFor(() =>
+      expect(mockListDelegates).toHaveBeenCalledWith("elon", "e1"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("delegate-count")).toHaveTextContent("1"),
     );
   });
 });

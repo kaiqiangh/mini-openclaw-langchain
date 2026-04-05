@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from graph.session_manager import SessionManager
+from graph.session_manager import SessionManager, read_session_listing_payload
 
 from .base import ToolContext
 from .contracts import ToolResult
@@ -36,13 +35,7 @@ class SessionsListTool:
         items: list[dict[str, Any]] = []
 
         def _read_session_meta(path: Path) -> dict[str, Any] | None:
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    return raw
-            except Exception:
-                pass
-            return None
+            return read_session_listing_payload(path)
 
         if include_active:
             for path in sorted(manager.sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -50,6 +43,8 @@ class SessionsListTool:
                     continue
                 meta = _read_session_meta(path)
                 if meta is None:
+                    continue
+                if bool(meta.get("hidden")):
                     continue
                 items.append({
                     "session_id": path.stem,
@@ -64,6 +59,8 @@ class SessionsListTool:
                     continue
                 meta = _read_session_meta(path)
                 if meta is None:
+                    continue
+                if bool(meta.get("hidden")):
                     continue
                 items.append({
                     "session_id": path.stem,

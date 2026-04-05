@@ -40,6 +40,8 @@ class RuntimeRequest:
     agent_id: str = "default"
     graph_name: str = "default"
     resume_same_turn: bool = False
+    explicit_enabled_tools: list[str] | None = None
+    explicit_blocked_tools: list[str] | None = None
 
 
 @dataclass(frozen=True)
