@@ -54,6 +54,7 @@ class RuntimeExecutionServices:
         usage_orchestrator: UsageOrchestrator,
         delegate_registry: DelegateRegistry | None = None,
         agent_manager: Any | None = None,
+        hook_engine_getter: Callable[[str], Any] | None = None,
     ) -> None:
         self._base_dir_getter = base_dir_getter
         self._app_config_getter = app_config_getter
@@ -63,6 +64,7 @@ class RuntimeExecutionServices:
         self.session_repository: SessionRepositoryHandle | None = None
         self.delegate_registry = delegate_registry
         self._agent_manager = agent_manager
+        self._hook_engine_getter = hook_engine_getter
 
     def set_session_repository(self, repository: SessionRepositoryHandle) -> None:
         self.session_repository = repository
@@ -83,6 +85,12 @@ class RuntimeExecutionServices:
         if base_dir is None:
             raise RuntimeError("AgentManager is not initialized")
         return base_dir
+
+    def get_hook_engine(self, agent_id: str) -> Any | None:
+        """Get the HookEngine for an agent, if available."""
+        if self._hook_engine_getter is None:
+            return None
+        return self._hook_engine_getter(agent_id)
 
     def build_system_prompt(
         self, *, rag_mode: bool, is_first_turn: bool, agent_id: str = "default"

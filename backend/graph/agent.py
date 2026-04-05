@@ -24,6 +24,7 @@ from graph.usage_orchestrator import UsageOrchestrator
 from storage.run_store import AuditStore
 from storage.usage_store import UsageStore
 from tools.skills_scanner import ensure_skills_snapshot
+from hooks.engine import HookEngine
 
 if TYPE_CHECKING:
     from graph.checkpoint_session_repository import CheckpointSessionRepository
@@ -63,12 +64,14 @@ class AgentManager:
         from graph.runtime_execution_services import RuntimeExecutionServices
         from graph.sqlite_runtime_checkpointer import SQLiteRuntimeCheckpointer
 
+        self._hook_engines: dict[str, HookEngine] = {}
         self.runtime_services = RuntimeExecutionServices(
             base_dir_getter=lambda: self.base_dir,
             app_config_getter=self._refresh_app_config,
             runtime_getter=self.get_runtime,
             prompt_builder=self.prompt_builder,
             usage_orchestrator=self.usage_orchestrator,
+            hook_engine_getter=self._get_hook_engine,
         )
         self.runtime_checkpointer = SQLiteRuntimeCheckpointer(
             runtime_getter=self.get_runtime
@@ -275,6 +278,11 @@ class AgentManager:
         runtime.memory_indexer.ensure_storage(
             settings=runtime.runtime_config.retrieval.memory
         )
+        # Create and cache HookEngine per agent
+        self._hook_engines[agent_id] = HookEngine(
+            agent_id=agent_id,
+            workspace_root=workspace_root,
+        )
         return runtime
 
     def _refresh_runtime_config(self, runtime: AgentRuntime) -> None:
@@ -327,6 +335,10 @@ class AgentManager:
             return runtime
         self._refresh_runtime_config(runtime)
         return runtime
+
+    def _get_hook_engine(self, agent_id: str) -> "HookEngine | None":
+        """Get the HookEngine for a given agent, if available."""
+        return self._hook_engines.get(agent_id)
 
     def get_session_repository(
         self, agent_id: str = "default"

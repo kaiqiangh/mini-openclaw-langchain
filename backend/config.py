@@ -228,6 +228,12 @@ class SchedulerRuntimeConfig:
 
 
 @dataclass
+class HooksRuntimeConfig:
+    enabled: bool = True
+    default_timeout_ms: int = 10000
+
+
+@dataclass
 class RuntimeConfig:
     rag_mode: bool = False
     injection_mode: InjectionMode = InjectionMode.EVERY_TURN
@@ -254,6 +260,7 @@ class RuntimeConfig:
     scheduler: SchedulerRuntimeConfig = field(default_factory=SchedulerRuntimeConfig)
     heartbeat: HeartbeatRuntimeConfig = field(default_factory=HeartbeatRuntimeConfig)
     cron: CronRuntimeConfig = field(default_factory=CronRuntimeConfig)
+    hooks: HooksRuntimeConfig = field(default_factory=HooksRuntimeConfig)
 
 
 @dataclass
@@ -618,6 +625,10 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "retry_max_seconds": runtime.cron.retry_max_seconds,
             "failure_retention": runtime.cron.failure_retention,
         },
+        "hooks": {
+            "enabled": runtime.hooks.enabled,
+            "default_timeout_ms": runtime.hooks.default_timeout_ms,
+        },
     }
     llm_payload = _llm_route_to_payload(runtime.llm)
     if llm_payload:
@@ -649,6 +660,7 @@ def _runtime_from_payload(
         if isinstance(maybe_terminal, dict):
             terminal_execution = maybe_terminal
     scheduler = payload.get("scheduler", {})
+    hooks = payload.get("hooks", {})
 
     injection_value = payload.get("injection_mode", InjectionMode.EVERY_TURN.value)
     try:
@@ -848,6 +860,10 @@ def _runtime_from_payload(
             retry_base_seconds=max(5, int(cron.get("retry_base_seconds", 30))),
             retry_max_seconds=max(30, int(cron.get("retry_max_seconds", 3600))),
             failure_retention=max(1, int(cron.get("failure_retention", 200))),
+        ),
+        hooks=HooksRuntimeConfig(
+            enabled=bool(hooks.get("enabled", True)),
+            default_timeout_ms=max(100, int(hooks.get("default_timeout_ms", 10000))),
         ),
     )
 

@@ -53,6 +53,18 @@ class DefaultGraphRuntime(GraphRuntime):
         self.hook_engine = hook_engine
         self._graphs: dict[object | None, Any] = {None: self._compile_graph(None)}
 
+    def _resolve_hook_engine(self, agent_id: str) -> "HookEngine | None":
+        """Resolve HookEngine per-agent: prefer per-agent engine from services, fall back to default."""
+        engine = self.services.get_hook_engine(agent_id)
+        if engine is not None:
+            return engine
+        return self.hook_engine
+
+    def _hook_enabled(self, agent_id: str) -> bool:
+        """Check if hooks are enabled for a given agent."""
+        engine = self._resolve_hook_engine(agent_id)
+        return engine is not None and engine.is_enabled
+
     async def invoke(self, request: RuntimeRequest) -> RuntimeResult:
         session_repository = self.services.require_session_repository()
         prepared_request = await session_repository.prepare_runtime_request(request)
@@ -305,7 +317,8 @@ class DefaultGraphRuntime(GraphRuntime):
 
         run_id = str(uuid.uuid4())
         run_id_candidate = run_id
-        if self.hook_engine and self.hook_engine.is_enabled:
+        hook_engine = self._resolve_hook_engine(request.agent_id)
+        if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="pre_run",
                 agent_id=request.agent_id,
@@ -313,7 +326,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 run_id=str(run_id_candidate),
                 payload={"message_length": len(str(request.message))},
             )
-            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            hook_result = hook_engine.dispatch_sync(hook_event)
             if not hook_result.allow:
                 return Command(
                     update={
@@ -592,6 +605,7 @@ class DefaultGraphRuntime(GraphRuntime):
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
             delegate_tools=delegate_tools if delegate_tools else None,
+            hook_engine=self.hook_engine,
         )
         usage_state = dict(state.get("usage_state", {}))
         usage_sources = dict(state.get("usage_sources", {}))
@@ -614,7 +628,8 @@ class DefaultGraphRuntime(GraphRuntime):
         chain = self.pipelines.model_chain(llm=active_llm, tools=tool_service.tools)
 
         # PrePromptSubmit hook
-        if self.hook_engine and self.hook_engine.is_enabled:
+        hook_engine = self._resolve_hook_engine(state["request"].agent_id)
+        if hook_engine and hook_engine.is_enabled:
             hook_event = HookEvent(
                 hook_type="pre_prompt_submit",
                 agent_id=state["request"].agent_id,
@@ -624,7 +639,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     "message_count": len(state.get("input_messages", [])),
                 },
             )
-            hook_result = self.hook_engine.dispatch_sync(hook_event)
+            hook_result = hook_engine.dispatch_sync(hook_event)
             if not hook_result.allow:
                 self._emit("hook_denied", {"hook_type": "pre_prompt_submit", "reason": hook_result.reason})
                 return Command(
@@ -979,6 +994,7 @@ class DefaultGraphRuntime(GraphRuntime):
     async def _tool_step(self, state: RuntimeGraphState) -> dict[str, Any]:
         request = state["request"]
         runtime_state = self.services.get_runtime(request.agent_id)
+        hook_engine = self._resolve_hook_engine(request.agent_id)
         tool_service = ToolExecutionService.build(
             config_base_dir=self.services.require_base_dir(),
             runtime_root=runtime_state.root_dir,
@@ -987,6 +1003,7 @@ class DefaultGraphRuntime(GraphRuntime):
             run_id=str(state.get("run_id", "")),
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
+            hook_engine=hook_engine,
         )
         envelopes, tool_messages = await tool_service.execute_pending(
             list(state.get("pending_tool_calls", []))
