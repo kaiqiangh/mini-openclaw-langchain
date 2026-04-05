@@ -5,11 +5,10 @@ import json
 import subprocess
 import shutil
 import logging
-import multiprocessing as mp
 from dataclasses import dataclass
 from typing import Any
 
-from .python_repl_tool import _execute_python_snippet, _contains_escape_attempt
+from .python_repl_tool import _execute_python_snippet, _contains_escape_attempt, _get_mp_context
 
 logger = logging.getLogger(__name__)
 
@@ -90,20 +89,27 @@ def _run_in_process(code: str, timeout_seconds: int = 30) -> dict[str, Any]:
     if _contains_escape_attempt(code):
         return {"ok": False, "error": "Code contains disallowed patterns (introspection/escape)"}
 
-    queue: mp.Queue = mp.Queue(maxsize=1)
-    process = mp.Process(target=_execute_python_snippet, args=(code, queue))
+    ctx = _get_mp_context()
+    recv_conn, send_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_execute_python_snippet, args=(code, send_conn))
     process.start()
+    send_conn.close()
     process.join(timeout=timeout_seconds)
 
     if process.is_alive():
         process.terminate()
         process.join()
+        recv_conn.close()
         return {"ok": False, "error": f"Python execution timed out after {timeout_seconds}s"}
 
     try:
-        return queue.get_nowait()
+        if recv_conn.poll():
+            return recv_conn.recv()
+        return {"ok": False, "error": "No output from Python process"}
     except Exception:
         return {"ok": False, "error": "No output from Python process"}
+    finally:
+        recv_conn.close()
 
 
 class SandboxExecutor:

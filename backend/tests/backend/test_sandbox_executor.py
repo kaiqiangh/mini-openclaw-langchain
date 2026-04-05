@@ -1,9 +1,11 @@
 """Tests for SandboxExecutor."""
 import os
+import __main__
 import pytest
 from unittest.mock import patch, MagicMock
 
 from tools.sandbox_executor import SandboxConfig, SandboxExecutor, _docker_available
+from tools.python_repl_tool import _get_mp_context
 
 
 class TestSandboxConfig:
@@ -70,6 +72,26 @@ class TestSandboxExecutor:
         result = executor.run("1 / 0")
         assert result["ok"] is False
         assert "division" in result["error"].lower() or "zero" in result["error"].lower()
+
+
+class TestMultiprocessingContext:
+    def test_prefers_forkserver_on_linux_when_spawn_is_supported(self, monkeypatch):
+        monkeypatch.setattr("tools.python_repl_tool.sys.platform", "linux")
+        monkeypatch.setattr("tools.python_repl_tool.mp.get_all_start_methods", lambda: ["fork", "forkserver", "spawn"])
+        monkeypatch.setattr(__main__, "__file__", __file__, raising=False)
+
+        ctx = _get_mp_context()
+
+        assert ctx.get_start_method() == "forkserver"
+
+    def test_falls_back_to_fork_when_main_module_cannot_be_reimported(self, monkeypatch):
+        monkeypatch.setattr("tools.python_repl_tool.sys.platform", "linux")
+        monkeypatch.setattr("tools.python_repl_tool.mp.get_all_start_methods", lambda: ["fork", "forkserver", "spawn"])
+        monkeypatch.setattr(__main__, "__file__", "<stdin>", raising=False)
+
+        ctx = _get_mp_context()
+
+        assert ctx.get_start_method() == "fork"
 
 
 class TestDockerAvailable:
