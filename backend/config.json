@@ -53,6 +53,16 @@
         "kimi_k2_5": "kimi-k2.5",
         "kimi_k2_thinking": "kimi-k2-thinking"
       }
+    },
+    "openrouter": {
+      "provider_id": "openrouter",
+      "driver": "openai_compatible",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key_env": "OPENROUTER_API_KEY",
+      "timeout_seconds": 120,
+      "models": {
+        "qwen3.6": "qwen/qwen3.6-plus:free"
+      }
     }
   },
   "llm_defaults": {
