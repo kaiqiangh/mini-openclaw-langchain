@@ -18,6 +18,8 @@ from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.contracts import ErrorCode
 from tools.langchain_tools import build_langchain_tools
+from hooks.engine import HookEngine
+from hooks.types import HookEvent
 
 _ERROR_CODES: tuple[ErrorCode, ...] = (
     "E_POLICY_DENIED",
@@ -66,6 +68,7 @@ def _failure_payload(
 class ToolExecutionService:
     tools: list[Any]
     tools_by_name: dict[str, Any]
+    hook_engine: HookEngine | None = None
 
     @classmethod
     def build(
@@ -79,6 +82,7 @@ class ToolExecutionService:
         session_id: str,
         runtime_audit_store: AuditStore,
         delegate_tools: list[Any] | None = None,
+        hook_engine: HookEngine | None = None,
     ) -> "ToolExecutionService":
         mini_tools = get_all_tools(
             runtime_root,
@@ -109,6 +113,7 @@ class ToolExecutionService:
         return cls(
             tools=langchain_tools,
             tools_by_name={tool.name: tool for tool in langchain_tools},
+            hook_engine=hook_engine,
         )
 
     async def execute_pending(
@@ -159,7 +164,54 @@ class ToolExecutionService:
                 )
                 continue
 
+            # PreToolUse hook (sync, can veto)
+            if self.hook_engine and self.hook_engine.is_enabled:
+                hook_event = HookEvent(
+                    hook_type="pre_tool_use",
+                    agent_id="",
+                    payload={"tool_name": tool_name, "input": parsed_args},
+                )
+                hook_result = self.hook_engine.dispatch_sync(hook_event)
+                if not hook_result.allow:
+                    raw_output = _failure_payload(
+                        tool_name=tool_name,
+                        message=f"Hook denied: {hook_result.reason}",
+                        code="E_POLICY_DENIED",
+                    )
+                    envelopes.append(
+                        ToolExecutionEnvelope(
+                            tool=tool_name,
+                            tool_call_id=tool_call_id,
+                            args=parsed_args,
+                            output=raw_output,
+                            raw_output=raw_output,
+                            ok=False,
+                            duration_ms=0,
+                            error_code="E_POLICY_DENIED",
+                            error_message=f"Hook denied: {hook_result.reason}",
+                        )
+                    )
+                    tool_messages.append(
+                        ToolMessage(
+                            content=raw_output,
+                            name=tool_name,
+                            tool_call_id=tool_call_id,
+                            status="error",
+                        )
+                    )
+                    continue
+
             raw_output = await tool.ainvoke(parsed_args)
+
+            # PostToolUse hook (async, fire-and-forget)
+            if self.hook_engine and self.hook_engine.is_enabled:
+                hook_event = HookEvent(
+                    hook_type="post_tool_use",
+                    agent_id="",
+                    payload={"tool_name": tool_name, "result": str(raw_output)},
+                )
+                self.hook_engine.dispatch_async(hook_event)
+
             parsed: dict[str, Any] = {}
             if isinstance(raw_output, str):
                 try:
