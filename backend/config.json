@@ -61,7 +61,8 @@
       "api_key_env": "OPENROUTER_API_KEY",
       "timeout_seconds": 120,
       "models": {
-        "qwen3.6": "qwen/qwen3.6-plus:free"
+        "qwen3.6": "qwen/qwen3.6-plus:free",
+        "nvidia-nemotron-3-super": "nvidia/nemotron-3-super-120b-a12b:free"
       }
     }
   },
@@ -214,8 +215,18 @@
     "default_timeout_seconds": 120,
     "max_timeout_seconds": 600,
     "allowed_tool_scopes": {
-      "researcher": ["web_search", "fetch_url", "read_files", "search_knowledge_base"],
-      "analyst": ["read_files", "read_pdf", "search_knowledge_base", "terminal"],
+      "researcher": [
+        "web_search",
+        "fetch_url",
+        "read_files",
+        "search_knowledge_base"
+      ],
+      "analyst": [
+        "read_files",
+        "read_pdf",
+        "search_knowledge_base",
+        "terminal"
+      ],
       "writer": ["read_files", "search_knowledge_base", "apply_patch"]
     }
   }
