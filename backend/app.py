@@ -28,6 +28,7 @@ from api import (
     compress,
     config_api,
     files,
+    hooks,
     replay,
     scheduler_api,
     sessions,
@@ -474,6 +475,7 @@ app.include_router(setup.router, prefix="/api/v1")
 app.include_router(replay.router, prefix="/api/v1")
 app.include_router(approval.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
+app.include_router(hooks.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
