@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import LegacySessionStateError, SessionManager
+from tools.delegate_registry import DelegateRegistry, DelegateState
 
 router = APIRouter(tags=["sessions"])
 
@@ -88,6 +89,136 @@ def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
     )
 
 
+async def _load_session_payload(
+    session_manager: SessionManager,
+    *,
+    session_id: str,
+    archived: bool = False,
+) -> dict[str, Any]:
+    try:
+        return await session_manager.load_existing_session(session_id, archived=archived)
+    except FileNotFoundError as exc:
+        raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
+    except LegacySessionStateError as exc:
+        raise _legacy_state_api_error(exc) from exc
+
+
+def _ensure_public_session(payload: dict[str, Any]) -> None:
+    if bool(payload.get("internal")) or bool(payload.get("hidden")):
+        raise ApiError(status_code=404, code="not_found", message="Session not found")
+
+
+async def _require_public_session(
+    session_manager: SessionManager,
+    *,
+    session_id: str,
+    archived: bool = False,
+) -> dict[str, Any]:
+    payload = await _load_session_payload(
+        session_manager, session_id=session_id, archived=archived
+    )
+    _ensure_public_session(payload)
+    return payload
+
+
+def _require_delegate_registry(agent_id: str) -> DelegateRegistry:
+    manager = _require_agent_manager()
+    try:
+        manager.get_runtime(agent_id)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=400, code="invalid_request", message=str(exc)
+        ) from exc
+    registry = getattr(getattr(manager, "runtime_services", None), "delegate_registry", None)
+    if registry is None:
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Delegate registry not initialized",
+        )
+    return registry
+
+
+def _delegate_summary(state: DelegateState) -> dict[str, Any]:
+    return {
+        "delegate_id": state.delegate_id,
+        "role": state.role,
+        "task": state.task,
+        "status": state.status,
+        "sub_session_id": state.sub_session_id,
+        "created_at": state.created_at,
+    }
+
+
+def _delegate_detail(state: DelegateState) -> dict[str, Any]:
+    payload = {
+        **_delegate_summary(state),
+        "agent_id": state.agent_id,
+        "parent_session_id": state.parent_session_id,
+        "allowed_tools": list(state.allowed_tools),
+    }
+    if state.blocked_tools:
+        payload["blocked_tools"] = list(state.blocked_tools)
+    if state.completed_at is not None:
+        payload["completed_at"] = state.completed_at
+    if state.duration_ms:
+        payload["duration_ms"] = state.duration_ms
+    if state.result_summary:
+        payload["result_summary"] = state.result_summary
+    if state.steps_completed:
+        payload["steps_completed"] = state.steps_completed
+    if state.tools_used:
+        payload["tools_used"] = list(state.tools_used)
+    if state.token_usage:
+        payload["token_usage"] = dict(state.token_usage)
+    if state.error_message:
+        payload["error_message"] = state.error_message
+    if state.result_dir is not None:
+        payload["result_file"] = str(state.result_dir / "result_summary.md")
+    return payload
+
+
+def _require_delegate(
+    registry: DelegateRegistry,
+    *,
+    agent_id: str,
+    session_id: str,
+    delegate_id: str,
+) -> DelegateState:
+    state = registry.get_status(delegate_id)
+    if state is None:
+        raise ApiError(status_code=404, code="not_found", message="Delegate not found")
+    if state.agent_id != agent_id or state.parent_session_id != session_id:
+        raise ApiError(status_code=404, code="not_found", message="Delegate not found")
+    return state
+
+
+def _resolve_model_name(runtime: Any) -> str:
+    resolver = getattr(runtime, "resolve_model_name", None)
+    if callable(resolver):
+        resolved = str(resolver()).strip()
+        if resolved:
+            return resolved
+    model_name = "gpt-4o"
+    runtime_config = runtime.runtime_config
+    for candidate_entry in getattr(runtime_config, "llm_candidates", []):
+        profile = getattr(candidate_entry, "profile", None)
+        if profile is not None and getattr(profile, "model", None):
+            model_name = profile.model
+            break
+    return model_name
+
+
+def _build_compaction_pipeline(runtime: Any) -> Any:
+    from graph.compaction import CompactionPipeline
+
+    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
+    return CompactionPipeline(
+        model_name=_resolve_model_name(runtime),
+        checkpoint_dir=checkpoint_dir,
+    )
+
+
 @router.get("/agents/{agent_id}/sessions")
 async def list_sessions(
     agent_id: str,
@@ -134,12 +265,9 @@ async def rename_session(
     session_id: str,
     req: RenameSessionRequest,
 ) -> dict[str, Any]:
-    _, manager = _resolve_session_manager(agent_id)
-    path = manager.sessions_dir / f"{session_id}.json"
-    if not path.exists():
-        raise ApiError(status_code=404, code="not_found", message="Session not found")
-
-    session = await manager.rename_session(session_id, req.title)
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
+    session = await session_manager.rename_session(session_id, req.title)
     return {"data": {"session_id": session_id, "title": session.get("title", "")}}
 
 
@@ -151,7 +279,10 @@ async def delete_session(
     session_id: str,
     archived: bool = False,
 ) -> Response:
-    agent_manager, _ = _resolve_session_manager(agent_id)
+    agent_manager, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(
+        session_manager, session_id=session_id, archived=archived
+    )
     repository = agent_manager.get_session_repository(agent_id)
     deleted = await repository.delete_session(
         agent_id=agent_id,
@@ -168,8 +299,9 @@ async def archive_session(
     agent_id: str,
     session_id: str,
 ) -> dict[str, Any]:
-    _, manager = _resolve_session_manager(agent_id)
-    archived = await manager.archive_session(session_id)
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
+    archived = await session_manager.archive_session(session_id)
     if not archived:
         raise ApiError(status_code=404, code="not_found", message="Session not found")
     return {"data": {"archived": True, "session_id": session_id}}
@@ -180,8 +312,11 @@ async def restore_session(
     agent_id: str,
     session_id: str,
 ) -> dict[str, Any]:
-    _, manager = _resolve_session_manager(agent_id)
-    restored = await manager.restore_session(session_id)
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(
+        session_manager, session_id=session_id, archived=True
+    )
+    restored = await session_manager.restore_session(session_id)
     if not restored:
         raise ApiError(
             status_code=404, code="not_found", message="Archived session not found"
@@ -195,7 +330,10 @@ async def get_messages(
     session_id: str,
     archived: bool = False,
 ) -> dict[str, Any]:
-    agent, _ = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(
+        session_manager, session_id=session_id, archived=archived
+    )
     repository = agent.get_session_repository(agent_id)
     try:
         canonical = await repository.load_snapshot(
@@ -242,7 +380,10 @@ async def get_history(
     session_id: str,
     archived: bool = False,
 ) -> dict[str, Any]:
-    agent, _ = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(
+        session_manager, session_id=session_id, archived=archived
+    )
     repository = agent.get_session_repository(agent_id)
     try:
         canonical = await repository.load_snapshot(
@@ -273,7 +414,8 @@ async def generate_title(
     agent_id: str,
     session_id: str,
 ) -> dict[str, Any]:
-    agent, manager = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
     repository = agent.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(
@@ -308,8 +450,39 @@ async def generate_title(
         )
 
     title = await agent.generate_title(seed, agent_id=agent_id)
-    await manager.update_title(session_id, title)
+    await session_manager.update_title(session_id, title)
     return {"data": {"session_id": session_id, "title": title}}
+
+
+@router.get("/agents/{agent_id}/sessions/{session_id}/delegates")
+async def list_delegates(
+    agent_id: str,
+    session_id: str,
+) -> dict[str, Any]:
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
+    registry = _require_delegate_registry(agent_id)
+    delegates = registry.list_for_session(agent_id, session_id)
+    delegates.sort(key=lambda item: item.created_at, reverse=True)
+    return {"delegates": [_delegate_summary(item) for item in delegates]}
+
+
+@router.get("/agents/{agent_id}/sessions/{session_id}/delegates/{delegate_id}")
+async def get_delegate_detail(
+    agent_id: str,
+    session_id: str,
+    delegate_id: str,
+) -> dict[str, Any]:
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
+    registry = _require_delegate_registry(agent_id)
+    state = _require_delegate(
+        registry,
+        agent_id=agent_id,
+        session_id=session_id,
+        delegate_id=delegate_id,
+    )
+    return _delegate_detail(state)
 
 
 # ── Compaction & Rewind ─────────────────────────────────────────
@@ -331,21 +504,10 @@ async def trigger_compact(
     body: CompactSessionRequest | None = None,
 ) -> dict[str, Any]:
     """Manually trigger compaction for a session."""
-    agent, _ = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
     runtime = agent.get_runtime(agent_id)
-
-    model_name = "gpt-4o"
-    runtime_config = runtime.runtime_config
-    for candidate_entry in runtime_config.llm_candidates:
-        profile = getattr(candidate_entry, "profile", None)
-        if profile is not None and getattr(profile, "model", None):
-            model_name = profile.model
-            break
-
-    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
-
-    from graph.compaction import CompactionPipeline
-    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
+    pipeline = _build_compaction_pipeline(runtime)
 
     # Load current session messages from the repository
     repository = agent.get_session_repository(agent_id)
@@ -362,7 +524,13 @@ async def trigger_compact(
     from langchain_core.messages import messages_from_dict
     lc_messages = messages_from_dict(messages) if messages else []
 
-    result = await pipeline.compact_round(lc_messages, run_id="manual", step=0)
+    result = await pipeline.compact_round(
+        lc_messages,
+        run_id="manual",
+        step=0,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     if result.was_compacted:
         from langchain_core.messages import messages_to_dict
@@ -390,22 +558,14 @@ async def list_checkpoints(
     session_id: str,
 ) -> dict[str, Any]:
     """List available checkpoints for a session's agent."""
-    agent, _ = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
     runtime = agent.get_runtime(agent_id)
-
-    model_name = "gpt-4o"
-    runtime_config = runtime.runtime_config
-    for candidate_entry in runtime_config.llm_candidates:
-        profile = getattr(candidate_entry, "profile", None)
-        if profile is not None and getattr(profile, "model", None):
-            model_name = profile.model
-            break
-
-    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
-
-    from graph.compaction import CompactionPipeline
-    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
-    checkpoints = await pipeline.list_checkpoints()
+    pipeline = _build_compaction_pipeline(runtime)
+    checkpoints = await pipeline.list_checkpoints(
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
     return {"data": checkpoints}
 
@@ -417,24 +577,17 @@ async def rewind_session(
     body: RewindRequest,
 ) -> dict[str, Any]:
     """Restore session from a checkpoint."""
-    agent, _ = _resolve_session_manager(agent_id)
+    agent, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
     runtime = agent.get_runtime(agent_id)
-
-    model_name = "gpt-4o"
-    runtime_config = runtime.runtime_config
-    for candidate_entry in runtime_config.llm_candidates:
-        profile = getattr(candidate_entry, "profile", None)
-        if profile is not None and getattr(profile, "model", None):
-            model_name = profile.model
-            break
-
-    checkpoint_dir = runtime.root_dir / "storage" / "checkpoints" if runtime.root_dir else None
-
-    from graph.compaction import CompactionPipeline
-    pipeline = CompactionPipeline(model_name=model_name, checkpoint_dir=checkpoint_dir)
+    pipeline = _build_compaction_pipeline(runtime)
 
     try:
-        messages = await pipeline.load_checkpoint(body.checkpoint_id)
+        messages = await pipeline.load_checkpoint(
+            body.checkpoint_id,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
     except FileNotFoundError:
         raise ApiError(status_code=404, code="not_found", message=f"Checkpoint not found: {body.checkpoint_id}")
     except RuntimeError as exc:
