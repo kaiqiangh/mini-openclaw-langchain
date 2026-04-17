@@ -13,9 +13,11 @@ from langchain_core.runnables import RunnableLambda
 from graph.agent import AgentManager
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.runtime_execution_services import RuntimeCallbackBundle
+from graph.runtime_types import RuntimeRequest
 from graph.skill_selector import SelectedSkill
 from graph.tool_execution import ToolExecutionService
 from tools.contracts import ToolResult
+from tools.delegate_registry import DelegateRegistry
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -209,6 +211,56 @@ def test_tool_execution_service_normalizes_tool_results():
     assert "memory/MEMORY.md" in envelopes[0].output
     assert tool_messages[0].tool_call_id == "call-1"
     assert tool_messages[0].status == "success"
+
+
+def test_tool_step_executes_delegate_status_when_delegate_tools_are_available(
+    tmp_path: Path,
+):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    registry = DelegateRegistry(base_dir=tmp_path)
+    manager.runtime_services.delegate_registry = registry
+
+    request = RuntimeRequest(
+        message="check delegate",
+        history=[],
+        session_id="sess-1",
+        trigger_type="chat",
+        agent_id="default",
+    )
+    registration = registry.register(
+        "default",
+        "sess-1",
+        "Summarize the workspace",
+        "researcher",
+        ["read_files"],
+        [],
+        60,
+    )
+
+    graph = manager._runtime_graph()
+    result = asyncio.run(
+        graph._tool_step(
+            {
+                "request": request,
+                "run_id": "run-1",
+                "pending_tool_calls": [
+                    {
+                        "id": "call-1",
+                        "name": "delegate_status",
+                        "args": {"delegate_id": registration["delegate_id"]},
+                    }
+                ],
+                "model_messages": [],
+            }
+        )
+    )
+
+    assert len(result["tool_history"]) == 1
+    assert result["tool_history"][0].tool == "delegate_status"
+    assert result["tool_history"][0].error_code != "E_NOT_FOUND"
+    assert registration["delegate_id"] in result["tool_history"][0].output
 
 
 def test_graph_runtime_streams_tool_loop_events(monkeypatch, tmp_path: Path):
