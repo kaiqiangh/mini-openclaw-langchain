@@ -47,6 +47,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
             fh.write(redact_json_line(row) + "\n")
         if self.audit_store is not None:
             self.audit_store.append_step(
+                agent_id="",
                 run_id=self.run_id,
                 session_id=self.session_id,
                 trigger_type=self.trigger_type,

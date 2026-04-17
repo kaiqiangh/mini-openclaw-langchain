@@ -53,20 +53,26 @@ class AuditStore:
     def append_step(
         self,
         *,
+        agent_id: str | None = None,
         run_id: str,
         session_id: str,
         trigger_type: str,
         event: str,
+        hook_type: str | None = None,
+        status: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
         self._append(
             self.steps_file,
             {
                 "schema": "audit.step.v1",
+                "agent_id": agent_id or "",
                 "run_id": run_id,
                 "session_id": session_id,
                 "trigger_type": trigger_type,
                 "event": event,
+                "hook_type": hook_type or "",
+                "status": status or "",
                 "details": details or {},
             },
         )
