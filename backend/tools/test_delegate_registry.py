@@ -1,3 +1,4 @@
+import json
 import time
 from pathlib import Path
 
@@ -74,3 +75,74 @@ def test_max_per_session_enforced(tmp_path: Path):
     assert not registry.check_max_per_session("alpha", "sess_1", max_count=2)
     # 2 running, max=3 → allowed
     assert registry.check_max_per_session("alpha", "sess_1", max_count=3)
+
+
+def test_registry_hydrates_from_disk(tmp_path: Path):
+    original = DelegateRegistry(base_dir=tmp_path)
+    reg = original.register(
+        "alpha",
+        "sess_parent",
+        "Research APIs",
+        "researcher",
+        ["web_search"],
+        ["fetch_url"],
+        30,
+    )
+    original.mark_completed(
+        reg["delegate_id"],
+        {
+            "summary": "Found useful docs",
+            "steps": 4,
+            "tools_used": ["web_search"],
+            "token_usage": {"prompt_tokens": 9, "completion_tokens": 2},
+        },
+    )
+
+    restored = DelegateRegistry(base_dir=tmp_path)
+    status = restored.get_status(reg["delegate_id"])
+    assert status is not None
+    assert status.status == "completed"
+    assert status.parent_session_id == "sess_parent"
+    assert status.allowed_tools == ["web_search"]
+    assert status.blocked_tools == ["fetch_url"]
+    assert status.result_summary == "Found useful docs"
+    listed = restored.list_for_session("alpha", "sess_parent")
+    assert [item.delegate_id for item in listed] == [reg["delegate_id"]]
+
+
+def test_registry_marks_expired_running_delegate_as_timeout_on_hydrate(tmp_path: Path):
+    original = DelegateRegistry(base_dir=tmp_path)
+    reg = original.register(
+        "alpha",
+        "sess_parent",
+        "Research APIs",
+        "researcher",
+        ["web_search"],
+        [],
+        1,
+    )
+
+    config_path = (
+        tmp_path
+        / "workspaces"
+        / "alpha"
+        / "sessions"
+        / "sess_parent"
+        / "delegates"
+        / reg["delegate_id"]
+        / "config.json"
+    )
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    raw["created_at"] = time.time() - 5
+    config_path.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    restored = DelegateRegistry(base_dir=tmp_path)
+    status = restored.get_status(reg["delegate_id"])
+
+    assert status is not None
+    assert status.status == "timeout"
+    assert status.error_message is not None
+    assert "exceeded timeout" in status.error_message
