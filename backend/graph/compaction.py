@@ -100,8 +100,31 @@ class CompactionPipeline:
             token_count = self.count_messages_tokens(messages)
         return token_count > threshold, budget
 
+    @staticmethod
+    def _checkpoint_owned_by(
+        data: dict[str, Any],
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> bool:
+        if agent_id is None and session_id is None:
+            return True
+        stored_agent_id = str(data.get("agent_id", "")).strip()
+        stored_session_id = str(data.get("session_id", "")).strip()
+        if not stored_agent_id or not stored_session_id:
+            return False
+        return stored_agent_id == (agent_id or "") and stored_session_id == (
+            session_id or ""
+        )
+
     async def create_checkpoint(
-        self, messages: list[BaseMessage], run_id: str, step: int
+        self,
+        messages: list[BaseMessage],
+        run_id: str,
+        step: int,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Save a checkpoint snapshot of messages."""
         cp_id = f"ckpt_{run_id[:8]}_{step:04d}_{uuid.uuid4().hex[:6]}"
@@ -114,19 +137,40 @@ class CompactionPipeline:
                 "step": step,
                 "messages": messages_to_dict(messages),
             }
+            if agent_id:
+                data["agent_id"] = agent_id
+            if session_id:
+                data["session_id"] = session_id
             cp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return cp_id
 
-    async def load_checkpoint(self, checkpoint_id: str) -> list[BaseMessage]:
+    async def load_checkpoint(
+        self,
+        checkpoint_id: str,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[BaseMessage]:
         """Load messages from a checkpoint."""
         if not self.checkpoint_dir:
             raise RuntimeError("No checkpoint directory configured")
         for f in self.checkpoint_dir.glob(f"{checkpoint_id}*.json"):
             data = json.loads(f.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                continue
+            if not self._checkpoint_owned_by(
+                data, agent_id=agent_id, session_id=session_id
+            ):
+                continue
             return messages_from_dict(data["messages"])
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
 
-    async def list_checkpoints(self) -> list[dict[str, Any]]:
+    async def list_checkpoints(
+        self,
+        *,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """List all available checkpoints."""
         if not self.checkpoint_dir or not self.checkpoint_dir.exists():
             return []
@@ -134,12 +178,24 @@ class CompactionPipeline:
         for f in sorted(self.checkpoint_dir.glob("ckpt_*.json")):
             try:
                 data = json.loads(f.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    continue
+                if not self._checkpoint_owned_by(
+                    data, agent_id=agent_id, session_id=session_id
+                ):
+                    continue
                 results.append({
                     "checkpoint_id": data["checkpoint_id"],
                     "run_id": data["run_id"],
                     "step": data["step"],
                     "message_count": len(data.get("messages", [])),
                 })
+                stored_agent_id = str(data.get("agent_id", "")).strip()
+                stored_session_id = str(data.get("session_id", "")).strip()
+                if stored_agent_id:
+                    results[-1]["agent_id"] = stored_agent_id
+                if stored_session_id:
+                    results[-1]["session_id"] = stored_session_id
             except (json.JSONDecodeError, KeyError):
                 continue
         return results
@@ -214,6 +270,8 @@ class CompactionPipeline:
         step: int = 0,
         keep_last: int = 4,
         summarize_fn=None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
     ) -> CompactResult:
         """Execute one full compaction round."""
         needs, budget = self.needs_compaction(messages)
@@ -221,7 +279,13 @@ class CompactionPipeline:
             return CompactResult(messages=messages, summary=None, checkpoint_id=None, was_compacted=False)
 
         # Checkpoint
-        checkpoint_id = await self.create_checkpoint(messages, run_id=run_id, step=step)
+        checkpoint_id = await self.create_checkpoint(
+            messages,
+            run_id=run_id,
+            step=step,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
 
         # Summarize
         summary: CompactionSummary | None = None

@@ -91,6 +91,77 @@ class TestCheckpoint:
         cps = await pipeline.list_checkpoints()
         assert len(cps) == 2
 
+    @pytest.mark.asyncio
+    async def test_list_checkpoints_filters_by_exact_owner(self, tmp_path: Path):
+        pipeline = CompactionPipeline(model_name="gpt-4o", checkpoint_dir=tmp_path)
+        msgs = [HumanMessage(content="test")]
+        await pipeline.create_checkpoint(
+            msgs,
+            run_id="owned-a",
+            step=1,
+            agent_id="default",
+            session_id="session-a",
+        )
+        await pipeline.create_checkpoint(
+            msgs,
+            run_id="owned-b",
+            step=2,
+            agent_id="default",
+            session_id="session-b",
+        )
+        await pipeline.create_checkpoint(msgs, run_id="legacy", step=3)
+
+        cps = await pipeline.list_checkpoints(
+            agent_id="default",
+            session_id="session-a",
+        )
+
+        assert len(cps) == 1
+        assert cps[0]["run_id"] == "owned-a"
+        assert cps[0]["agent_id"] == "default"
+        assert cps[0]["session_id"] == "session-a"
+
+    @pytest.mark.asyncio
+    async def test_load_checkpoint_rejects_legacy_and_wrong_owner(self, tmp_path: Path):
+        pipeline = CompactionPipeline(model_name="gpt-4o", checkpoint_dir=tmp_path)
+        msgs = [HumanMessage(content="test")]
+        owned_id = await pipeline.create_checkpoint(
+            msgs,
+            run_id="owned-a",
+            step=1,
+            agent_id="default",
+            session_id="session-a",
+        )
+        wrong_owner_id = await pipeline.create_checkpoint(
+            msgs,
+            run_id="owned-b",
+            step=2,
+            agent_id="default",
+            session_id="session-b",
+        )
+        legacy_id = await pipeline.create_checkpoint(msgs, run_id="legacy", step=3)
+
+        restored = await pipeline.load_checkpoint(
+            owned_id,
+            agent_id="default",
+            session_id="session-a",
+        )
+        assert restored[0].content == "test"
+
+        with pytest.raises(FileNotFoundError):
+            await pipeline.load_checkpoint(
+                wrong_owner_id,
+                agent_id="default",
+                session_id="session-a",
+            )
+
+        with pytest.raises(FileNotFoundError):
+            await pipeline.load_checkpoint(
+                legacy_id,
+                agent_id="default",
+                session_id="session-a",
+            )
+
 
 class TestDrop:
     def test_drop_reduces_messages(self):
