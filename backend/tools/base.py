@@ -12,6 +12,7 @@ from .policy import PermissionLevel
 class ToolContext:
     workspace_root: Path
     trigger_type: str
+    agent_id: str = "default"
     explicit_enabled_tools: tuple[str, ...] = ()
     explicit_blocked_tools: tuple[str, ...] = ()
     run_id: str | None = None
