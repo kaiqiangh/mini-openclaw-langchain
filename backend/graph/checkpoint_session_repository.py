@@ -256,6 +256,8 @@ class CheckpointSessionRepository:
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
         timestamp_ms: int | None = None,
+        event_kind: str | None = None,
+        delegate: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         entry: dict[str, Any] = {
             "role": role,
@@ -268,6 +270,10 @@ class CheckpointSessionRepository:
             entry["skill_uses"] = list(dict.fromkeys(skill_uses))
         if selected_skills:
             entry["selected_skills"] = list(dict.fromkeys(selected_skills))
+        if event_kind:
+            entry["event_kind"] = event_kind
+        if delegate:
+            entry["delegate"] = dict(delegate)
         return entry
 
     @staticmethod
@@ -792,6 +798,9 @@ class CheckpointSessionRepository:
         tool_calls: list[dict[str, Any]] | None = None,
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
+        timestamp_ms: int | None = None,
+        event_kind: str | None = None,
+        delegate: dict[str, Any] | None = None,
         graph_name: str = "default",
     ) -> None:
         await self._ensure_session_state(
@@ -813,6 +822,9 @@ class CheckpointSessionRepository:
                 tool_calls=tool_calls,
                 skill_uses=skill_uses,
                 selected_skills=selected_skills,
+                timestamp_ms=timestamp_ms,
+                event_kind=event_kind,
+                delegate=delegate,
             )
         )
         await self.update_state(
