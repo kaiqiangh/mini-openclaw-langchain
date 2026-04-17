@@ -18,7 +18,7 @@ from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.memory_indexer import MemoryIndexer
 from graph.prompt_builder import PromptBuilder
 from graph.runtime_types import RuntimeRequest, ToolCapableChatModel
-from graph.session_manager import SessionManager
+from graph.session_manager import SessionManager, count_session_files
 from graph.skill_selector import SkillSelector
 from graph.usage_orchestrator import UsageOrchestrator
 from storage.run_store import AuditStore
@@ -71,6 +71,7 @@ class AgentManager:
             runtime_getter=self.get_runtime,
             prompt_builder=self.prompt_builder,
             usage_orchestrator=self.usage_orchestrator,
+            agent_manager=self,
             hook_engine_getter=self._get_hook_engine,
         )
         self.runtime_checkpointer = SQLiteRuntimeCheckpointer(
@@ -283,6 +284,9 @@ class AgentManager:
             agent_id=agent_id,
             workspace_root=workspace_root,
         )
+        self._hook_engines[agent_id].is_enabled = bool(
+            runtime.runtime_config.hooks.enabled
+        )
         return runtime
 
     def _refresh_runtime_config(self, runtime: AgentRuntime) -> None:
@@ -310,6 +314,9 @@ class AgentManager:
         runtime.memory_indexer.ensure_storage(
             settings=runtime.runtime_config.retrieval.memory
         )
+        hook_engine = self._hook_engines.get(runtime.agent_id)
+        if hook_engine is not None:
+            hook_engine.is_enabled = bool(runtime.runtime_config.hooks.enabled)
 
     def _provision_retrieval_storage_for_all_agents(self) -> None:
         _, workspaces_dir = self._require_initialized()
@@ -340,6 +347,15 @@ class AgentManager:
         """Get the HookEngine for a given agent, if available."""
         return self._hook_engines.get(agent_id)
 
+    def get_hook_engine(self, agent_id: str = "default") -> "HookEngine":
+        runtime = self.get_runtime(agent_id)
+        engine = self._hook_engines.get(runtime.agent_id)
+        if engine is None:
+            raise ValueError(f"Agent not found: {agent_id}")
+        engine.is_enabled = bool(runtime.runtime_config.hooks.enabled)
+        engine.load_config()
+        return engine
+
     def get_session_repository(
         self, agent_id: str = "default"
     ) -> CheckpointSessionRepository:
@@ -358,17 +374,8 @@ class AgentManager:
             if not item.is_dir():
                 continue
             sessions_dir = item / "sessions"
-            active_sessions = (
-                len([p for p in sessions_dir.glob("*.json") if p.is_file()])
-                if sessions_dir.exists()
-                else 0
-            )
-            archived_dir = sessions_dir / "archived_sessions"
-            archived_sessions = (
-                len([p for p in archived_dir.glob("*.json") if p.is_file()])
-                if archived_dir.exists()
-                else 0
-            )
+            active_sessions = count_session_files(sessions_dir, archived=False)
+            archived_sessions = count_session_files(sessions_dir, archived=True)
             stat = item.stat()
             llm_status = {
                 "valid": False,
