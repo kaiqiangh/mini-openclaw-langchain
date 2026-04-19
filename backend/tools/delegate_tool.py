@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import asdict
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from tools.base import ToolContext
+from tools.contracts import ToolResult
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
 from tools.delegate_registry import DelegateRegistry
 from tools.policy import PermissionLevel
@@ -20,6 +22,64 @@ _DELEGATE_MAX_TASK_CHARS = 4000
 _DELEGATE_INLINE_WAIT_SECONDS = 5.0
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_SUMMARY_HINTS = (
+    "summarize",
+    "summary",
+    "analyze",
+    "analyse",
+    "review",
+    "read",
+    "总结",
+    "分析",
+    "读取",
+    "阅读",
+    "梳理",
+    "归纳",
+)
+_LOCAL_SCOPE_HINTS = (
+    ("memory/", "memory/"),
+    ("knowledge/", "knowledge/"),
+    ("workspace/", "workspace/"),
+    ("reports/", "reports/"),
+    ("skills/", "skills/"),
+    ("dev/", "dev/"),
+)
+_LOCAL_SCOPE_TOOL_ORDER = (
+    "read_files",
+    "read_pdf",
+    "search_knowledge_base",
+)
+
+
+def _success_payload(*, tool_name: str, data: dict[str, Any], duration_ms: int = 0) -> str:
+    return json.dumps(
+        asdict(ToolResult.success(tool_name=tool_name, data=data, duration_ms=duration_ms)),
+        ensure_ascii=False,
+    )
+
+
+def _failure_payload(
+    *,
+    tool_name: str,
+    message: str,
+    code: str = "E_INVALID_ARGS",
+    details: dict[str, Any] | None = None,
+    duration_ms: int = 0,
+) -> str:
+    return json.dumps(
+        asdict(
+            ToolResult.failure(
+                tool_name=tool_name,
+                code=code,  # type: ignore[arg-type]
+                message=message,
+                duration_ms=duration_ms,
+                retryable=False,
+                details=details,
+            )
+        ),
+        ensure_ascii=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -31,6 +91,7 @@ class _DelegateLaunch:
     allowed_tools: list[str]
     blocked_tools: list[str]
     timeout_seconds: int
+    wait_for_result: bool
     delegate_id: str
     sub_session_id: str
 
@@ -41,23 +102,89 @@ class DelegateArgs(BaseModel):
     allowed_tools: list[str] = Field(default=[], description="Optional subset of the role's tool scope")
     blocked_tools: list[str] = Field(default=[], description="Explicitly blocked tools")
     timeout_seconds: int | None = Field(default=None, description="Max wall-clock seconds (max 600)")
+    wait_for_result: bool = Field(
+        default=False,
+        description=(
+            "When true, this delegate is a required dependency for the current answer "
+            "and the parent runtime must wait for its terminal result before resuming."
+        ),
+    )
 
 
 def _delegate_request_message(*, role: str, task: str) -> str:
-    return "\n".join(
+    lines = [
+        f"You are an isolated delegate child session acting as a {role}.",
+        "You do not inherit the parent session context or transcript.",
+        "Work only from this task, the current workspace, and the tools explicitly available to you.",
+        "Do not inspect other sessions, delegate artifacts, or storage internals unless the task explicitly requires it.",
+        "If the task names workspace paths or directories, stay within those paths unless broader exploration is explicitly required.",
+        "When the task is about local workspace content, prefer local files and knowledge sources over web search.",
+    ]
+    focus_paths = _extract_workspace_path_hints(task)
+    if focus_paths:
+        lines.append(
+            "Focus on these workspace paths first: " + ", ".join(focus_paths)
+        )
+        lines.append(
+            "Do not inspect unrelated workspace paths unless the delegated task explicitly requires it."
+        )
+    lines.extend(
         [
-            f"You are an isolated delegate child session acting as a {role}.",
-            "You do not inherit the parent session context or transcript.",
-            "Work only from this task, the current workspace, and the tools explicitly available to you.",
-            "Do not inspect other sessions, delegate artifacts, or storage internals unless the task explicitly requires it.",
-            "If the task names workspace paths or directories, stay within those paths unless broader exploration is explicitly required.",
-            "When the task is about local workspace content, prefer local files and knowledge sources over web search.",
             "Return a concise final answer that the parent agent can report back to the user.",
             "",
             "Original delegated task:",
             task,
         ]
     )
+    return "\n".join(lines)
+
+
+def _extract_workspace_path_hints(task: str) -> list[str]:
+    lower = task.lower()
+    hints: list[str] = []
+    for needle, label in _LOCAL_SCOPE_HINTS:
+        if needle in lower and label not in hints:
+            hints.append(label)
+    if (
+        ("目录" in task or "文件夹" in task or "folder" in lower or "directory" in lower)
+        and "memory" in lower
+        and "memory/" not in hints
+    ):
+        hints.append("memory/")
+    if (
+        ("目录" in task or "文件夹" in task or "folder" in lower or "directory" in lower)
+        and "knowledge" in lower
+        and "knowledge/" not in hints
+    ):
+        hints.append("knowledge/")
+    return hints
+
+
+def _should_narrow_to_local_scope(task: str) -> bool:
+    lower = task.lower()
+    mentions_local_scope = bool(_extract_workspace_path_hints(task))
+    if not mentions_local_scope:
+        mentions_local_scope = any(
+            token in lower for token in ("folder", "folders", "directory", "directories")
+        ) or any(token in task for token in ("目录", "文件夹"))
+    mentions_summary_intent = any(token in lower for token in _LOCAL_SUMMARY_HINTS) or any(
+        token in task for token in _LOCAL_SUMMARY_HINTS
+    )
+    return mentions_local_scope and mentions_summary_intent
+
+
+def _auto_narrow_allowed_tools(
+    *,
+    task: str,
+    role_scope: list[str],
+    allowed_tools: list[str] | None,
+) -> list[str]:
+    if allowed_tools:
+        return list(allowed_tools)
+    if not _should_narrow_to_local_scope(task):
+        return list(role_scope)
+    narrowed = [tool for tool in _LOCAL_SCOPE_TOOL_ORDER if tool in role_scope]
+    return narrowed or list(role_scope)
 
 
 def build_delegate_tool(
@@ -228,13 +355,15 @@ def build_delegate_tool(
         allowed_tools: list[str] | None,
         blocked_tools: list[str] | None,
         timeout_seconds: int | None,
+        wait_for_result: bool,
     ) -> tuple[str | None, _DelegateLaunch | None]:
         delegation_config = _delegation_config()
         if not delegation_config.enabled:
             return (
-                json.dumps(
-                    {"error": "delegation is disabled in runtime config"},
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_POLICY_DENIED",
+                    message="delegation is disabled in runtime config",
                 ),
                 None,
             )
@@ -246,31 +375,38 @@ def build_delegate_tool(
 
         if not task or not task.strip():
             return (
-                json.dumps(
-                    {"error": "task is required and must be non-empty"},
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    message="task is required and must be non-empty",
                 ),
                 None,
             )
         normalized_task = task.strip()
         if len(normalized_task) > _DELEGATE_MAX_TASK_CHARS:
             return (
-                json.dumps(
-                    {"error": f"task exceeds maximum length of {_DELEGATE_MAX_TASK_CHARS} characters"},
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    message=(
+                        f"task exceeds maximum length of {_DELEGATE_MAX_TASK_CHARS} characters"
+                    ),
                 ),
                 None,
             )
         role_scope = delegation_config.allowed_tool_scopes.get(role)
         if not role_scope:
             return (
-                json.dumps(
-                    {"error": f"Unknown delegate role: {role}"},
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_NOT_FOUND",
+                    message=f"Unknown delegate role: {role}",
                 ),
                 None,
             )
-        resolved_allowed_tools = list(role_scope)
+        resolved_allowed_tools = _auto_narrow_allowed_tools(
+            task=normalized_task,
+            role_scope=list(role_scope),
+            allowed_tools=allowed_tools,
+        )
         if allowed_tools:
             requested_tools = list(
                 dict.fromkeys(
@@ -279,72 +415,72 @@ def build_delegate_tool(
             )
             if "delegate" in requested_tools:
                 return (
-                    json.dumps(
-                        {
-                            "error": (
-                                "'delegate' cannot be in allowed_tools "
-                                "(nested delegation blocked)"
-                            )
-                        },
-                        ensure_ascii=False,
+                    _failure_payload(
+                        tool_name="delegate",
+                        message=(
+                            "'delegate' cannot be in allowed_tools "
+                            "(nested delegation blocked)"
+                        ),
                     ),
                     None,
                 )
             disallowed = [tool for tool in requested_tools if tool not in role_scope]
             if disallowed:
                 return (
-                    json.dumps(
-                        {
-                            "error": (
-                                "allowed_tools must be a subset of the selected role scope; "
-                                f"invalid: {', '.join(disallowed)}"
-                            )
-                        },
-                        ensure_ascii=False,
+                    _failure_payload(
+                        tool_name="delegate",
+                        message=(
+                            "allowed_tools must be a subset of the selected role scope; "
+                            f"invalid: {', '.join(disallowed)}"
+                        ),
                     ),
                     None,
                 )
             resolved_allowed_tools = requested_tools
         if "delegate" in resolved_allowed_tools:
             return (
-                json.dumps(
-                    {
-                        "error": (
-                            "'delegate' cannot be in allowed_tools "
-                            "(nested delegation blocked)"
-                        )
-                    },
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    message=(
+                        "'delegate' cannot be in allowed_tools "
+                        "(nested delegation blocked)"
+                    ),
                 ),
                 None,
             )
         unknown = [item for item in resolved_allowed_tools if item not in ALL_KNOWN_TOOLS]
         if unknown:
             return (
-                json.dumps(
-                    {"error": f"Unknown tools: {', '.join(unknown)}"},
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_NOT_FOUND",
+                    message=f"Unknown tools: {', '.join(unknown)}",
                 ),
                 None,
             )
 
-        agent_id = context.agent_id or str(
-            getattr(agent_manager, "default_agent_id", "default")
-        )
+        agent_id = str(context.agent_id or "").strip()
+        if not agent_id:
+            return (
+                _failure_payload(
+                    tool_name="delegate",
+                    message="delegate launch requires a concrete context agent_id",
+                ),
+                None,
+            )
         session_id = context.session_id or "unknown"
 
         if not registry.check_max_per_session(
             agent_id, session_id, delegation_config.max_per_session,
         ):
             return (
-                json.dumps(
-                    {
-                        "error": (
-                            f"Maximum {delegation_config.max_per_session} "
-                            f"delegates per session reached"
-                        )
-                    },
-                    ensure_ascii=False,
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_POLICY_DENIED",
+                    message=(
+                        f"Maximum {delegation_config.max_per_session} "
+                        f"delegates per session reached"
+                    ),
                 ),
                 None,
             )
@@ -368,6 +504,7 @@ def build_delegate_tool(
                 allowed_tools=list(resolved_allowed_tools),
                 blocked_tools=list(blocked),
                 timeout_seconds=timeout,
+                wait_for_result=wait_for_result,
                 delegate_id=reg["delegate_id"],
                 sub_session_id=reg["session_id"],
             ),
@@ -415,6 +552,8 @@ def build_delegate_tool(
             "status": state.status if state is not None else "running",
             "session_id": launch.sub_session_id,
             "role": launch.role,
+            "wait_for_result": launch.wait_for_result,
+            "blocking": launch.wait_for_result,
         }
         if state is None or state.status == "running":
             payload["note"] = (
@@ -430,7 +569,11 @@ def build_delegate_tool(
         elif state.status in {"failed", "timeout"}:
             payload["error_message"] = state.error_message or "Sub-agent failed"
             payload["duration_ms"] = state.duration_ms
-        return json.dumps(payload, ensure_ascii=False)
+        return _success_payload(
+            tool_name="delegate",
+            data=payload,
+            duration_ms=int(getattr(state, "duration_ms", 0) or 0),
+        )
 
     def _run_sync(
         task: str,
@@ -438,6 +581,7 @@ def build_delegate_tool(
         allowed_tools: list[str] | None = None,
         blocked_tools: list[str] | None = None,
         timeout_seconds: int | None = None,
+        wait_for_result: bool = False,
     ) -> str:
         error_payload, launch = _prepare_delegate_launch(
             task=task,
@@ -445,6 +589,7 @@ def build_delegate_tool(
             allowed_tools=allowed_tools,
             blocked_tools=blocked_tools,
             timeout_seconds=timeout_seconds,
+            wait_for_result=wait_for_result,
         )
         if error_payload is not None:
             return error_payload
@@ -465,6 +610,7 @@ def build_delegate_tool(
         allowed_tools: list[str] | None = None,
         blocked_tools: list[str] | None = None,
         timeout_seconds: int | None = None,
+        wait_for_result: bool = False,
     ) -> str:
         error_payload, launch = _prepare_delegate_launch(
             task=task,
@@ -472,6 +618,7 @@ def build_delegate_tool(
             allowed_tools=allowed_tools,
             blocked_tools=blocked_tools,
             timeout_seconds=timeout_seconds,
+            wait_for_result=wait_for_result,
         )
         if error_payload is not None:
             return error_payload
@@ -518,7 +665,11 @@ def build_delegate_status_tool(
             or state.agent_id != context.agent_id
             or state.parent_session_id != (context.session_id or "unknown")
         ):
-            return json.dumps({"error": f"Delegate not found: {delegate_id}"}, ensure_ascii=False)
+            return _failure_payload(
+                tool_name="delegate_status",
+                code="E_NOT_FOUND",
+                message=f"Delegate not found: {delegate_id}",
+            )
 
         result: dict[str, Any] = {
             "delegate_id": state.delegate_id,
@@ -538,7 +689,11 @@ def build_delegate_status_tool(
             result["token_usage"] = state.token_usage
         if state.status in ("failed", "timeout"):
             result["error_message"] = state.error_message or "Sub-agent timed out"
-        return json.dumps(result, ensure_ascii=False)
+        return _success_payload(
+            tool_name="delegate_status",
+            data=result,
+            duration_ms=int(state.duration_ms or 0),
+        )
 
     return StructuredTool.from_function(
         name="delegate_status",

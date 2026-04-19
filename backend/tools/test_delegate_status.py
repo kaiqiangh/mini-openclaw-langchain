@@ -7,6 +7,20 @@ from tools.delegate_registry import DelegateRegistry
 from tools.delegate_tool import build_delegate_status_tool
 
 
+def _unwrap_success(raw: str) -> dict[str, object]:
+    payload = json.loads(raw)
+    assert payload["ok"] is True
+    assert isinstance(payload["data"], dict)
+    return payload["data"]
+
+
+def _unwrap_failure(raw: str) -> dict[str, object]:
+    payload = json.loads(raw)
+    assert payload["ok"] is False
+    assert isinstance(payload["error"], dict)
+    return payload["error"]
+
+
 def test_status_running(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     reg = registry.register("alpha", "sess_1", "Research", "researcher", ["web_search"], [], 30)
@@ -19,7 +33,7 @@ def test_status_running(tmp_path: Path):
             session_id="sess_1",
         ),
     )
-    result = json.loads(tool.func(delegate_id=reg["delegate_id"]))
+    result = _unwrap_success(tool.func(delegate_id=reg["delegate_id"]))
     assert result["status"] == "running"
     assert result["delegate_id"] == reg["delegate_id"]
 
@@ -35,8 +49,8 @@ def test_status_not_found(tmp_path: Path):
             session_id="sess_1",
         ),
     )
-    result = json.loads(tool.func(delegate_id="nonexistent"))
-    assert "error" in result
+    error = _unwrap_failure(tool.func(delegate_id="nonexistent"))
+    assert "Delegate not found" in error["message"]
 
 
 def test_status_completed(tmp_path: Path):
@@ -58,7 +72,7 @@ def test_status_completed(tmp_path: Path):
             session_id="sess_1",
         ),
     )
-    result = json.loads(tool.func(delegate_id=reg["delegate_id"]))
+    result = _unwrap_success(tool.func(delegate_id=reg["delegate_id"]))
     assert result["status"] == "completed"
     assert result["result_summary"] == "Done"
     assert result["duration_ms"] > 0
