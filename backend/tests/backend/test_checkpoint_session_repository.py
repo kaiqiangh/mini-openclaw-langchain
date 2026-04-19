@@ -11,6 +11,7 @@ from graph.agent import AgentManager
 from graph.runtime_types import (
     BlockingDelegateRef,
     ResolvedDelegateResult,
+    RuntimeEvent,
     RuntimeRequest,
 )
 from graph.skill_selector import SelectedSkill
@@ -201,6 +202,66 @@ def test_prepare_runtime_request_uses_checkpoint_history_for_resume(tmp_path: Pa
     assert prepared.resume_same_turn is True
     assert prepared.history == []
     assert [row["content"] for row in state["messages"]] == ["hello"]
+
+
+def test_finalize_stream_prefers_done_content_over_stale_stream_text(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    repository = manager.get_session_repository("default")
+    session_id = "stream-session"
+    asyncio.run(
+        repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="user",
+            content="delegate",
+        )
+    )
+
+    request = RuntimeRequest(
+        message="delegate",
+        history=[],
+        session_id=session_id,
+        agent_id="default",
+    )
+    stale_text = "Research delegate has started and is still running."
+    final_text = (
+        "Partial answer: required delegate results are available, "
+        "but the parent synthesis step failed, so this response may be incomplete."
+    )
+
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="run_start", data={"run_id": "run-stream"}),
+        )
+    )
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="token", data={"content": stale_text}),
+        )
+    )
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="done", data={"content": final_text}),
+        )
+    )
+    asyncio.run(repository.finalize_stream(request))
+
+    snapshot = asyncio.run(
+        repository.load_snapshot(
+            agent_id="default",
+            session_id=session_id,
+            include_live=False,
+        )
+    )
+
+    assert snapshot.messages[-1]["role"] == "assistant"
+    assert snapshot.messages[-1]["content"] == final_text
 
 
 def test_delete_session_removes_checkpoint_thread(tmp_path: Path):

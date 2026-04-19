@@ -528,9 +528,17 @@ class CheckpointSessionRepository:
 
     @staticmethod
     def _flush_current_segment(
-        state: _StreamAccumulator, fallback_content: str = ""
+        state: _StreamAccumulator,
+        fallback_content: str = "",
+        *,
+        prefer_fallback: bool = False,
     ) -> None:
-        content = state.current_content.strip() or fallback_content.strip()
+        current_content = state.current_content.strip()
+        fallback_text = fallback_content.strip()
+        if prefer_fallback and fallback_text:
+            content = fallback_text
+        else:
+            content = current_content or fallback_text
         if content or state.current_tool_calls or state.current_skill_uses:
             segment = {
                 "content": content,
@@ -654,7 +662,11 @@ class CheckpointSessionRepository:
 
         if event.type == "done":
             done_content = str(data.get("content", "")).strip()
-            self._flush_current_segment(state, fallback_content=done_content)
+            self._flush_current_segment(
+                state,
+                fallback_content=done_content,
+                prefer_fallback=True,
+            )
             state.completed_success = True
             return
 
