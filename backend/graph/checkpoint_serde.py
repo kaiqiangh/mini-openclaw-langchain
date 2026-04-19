@@ -6,9 +6,12 @@ _ALLOWED_MSGPACK_MODULES = (
     ("config", "LLMDriver"),
     ("config", "LLMProfile"),
     ("config", "LlmFallbackPolicy"),
+    ("graph.runtime_types", "BlockingDelegateRef"),
+    ("graph.runtime_types", "ResolvedDelegateResult"),
     ("graph.runtime_types", "RuntimeErrorInfo"),
     ("graph.runtime_types", "RuntimeRequest"),
     ("graph.runtime_types", "ToolExecutionEnvelope"),
+    ("graph.skill_selector", "SelectedSkill"),
     ("llm_routing", "ResolvedLlmCandidate"),
     ("llm_routing", "ResolvedLlmRoute"),
 )

@@ -8,7 +8,12 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from graph.agent import AgentManager
-from graph.runtime_types import RuntimeRequest
+from graph.runtime_types import (
+    BlockingDelegateRef,
+    ResolvedDelegateResult,
+    RuntimeRequest,
+)
+from graph.skill_selector import SelectedSkill
 from graph.session_manager import LegacySessionStateError
 
 
@@ -62,6 +67,78 @@ def test_graph_state_wrappers_create_sqlite_checkpoint(tmp_path: Path):
     assert checkpoint_db.exists()
     assert state["messages"][0]["content"] == "hello"
     assert state["compressed_context"] == "summary"
+    assert history
+
+
+def test_graph_state_wrappers_round_trip_blocking_delegate_runtime_types(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    asyncio.run(
+        manager.update_graph_state(
+            session_id="delegate-session",
+            values={
+                "messages": [{"role": "user", "content": "delegate", "timestamp_ms": 1}],
+                "pending_blocking_delegates": [
+                    BlockingDelegateRef(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        sub_session_id="sub_1234",
+                    )
+                ],
+                "resolved_delegate_results": [
+                    ResolvedDelegateResult(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        status="timeout",
+                        result_summary="",
+                        tools_used=[],
+                        duration_ms=120_000,
+                        error_message="Sub-agent exceeded timeout (120s)",
+                    )
+                ],
+                "pending_delegate_result_injection": [
+                    ResolvedDelegateResult(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        status="timeout",
+                        result_summary="",
+                        tools_used=[],
+                        duration_ms=120_000,
+                        error_message="Sub-agent exceeded timeout (120s)",
+                    )
+                ],
+                "selected_skill_items": [
+                    SelectedSkill(
+                        name="memory-helper",
+                        location="./skills/memory-helper/SKILL.md",
+                        description="memory helper",
+                        reason="matched terms: memory",
+                        score=12,
+                    )
+                ],
+                "delegate_waiting": False,
+            },
+        )
+    )
+
+    reloaded = AgentManager()
+    reloaded.initialize(tmp_path)
+
+    state = asyncio.run(reloaded.get_graph_state(session_id="delegate-session"))
+    history = asyncio.run(reloaded.get_graph_state_history(session_id="delegate-session"))
+
+    assert state["pending_blocking_delegates"][0].delegate_id == "del_1234"
+    assert state["resolved_delegate_results"][0].status == "timeout"
+    assert (
+        state["pending_delegate_result_injection"][0].error_message
+        == "Sub-agent exceeded timeout (120s)"
+    )
+    assert state["selected_skill_items"][0].name == "memory-helper"
     assert history
 
 

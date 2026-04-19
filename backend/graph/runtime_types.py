@@ -54,6 +54,26 @@ class RuntimeEvent:
 
 
 @dataclass(frozen=True)
+class BlockingDelegateRef:
+    delegate_id: str
+    role: str
+    task: str
+    sub_session_id: str
+
+
+@dataclass(frozen=True)
+class ResolvedDelegateResult:
+    delegate_id: str
+    role: str
+    task: str
+    status: Literal["completed", "failed", "timeout"]
+    result_summary: str = ""
+    tools_used: list[str] = field(default_factory=list)
+    duration_ms: int = 0
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
 class ToolExecutionEnvelope:
     tool: str
     tool_call_id: str
@@ -167,6 +187,11 @@ class RuntimeGraphState(TypedDict, total=False):
     model_messages: list[BaseMessage]
     pending_tool_calls: list[dict[str, Any]]
     pending_new_response: bool
+    pending_blocking_delegates: list[BlockingDelegateRef]
+    resolved_delegate_results: list[ResolvedDelegateResult]
+    pending_delegate_result_injection: list[ResolvedDelegateResult]
+    delegate_synthesis_retry_count: int
+    delegate_waiting: bool
     token_source: str | None
     latest_model_snapshot: str
     fallback_final_text: str
