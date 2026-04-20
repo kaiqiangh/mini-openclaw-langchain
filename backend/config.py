@@ -188,6 +188,28 @@ DEFAULT_CRON_ENABLED_TOOLS: tuple[str, ...] = (
     "scheduler_heartbeat_status",
     "scheduler_heartbeat_runs",
 )
+DEFAULT_DELEGATION_ALLOWED_TOOL_SCOPES: dict[str, list[str]] = {
+    "researcher": [
+        "web_search",
+        "fetch_url",
+        "read_files",
+        "search_knowledge_base",
+    ],
+    "analyst": [
+        "read_files",
+        "read_pdf",
+        "search_knowledge_base",
+        "terminal",
+    ],
+    "writer": ["read_files", "search_knowledge_base", "apply_patch"],
+}
+DEFAULT_DELEGATION_CONFIG: dict[str, Any] = {
+    "enabled": True,
+    "max_per_session": 5,
+    "default_timeout_seconds": 120,
+    "max_timeout_seconds": 600,
+    "allowed_tool_scopes": DEFAULT_DELEGATION_ALLOWED_TOOL_SCOPES,
+}
 
 
 @dataclass
@@ -234,6 +256,20 @@ class HooksRuntimeConfig:
 
 
 @dataclass
+class DelegationConfig:
+    enabled: bool = True
+    max_per_session: int = 5
+    default_timeout_seconds: int = 120
+    max_timeout_seconds: int = 600
+    allowed_tool_scopes: dict[str, list[str]] = field(
+        default_factory=lambda: {
+            role: [str(tool).strip() for tool in tools if str(tool).strip()]
+            for role, tools in DEFAULT_DELEGATION_ALLOWED_TOOL_SCOPES.items()
+        }
+    )
+
+
+@dataclass
 class RuntimeConfig:
     rag_mode: bool = False
     injection_mode: InjectionMode = InjectionMode.EVERY_TURN
@@ -261,6 +297,7 @@ class RuntimeConfig:
     heartbeat: HeartbeatRuntimeConfig = field(default_factory=HeartbeatRuntimeConfig)
     cron: CronRuntimeConfig = field(default_factory=CronRuntimeConfig)
     hooks: HooksRuntimeConfig = field(default_factory=HooksRuntimeConfig)
+    delegation: DelegationConfig = field(default_factory=DelegationConfig)
 
 
 @dataclass
@@ -309,6 +346,43 @@ _LLM_FALLBACK_POLICY_KEYS = {
 }
 _STARTUP_POLICY_VALUES = {"warn", "error"}
 _RUNTIME_FALLBACK_POLICY_VALUES = {"fail", "fallback"}
+
+
+def _validate_delegation_config(config: dict[str, Any]) -> list[str] | None:
+    errors: list[str] = []
+
+    max_per = config.get("max_per_session", 5)
+    if not isinstance(max_per, int) or max_per < 1:
+        errors.append("max_per_session must be >= 1")
+
+    default_timeout = config.get("default_timeout_seconds", 120)
+    if not isinstance(default_timeout, int) or default_timeout < 1:
+        errors.append("default_timeout_seconds must be >= 1")
+
+    max_timeout = config.get("max_timeout_seconds", 600)
+    if not isinstance(max_timeout, int) or max_timeout < 1:
+        errors.append("max_timeout_seconds must be >= 1")
+
+    if (
+        isinstance(default_timeout, int)
+        and isinstance(max_timeout, int)
+        and default_timeout > max_timeout
+    ):
+        errors.append("default_timeout_seconds must be <= max_timeout_seconds")
+
+    scopes = config.get("allowed_tool_scopes", {})
+    if not isinstance(scopes, dict) or not scopes:
+        errors.append("allowed_tool_scopes must be a non-empty dict")
+    else:
+        for role, tools in scopes.items():
+            if not isinstance(tools, list) or not tools:
+                errors.append(f"scope '{role}' must be a non-empty list")
+            if "delegate" in tools:
+                errors.append(
+                    f"scope '{role}' cannot include 'delegate' (nested delegation blocked)"
+                )
+
+    return errors if errors else None
 
 
 def _llm_fallback_policy_to_payload(
@@ -629,6 +703,21 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "enabled": runtime.hooks.enabled,
             "default_timeout_ms": runtime.hooks.default_timeout_ms,
         },
+        "delegation": {
+            "enabled": runtime.delegation.enabled,
+            "max_per_session": runtime.delegation.max_per_session,
+            "default_timeout_seconds": runtime.delegation.default_timeout_seconds,
+            "max_timeout_seconds": runtime.delegation.max_timeout_seconds,
+            "allowed_tool_scopes": {
+                str(role).strip(): [
+                    str(tool).strip()
+                    for tool in tools
+                    if str(tool).strip()
+                ]
+                for role, tools in runtime.delegation.allowed_tool_scopes.items()
+                if str(role).strip()
+            },
+        },
     }
     llm_payload = _llm_route_to_payload(runtime.llm)
     if llm_payload:
@@ -661,6 +750,7 @@ def _runtime_from_payload(
             terminal_execution = maybe_terminal
     scheduler = payload.get("scheduler", {})
     hooks = payload.get("hooks", {})
+    delegation = payload.get("delegation", {})
 
     injection_value = payload.get("injection_mode", InjectionMode.EVERY_TURN.value)
     try:
@@ -713,6 +803,28 @@ def _runtime_from_payload(
         raise ValueError(
             "llm_runtime.profile is no longer supported; use llm.default and llm.fallbacks"
         )
+
+    delegation_payload = DEFAULT_DELEGATION_CONFIG | (
+        delegation if isinstance(delegation, dict) else {}
+    )
+    if strict:
+        errors = _validate_delegation_config(delegation_payload)
+        if errors:
+            raise ValueError("; ".join(errors))
+    allowed_tool_scopes: dict[str, list[str]] = {}
+    raw_scopes = delegation_payload.get("allowed_tool_scopes", {})
+    if isinstance(raw_scopes, dict):
+        for raw_role, raw_tools in raw_scopes.items():
+            role = str(raw_role).strip()
+            if not role or not isinstance(raw_tools, list):
+                continue
+            tools: list[str] = []
+            for item in raw_tools:
+                tool_name = str(item).strip()
+                if tool_name and tool_name not in tools:
+                    tools.append(tool_name)
+            if tools:
+                allowed_tool_scopes[role] = tools
 
     return RuntimeConfig(
         rag_mode=bool(payload.get("rag_mode", False)),
@@ -864,6 +976,21 @@ def _runtime_from_payload(
         hooks=HooksRuntimeConfig(
             enabled=bool(hooks.get("enabled", True)),
             default_timeout_ms=max(100, int(hooks.get("default_timeout_ms", 10000))),
+        ),
+        delegation=DelegationConfig(
+            enabled=bool(delegation_payload.get("enabled", True)),
+            max_per_session=max(1, int(delegation_payload.get("max_per_session", 5))),
+            default_timeout_seconds=max(
+                1, int(delegation_payload.get("default_timeout_seconds", 120))
+            ),
+            max_timeout_seconds=max(
+                1, int(delegation_payload.get("max_timeout_seconds", 600))
+            ),
+            allowed_tool_scopes=allowed_tool_scopes
+            or {
+                role: list(tools)
+                for role, tools in DEFAULT_DELEGATION_ALLOWED_TOOL_SCOPES.items()
+            },
         ),
     )
 

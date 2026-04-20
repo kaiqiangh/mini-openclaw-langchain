@@ -11,6 +11,38 @@ class LegacySessionStateError(RuntimeError):
     pass
 
 
+def read_session_listing_payload(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def count_session_files(
+    sessions_dir: Path,
+    *,
+    archived: bool = False,
+    include_hidden: bool = False,
+) -> int:
+    root = sessions_dir / "archived_sessions" if archived else sessions_dir
+    if not root.exists():
+        return 0
+    count = 0
+    for path in root.glob("*.json"):
+        if not path.is_file():
+            continue
+        payload = read_session_listing_payload(path)
+        if payload is None:
+            continue
+        if (bool(payload.get("internal")) or bool(payload.get("hidden"))) and not include_hidden:
+            continue
+        count += 1
+    return count
+
+
 class SessionManager:
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -39,14 +71,32 @@ class SessionManager:
     def _now() -> float:
         return time.time()
 
-    def _default_payload(self, title: str = "New Session") -> dict[str, Any]:
+    def _default_payload(
+        self,
+        title: str = "New Session",
+        *,
+        hidden: bool = False,
+        internal: bool = False,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         now = self._now()
-        return {
+        payload = {
             "title": title,
             "created_at": now,
             "updated_at": now,
             "compressed_context": "",
         }
+        if hidden:
+            payload["hidden"] = True
+        if internal:
+            payload["internal"] = True
+        if isinstance(metadata, dict):
+            for key, value in metadata.items():
+                if value is not None:
+                    payload[key] = value
+        if payload.get("internal") and "session_kind" not in payload:
+            payload["session_kind"] = "internal"
+        return payload
 
     def _write_json_file(self, path: Path, payload: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,9 +139,17 @@ class SessionManager:
         *,
         title: str = "New Session",
         archived: bool = False,
+        hidden: bool = False,
+        internal: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         async with self._lock:
-            payload = self._default_payload(title.strip() or "New Session")
+            payload = self._default_payload(
+                title.strip() or "New Session",
+                hidden=hidden,
+                internal=internal,
+                metadata=metadata,
+            )
             path = self._session_path(session_id, archived=archived)
             self._write_json_file(path, payload)
             return payload
@@ -128,7 +186,9 @@ class SessionManager:
             path = self._session_path(session_id, archived=archived)
             self._write_json_file(path, payload)
 
-    async def list_sessions(self, *, scope: str = "active") -> list[dict[str, Any]]:
+    async def list_sessions(
+        self, *, scope: str = "active", include_hidden: bool = False
+    ) -> list[dict[str, Any]]:
         include_active = scope in {"active", "all"}
         include_archived = scope in {"archived", "all"}
         items: list[dict[str, Any]] = []
@@ -138,6 +198,8 @@ class SessionManager:
                 payload = self._read_session_payload(
                     path, session_id=session_id, archived=False
                 )
+                if (bool(payload.get("internal")) or bool(payload.get("hidden"))) and not include_hidden:
+                    continue
                 items.append(
                     {
                         "session_id": session_id,
@@ -145,6 +207,8 @@ class SessionManager:
                         "created_at": float(payload.get("created_at", 0)),
                         "updated_at": float(payload.get("updated_at", 0)),
                         "archived": False,
+                        "hidden": bool(payload.get("hidden", False)),
+                        "internal": bool(payload.get("internal", False)),
                     }
                 )
         if include_archived:
@@ -153,6 +217,8 @@ class SessionManager:
                 payload = self._read_session_payload(
                     path, session_id=session_id, archived=True
                 )
+                if (bool(payload.get("internal")) or bool(payload.get("hidden"))) and not include_hidden:
+                    continue
                 items.append(
                     {
                         "session_id": session_id,
@@ -160,6 +226,8 @@ class SessionManager:
                         "created_at": float(payload.get("created_at", 0)),
                         "updated_at": float(payload.get("updated_at", 0)),
                         "archived": True,
+                        "hidden": bool(payload.get("hidden", False)),
+                        "internal": bool(payload.get("internal", False)),
                     }
                 )
         items.sort(key=lambda item: item["updated_at"], reverse=True)

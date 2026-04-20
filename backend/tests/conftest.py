@@ -38,6 +38,7 @@ from scheduler.cron import CronScheduler  # noqa: E402
 from scheduler.heartbeat import HeartbeatScheduler  # noqa: E402
 from storage.run_store import AuditStore  # noqa: E402
 from storage.usage_store import UsageStore  # noqa: E402
+from tools.delegate_registry import DelegateRegistry  # noqa: E402
 
 if TYPE_CHECKING:
     from graph.agent import AgentManager
@@ -87,11 +88,14 @@ class FakeSessionRepository:
         tool_calls: list[dict[str, object]] | None = None,
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
+        timestamp_ms: int | None = None,
+        event_kind: str | None = None,
+        delegate: dict[str, object] | None = None,
     ) -> dict[str, object]:
         entry: dict[str, object] = {
             "role": role,
             "content": content,
-            "timestamp_ms": cls._now_ms(),
+            "timestamp_ms": timestamp_ms or cls._now_ms(),
         }
         if tool_calls:
             entry["tool_calls"] = list(tool_calls)
@@ -99,6 +103,10 @@ class FakeSessionRepository:
             entry["skill_uses"] = list(dict.fromkeys(skill_uses))
         if selected_skills:
             entry["selected_skills"] = list(dict.fromkeys(selected_skills))
+        if event_kind:
+            entry["event_kind"] = event_kind
+        if delegate:
+            entry["delegate"] = dict(delegate)
         return entry
 
     @staticmethod
@@ -241,6 +249,9 @@ class FakeSessionRepository:
         tool_calls: list[dict[str, object]] | None = None,
         skill_uses: list[str] | None = None,
         selected_skills: list[str] | None = None,
+        timestamp_ms: int | None = None,
+        event_kind: str | None = None,
+        delegate: dict[str, object] | None = None,
     ) -> None:
         _ = agent_id
         await self.manager.load_session(session_id)
@@ -253,8 +264,41 @@ class FakeSessionRepository:
                 tool_calls=tool_calls,
                 skill_uses=skill_uses,
                 selected_skills=selected_skills,
+                timestamp_ms=timestamp_ms,
+                event_kind=event_kind,
+                delegate=delegate,
             )
         )
+
+    async def update_state(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        values: dict[str, object],
+        graph_name: str = "default",
+    ) -> dict[str, object]:
+        _ = agent_id, graph_name
+        session = await self.manager.load_session(session_id)
+        key = self._key(session_id, archived=False)
+        if "model_messages" in values:
+            normalized: list[dict[str, object]] = []
+            raw_messages = values.get("model_messages")
+            if isinstance(raw_messages, list):
+                for item in raw_messages:
+                    if isinstance(item, dict):
+                        normalized.append(dict(item))
+            self._messages[key] = normalized
+        if "compressed_context" in values:
+            session["compressed_context"] = str(values.get("compressed_context", ""))
+            await self.manager.save_session(session_id, session)
+        if "live_response" in values:
+            live_response = values.get("live_response")
+            if isinstance(live_response, dict):
+                self._live_responses[key] = dict(live_response)
+            else:
+                self._live_responses.pop(key, None)
+        return {key: value for key, value in values.items()}
 
     async def set_live_response(
         self,
@@ -289,6 +333,9 @@ class FakeAgentManager:
         self.config = _Config()
         self._runtimes: dict[str, FakeRuntime] = {}
         self._session_repositories: dict[str, FakeSessionRepository] = {}
+        self.runtime_services = SimpleNamespace(
+            delegate_registry=DelegateRegistry(base_dir=base_dir)
+        )
         self.get_runtime("default")
 
     def _agent_root(self, agent_id: str) -> Path:

@@ -25,6 +25,7 @@ import {
   deleteSession,
   generateSessionTitle,
   getAgents,
+  getDelegateDetail,
   getRagMode,
   getSessionHistory,
   getSessions,
@@ -35,8 +36,14 @@ import {
   SessionMeta,
   setRagMode,
   streamChat,
+  type DelegateDetail,
   type DelegateSummary,
 } from "@/lib/api";
+import {
+  buildDelegateViewModels,
+  shouldPollDelegates,
+  type DelegateViewModel,
+} from "@/lib/delegates";
 
 export type ChatToolCall = {
   tool: string;
@@ -90,8 +97,8 @@ type AppState = {
   fileDirty: boolean;
   error: string | null;
   maxStepsPrompt: MaxStepsPromptState | null;
-  delegates: DelegateSummary[];
-  setDelegates: (delegates: DelegateSummary[]) => void;
+  delegates: DelegateViewModel[];
+  setDelegates: (delegates: DelegateViewModel[]) => void;
   reloadAgents: () => Promise<void>;
   setCurrentAgent: (agentId: string) => Promise<void>;
   createAgentById: (agentId: string) => Promise<void>;
@@ -123,8 +130,23 @@ type AppState = {
   cancelAfterMaxSteps: () => Promise<void>;
 };
 
+type AppViewSnapshot = {
+  currentAgentId: string;
+  sessionsScope: "active" | "archived";
+  sessions: SessionMeta[];
+  currentSessionId: string | null;
+  messages: ChatMessage[];
+  isStreaming: boolean;
+  delegates: DelegateViewModel[];
+  selectedFilePath: string;
+  selectedFileContent: string;
+  fileDirty: boolean;
+  ragEnabled: boolean;
+};
+
 const AppContext = createContext<AppState | null>(null);
 const CURRENT_AGENT_STORAGE_KEY = "mini-openclaw:current-agent:v1";
+const MAX_DELEGATE_DETAIL_ATTEMPTS = 3;
 
 function genId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -237,6 +259,63 @@ function appendDebugEvent(
   return { ...message, debugEvents: [...message.debugEvents, nextEvent] };
 }
 
+function splitDelegateViewModels(delegates: DelegateViewModel[]): {
+  summaries: DelegateSummary[];
+  details: Record<string, DelegateDetail>;
+} {
+  const details: Record<string, DelegateDetail> = {};
+  const summaries = delegates.map((delegate) => {
+    const { detail, ...summary } = delegate;
+    if (detail) {
+      details[delegate.delegate_id] = detail;
+    }
+    return summary;
+  });
+  return { summaries, details };
+}
+
+function areDelegateSummariesEqual(
+  left: DelegateSummary[],
+  right: DelegateSummary[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((delegate, index) => {
+    const other = right[index];
+    return (
+      other !== undefined &&
+      delegate.delegate_id === other.delegate_id &&
+      delegate.role === other.role &&
+      delegate.task === other.task &&
+      delegate.status === other.status &&
+      delegate.sub_session_id === other.sub_session_id &&
+      delegate.created_at === other.created_at
+    );
+  });
+}
+
+function buildDelegateDetailFallback(
+  delegate: DelegateSummary,
+  agentId: string,
+  sessionId: string,
+  attemptCount: number,
+): DelegateDetail {
+  const fallbackMessage = `Unable to load delegate detail after ${attemptCount} attempts.`;
+  return {
+    ...delegate,
+    agent_id: agentId,
+    parent_session_id: sessionId,
+    allowed_tools: [],
+    ...(delegate.status === "failed" || delegate.status === "timeout"
+      ? { error_message: fallbackMessage }
+      : {
+          result_summary:
+            "Delegate completed, but the detailed result could not be loaded.",
+        }),
+  };
+}
+
 function isMaxStepsError(payload: unknown): boolean {
   if (!payload || typeof payload !== "object") return false;
   const code = String((payload as { code?: unknown }).code ?? "").toLowerCase();
@@ -276,11 +355,204 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [maxStepsPrompt, setMaxStepsPrompt] =
     useState<MaxStepsPromptState | null>(null);
-  const [delegates, setDelegatesState] = useState<DelegateSummary[]>([]);
+  const [delegateSummaries, setDelegateSummariesState] = useState<
+    DelegateSummary[]
+  >([]);
+  const [delegateDetailsById, setDelegateDetailsById] = useState<
+    Record<string, DelegateDetail>
+  >({});
+  const [delegateDetailAttemptsById, setDelegateDetailAttemptsById] = useState<
+    Record<string, number>
+  >({});
+  const [delegatesHydrated, setDelegatesHydrated] = useState(false);
   const agentSwitchEpochRef = useRef(0);
   const streamEpochRef = useRef(0);
   const streamAbortRef = useRef<AbortController | null>(null);
   const streamConnectionRef = useRef(false);
+  const delegatePollInFlightRef = useRef(false);
+  const delegateDetailsRef = useRef<Record<string, DelegateDetail>>({});
+  const delegateDetailAttemptsRef = useRef<Record<string, number>>({});
+
+  const delegates = useMemo(
+    () => buildDelegateViewModels(delegateSummaries, delegateDetailsById),
+    [delegateDetailsById, delegateSummaries],
+  );
+
+  const captureAppViewSnapshot = useCallback(
+    (): AppViewSnapshot => ({
+      currentAgentId,
+      sessionsScope,
+      sessions,
+      currentSessionId,
+      messages,
+      isStreaming,
+      delegates,
+      selectedFilePath,
+      selectedFileContent,
+      fileDirty,
+      ragEnabled,
+    }),
+    [
+      currentAgentId,
+      currentSessionId,
+      delegates,
+      fileDirty,
+      isStreaming,
+      messages,
+      ragEnabled,
+      selectedFileContent,
+      selectedFilePath,
+      sessions,
+      sessionsScope,
+    ],
+  );
+
+  const restoreAppViewSnapshot = useCallback(
+    (
+      snapshot: AppViewSnapshot,
+      options?: {
+        preserveStreaming?: boolean;
+      },
+    ) => {
+      const split = splitDelegateViewModels(snapshot.delegates);
+      setCurrentAgentId(snapshot.currentAgentId);
+      setSessionsScopeState(snapshot.sessionsScope);
+      setSessions(snapshot.sessions);
+      setCurrentSessionId(snapshot.currentSessionId);
+      setMessages(snapshot.messages);
+      setIsStreaming(options?.preserveStreaming === false ? false : snapshot.isStreaming);
+      setDelegateSummariesState(split.summaries);
+      setDelegateDetailsById(split.details);
+      setDelegateDetailAttemptsById({});
+      setDelegatesHydrated(true);
+      setSelectedFilePathState(snapshot.selectedFilePath);
+      setSelectedFileContent(snapshot.selectedFileContent);
+      setFileDirty(snapshot.fileDirty);
+      setRagEnabledState(snapshot.ragEnabled);
+    },
+    [],
+  );
+
+  const setDelegates = useCallback((next: DelegateViewModel[]) => {
+    const split = splitDelegateViewModels(next);
+    setDelegateSummariesState(split.summaries);
+    setDelegateDetailsById(split.details);
+    setDelegateDetailAttemptsById({});
+    setDelegatesHydrated(true);
+  }, []);
+
+  const resetDelegateState = useCallback(() => {
+    setDelegateSummariesState([]);
+    setDelegateDetailsById({});
+    setDelegateDetailAttemptsById({});
+    setDelegatesHydrated(false);
+  }, []);
+
+  const syncDelegates = useCallback(
+    async (
+      agentId: string,
+      sessionId: string,
+      cachedDetails: Record<string, DelegateDetail>,
+      cachedAttempts: Record<string, number>,
+      cancelledRef: () => boolean,
+    ) => {
+      const listed = await listDelegates(agentId, sessionId);
+      if (cancelledRef()) return;
+
+      setDelegateSummariesState((prev) =>
+        areDelegateSummariesEqual(prev, listed.delegates) ? prev : listed.delegates,
+      );
+      setDelegatesHydrated((prev) => prev || true);
+
+      const activeIds = new Set(
+        listed.delegates.map((delegate) => delegate.delegate_id),
+      );
+      setDelegateDetailsById((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).filter(([delegateId]) => activeIds.has(delegateId)),
+        ),
+      );
+      setDelegateDetailAttemptsById((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).filter(([delegateId]) => activeIds.has(delegateId)),
+        ),
+      );
+
+      const terminalDelegates = listed.delegates.filter(
+        (delegate) =>
+          delegate.status !== "running" &&
+          !cachedDetails[delegate.delegate_id] &&
+          (cachedAttempts[delegate.delegate_id] ?? 0) <
+            MAX_DELEGATE_DETAIL_ATTEMPTS,
+      );
+      if (terminalDelegates.length === 0) {
+        return;
+      }
+
+      const detailed = await Promise.allSettled(
+        terminalDelegates.map(async (delegate) => [
+          delegate.delegate_id,
+          await getDelegateDetail(agentId, sessionId, delegate.delegate_id),
+        ] as const),
+      );
+      if (cancelledRef()) return;
+
+      const nextDetails: Record<string, DelegateDetail> = {};
+      const nextAttempts = { ...cachedAttempts };
+      for (const result of detailed) {
+        if (result.status !== "fulfilled") {
+          continue;
+        }
+        const [delegateId, detail] = result.value;
+        nextDetails[delegateId] = detail;
+        delete nextAttempts[delegateId];
+      }
+      for (const [index, result] of detailed.entries()) {
+        if (result.status === "fulfilled") {
+          continue;
+        }
+        const delegate = terminalDelegates[index];
+        if (!delegate) {
+          continue;
+        }
+        const nextAttempt = (cachedAttempts[delegate.delegate_id] ?? 0) + 1;
+        if (nextAttempt >= MAX_DELEGATE_DETAIL_ATTEMPTS) {
+          nextDetails[delegate.delegate_id] = buildDelegateDetailFallback(
+            delegate,
+            agentId,
+            sessionId,
+            nextAttempt,
+          );
+          delete nextAttempts[delegate.delegate_id];
+        } else {
+          nextAttempts[delegate.delegate_id] = nextAttempt;
+        }
+      }
+
+      setDelegateDetailAttemptsById((prev) => {
+        const base = Object.fromEntries(
+          Object.entries(prev).filter(([delegateId]) => activeIds.has(delegateId)),
+        );
+        for (const [delegateId, attemptCount] of Object.entries(nextAttempts)) {
+          if (activeIds.has(delegateId)) {
+            base[delegateId] = attemptCount;
+          }
+        }
+        for (const delegateId of Object.keys(nextDetails)) {
+          delete base[delegateId];
+        }
+        return base;
+      });
+
+      if (Object.keys(nextDetails).length > 0) {
+        setDelegateDetailsById((prev) => ({
+          ...prev,
+          ...nextDetails,
+        }));
+      }
+    },
+    [],
+  );
 
   const cancelActiveStream = useCallback(() => {
     streamEpochRef.current += 1;
@@ -296,6 +568,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(CURRENT_AGENT_STORAGE_KEY, currentAgentId);
   }, [currentAgentId]);
+
+  useEffect(() => {
+    delegateDetailsRef.current = delegateDetailsById;
+  }, [delegateDetailsById]);
+
+  useEffect(() => {
+    delegateDetailAttemptsRef.current = delegateDetailAttemptsById;
+  }, [delegateDetailAttemptsById]);
 
   const refreshAgents = useCallback(async () => {
     const next = await getAgents();
@@ -315,24 +595,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const loadSession = useCallback(
-    async (sessionId: string, archived = false, agentId: string) => {
-      const history = await getSessionHistory(sessionId, archived, agentId);
-      const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
-        mapHistoryMessage(sessionId, msg, idx),
-      );
-      const hasStreaming = history.messages.some((msg) =>
-        Boolean(msg.streaming),
-      );
-      setMessages(mapped);
+    async (
+      sessionId: string,
+      archived = false,
+      agentId: string,
+      options?: {
+        restoreOnError?: {
+          sessionId: string | null;
+          messages: ChatMessage[];
+          isStreaming: boolean;
+          delegates: DelegateViewModel[];
+        };
+      },
+    ) => {
       setCurrentSessionId(sessionId);
-      setIsStreaming(hasStreaming);
+      setMessages([]);
+      setIsStreaming(false);
+      resetDelegateState();
+      try {
+        const history = await getSessionHistory(sessionId, archived, agentId);
+        const mapped: ChatMessage[] = history.messages.map((msg, idx) =>
+          mapHistoryMessage(sessionId, msg, idx),
+        );
+        const hasStreaming = history.messages.some((msg) =>
+          Boolean(msg.streaming),
+        );
+        setMessages(mapped);
+        setIsStreaming(hasStreaming);
+      } catch (error) {
+        if (options?.restoreOnError) {
+          setCurrentSessionId(options.restoreOnError.sessionId);
+          setMessages(options.restoreOnError.messages);
+          setIsStreaming(options.restoreOnError.isStreaming);
+          setDelegates(options.restoreOnError.delegates);
+        }
+        throw error;
+      }
     },
-    [],
+    [resetDelegateState, setDelegates],
   );
 
   const setCurrentAgent = useCallback(
     async (agentId: string) => {
       if (agentId === currentAgentId) return;
+      const snapshot = captureAppViewSnapshot();
       cancelActiveStream();
       const switchEpoch = agentSwitchEpochRef.current + 1;
       agentSwitchEpochRef.current = switchEpoch;
@@ -343,6 +649,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCurrentSessionId(null);
       setMessages([]);
       setIsStreaming(false);
+      resetDelegateState();
       setSelectedFilePathState("memory/MEMORY.md");
       setSelectedFileContent("");
       setFileDirty(false);
@@ -368,10 +675,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setFileDirty(false);
       } catch (err) {
         if (agentSwitchEpochRef.current !== switchEpoch) return;
+        restoreAppViewSnapshot(snapshot, { preserveStreaming: false });
         setError(err instanceof Error ? err.message : "Failed to switch agent");
       }
     },
-    [cancelActiveStream, currentAgentId, loadSession, refreshSessions],
+    [
+      cancelActiveStream,
+      captureAppViewSnapshot,
+      currentAgentId,
+      loadSession,
+      refreshSessions,
+      resetDelegateState,
+      restoreAppViewSnapshot,
+    ],
   );
 
   const createAgentById = useCallback(
@@ -453,13 +769,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createNewSession = useCallback(async () => {
+    const snapshot = captureAppViewSnapshot();
     setError(null);
     setSessionsScopeState("active");
-    const created = await createSession(undefined, currentAgentId);
-    await refreshSessions("active", currentAgentId);
-    setCurrentSessionId(created.session_id);
-    setMessages([]);
-  }, [currentAgentId, refreshSessions]);
+    resetDelegateState();
+    try {
+      const created = await createSession(undefined, currentAgentId);
+      await refreshSessions("active", currentAgentId);
+      setCurrentSessionId(created.session_id);
+      setMessages([]);
+      setIsStreaming(false);
+    } catch (error) {
+      restoreAppViewSnapshot(snapshot);
+      throw error;
+    }
+  }, [
+    captureAppViewSnapshot,
+    currentAgentId,
+    refreshSessions,
+    resetDelegateState,
+    restoreAppViewSnapshot,
+  ]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
@@ -468,9 +798,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         sessionId,
         sessionsScope === "archived",
         currentAgentId,
+        {
+          restoreOnError: {
+            sessionId: currentSessionId,
+            messages,
+            isStreaming,
+            delegates,
+          },
+        },
       );
     },
-    [currentAgentId, loadSession, sessionsScope],
+    [
+      currentAgentId,
+      currentSessionId,
+      delegates,
+      isStreaming,
+      loadSession,
+      messages,
+      sessionsScope,
+    ],
   );
 
   const openSessionInWorkspace = useCallback(
@@ -483,6 +829,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sessionId: string;
       scope?: "active" | "archived";
     }) => {
+      const snapshot = captureAppViewSnapshot();
       const nextAgentId = agentId.trim() || "default";
       const nextScope = scope === "archived" ? "archived" : "active";
       cancelActiveStream();
@@ -494,6 +841,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCurrentSessionId(null);
       setMessages([]);
       setIsStreaming(false);
+      resetDelegateState();
 
       const switchingAgent = nextAgentId !== currentAgentId;
       if (switchingAgent) {
@@ -529,13 +877,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         if (agentSwitchEpochRef.current !== switchEpoch) return;
+        restoreAppViewSnapshot(snapshot, { preserveStreaming: false });
         const message =
           err instanceof Error ? err.message : "Failed to open workspace session";
         setError(message);
         throw err instanceof Error ? err : new Error(message);
       }
     },
-    [cancelActiveStream, currentAgentId, loadSession],
+    [
+      cancelActiveStream,
+      captureAppViewSnapshot,
+      currentAgentId,
+      loadSession,
+      restoreAppViewSnapshot,
+    ],
   );
 
   const setSelectedFilePath = useCallback(
@@ -583,27 +938,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setSessionsScope = useCallback(
     async (scope: "active" | "archived") => {
+      const snapshot = captureAppViewSnapshot();
       setError(null);
       if (scope === "archived") {
         cancelActiveStream();
       }
-      setSessionsScopeState(scope);
-      if (scope === "archived") {
-        setIsStreaming(false);
-      }
-      const list = await refreshSessions(scope, currentAgentId);
-      if (list.length > 0) {
-        await loadSession(
-          list[0].session_id,
-          scope === "archived",
-          currentAgentId,
-        );
-      } else {
-        setCurrentSessionId(null);
-        setMessages([]);
+      try {
+        setSessionsScopeState(scope);
+        if (scope === "archived") {
+          setIsStreaming(false);
+        }
+        const list = await refreshSessions(scope, currentAgentId);
+        if (list.length > 0) {
+          await loadSession(
+            list[0].session_id,
+            scope === "archived",
+            currentAgentId,
+          );
+        } else {
+          setCurrentSessionId(null);
+          setMessages([]);
+          setIsStreaming(false);
+          resetDelegateState();
+        }
+      } catch (error) {
+        restoreAppViewSnapshot(snapshot, {
+          preserveStreaming: scope !== "archived",
+        });
+        throw error;
       }
     },
-    [cancelActiveStream, currentAgentId, loadSession, refreshSessions],
+    [
+      cancelActiveStream,
+      captureAppViewSnapshot,
+      currentAgentId,
+      loadSession,
+      refreshSessions,
+      resetDelegateState,
+      restoreAppViewSnapshot,
+    ],
   );
 
   const archiveSessionById = useCallback(
@@ -611,12 +984,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       await archiveSession(sessionId, currentAgentId);
       if (currentSessionId === sessionId) {
+        resetDelegateState();
         setCurrentSessionId(null);
         setMessages([]);
       }
       await refreshSessions("active", currentAgentId);
     },
-    [currentAgentId, currentSessionId, refreshSessions],
+    [currentAgentId, currentSessionId, refreshSessions, resetDelegateState],
   );
 
   const restoreSessionById = useCallback(
@@ -633,12 +1007,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       await deleteSession(sessionId, archived, currentAgentId);
       if (currentSessionId === sessionId) {
+        resetDelegateState();
         setCurrentSessionId(null);
         setMessages([]);
       }
       await refreshSessions(archived ? "archived" : "active", currentAgentId);
     },
-    [currentAgentId, currentSessionId, refreshSessions],
+    [currentAgentId, currentSessionId, refreshSessions, resetDelegateState],
   );
 
   const runStreamTurn = useCallback(
@@ -1056,16 +1431,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (!hasStreaming) {
           void refreshSessions("active", currentAgentId);
         }
-
-        // Poll for delegate sub-agents
-        try {
-          const d = await listDelegates(currentAgentId, currentSessionId);
-          if (!cancelled && d.delegates.length > 0) {
-            setDelegatesState(d.delegates);
-          }
-        } catch {
-          // Best-effort — ignore delegate polling errors
-        }
       } catch {
         // Keep background polling best-effort only.
       }
@@ -1087,6 +1452,65 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isStreaming,
     refreshSessions,
     sessionsScope,
+  ]);
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!currentSessionId) return;
+    if (sessionsScope === "archived") return;
+    if (
+      !shouldPollDelegates({
+        isStreaming,
+        delegates: delegateSummaries,
+        detailById: delegateDetailsById,
+        hydrated: delegatesHydrated,
+      })
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const isCancelled = () => cancelled;
+
+    const poll = async () => {
+      if (delegatePollInFlightRef.current) {
+        return;
+      }
+      delegatePollInFlightRef.current = true;
+      try {
+        await syncDelegates(
+          currentAgentId,
+          currentSessionId,
+          delegateDetailsRef.current,
+          delegateDetailAttemptsRef.current,
+          isCancelled,
+        );
+      } catch {
+        // Keep delegate polling best-effort only.
+      } finally {
+        delegatePollInFlightRef.current = false;
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    currentAgentId,
+    currentSessionId,
+    delegateDetailsById,
+    delegateSummaries,
+    delegatesHydrated,
+    initialized,
+    isStreaming,
+    sessionsScope,
+    syncDelegates,
   ]);
 
   useEffect(() => {
@@ -1177,7 +1601,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       error,
       maxStepsPrompt,
       delegates,
-      setDelegates: setDelegatesState,
+      setDelegates,
       reloadAgents,
       setCurrentAgent,
       createAgentById,
@@ -1216,7 +1640,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       error,
       maxStepsPrompt,
       delegates,
-      setDelegatesState,
+      setDelegates,
       reloadAgents,
       setCurrentAgent,
       createAgentById,

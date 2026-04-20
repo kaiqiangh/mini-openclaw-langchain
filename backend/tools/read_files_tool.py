@@ -82,7 +82,52 @@ class ReadFilesTool:
                 )
                 continue
 
-            if not resolved.exists() or not resolved.is_file():
+            if not resolved.exists():
+                results.append(
+                    {
+                        "ok": False,
+                        "path": path,
+                        "error": {
+                            "code": "E_NOT_FOUND",
+                            "message": f"File not found: {path}",
+                        },
+                    }
+                )
+                continue
+
+            if resolved.is_dir():
+                entries: list[dict[str, str]] = []
+                for child in sorted(resolved.iterdir(), key=lambda item: item.name.lower()):
+                    relative = child.relative_to(self.root_dir).as_posix()
+                    entries.append(
+                        {
+                            "name": child.name,
+                            "path": relative,
+                            "kind": "directory" if child.is_dir() else "file",
+                        }
+                    )
+                content_lines = [f"[directory] {path.rstrip('/')}/"]
+                for entry in entries:
+                    marker = "/" if entry["kind"] == "directory" else ""
+                    content_lines.append(f"- {entry['name']}{marker}")
+                content = "\n".join(content_lines)
+                truncated = False
+                if len(content) > max_chars:
+                    content = content[:max_chars] + "\n...[truncated]"
+                    truncated = True
+                results.append(
+                    {
+                        "ok": True,
+                        "path": path,
+                        "kind": "directory",
+                        "entries": entries,
+                        "content": content,
+                        "truncated": truncated,
+                    }
+                )
+                continue
+
+            if not resolved.is_file():
                 results.append(
                     {
                         "ok": False,

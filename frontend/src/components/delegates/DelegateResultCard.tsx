@@ -27,7 +27,11 @@ export function DelegateResultCard({ delegate }: Props) {
             <span className="text-xs text-[var(--danger)]">{delegate.error_message}</span>
           ) : (
             <span className="text-xs text-[var(--success)]">
-              {delegate.result_summary?.slice(0, 120)}...
+              {delegate.result_summary
+                ? `${delegate.result_summary.slice(0, 120)}${
+                    delegate.result_summary.length > 120 ? "..." : ""
+                  }`
+                : "Completed"}
             </span>
           )}
           <span className="ml-auto text-xs text-[var(--muted-soft)]">

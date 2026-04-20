@@ -86,6 +86,23 @@ class SessionHistoryTool:
             )
         )
 
+    def _load_session_metadata(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool,
+    ) -> dict[str, Any]:
+        manager = self._agent_manager()
+        runtime = manager.get_runtime(agent_id)
+        payload = _run_async(
+            runtime.session_manager.load_existing_session(
+                session_id,
+                archived=archived,
+            )
+        )
+        return dict(payload)
+
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
         started = time.monotonic()
@@ -134,6 +151,20 @@ class SessionHistoryTool:
             )
 
         try:
+            session_payload = self._load_session_metadata(
+                agent_id=agent_id,
+                session_id=session_id,
+                archived=archived,
+            )
+            if bool(session_payload.get("hidden")) or bool(
+                session_payload.get("internal")
+            ):
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code="E_NOT_FOUND",
+                    message="Session not found",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
             snapshot = self._load_snapshot(
                 agent_id=agent_id,
                 session_id=session_id,

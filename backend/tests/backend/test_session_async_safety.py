@@ -63,3 +63,28 @@ async def test_session_manager_uses_asyncio_lock():
     with tempfile.TemporaryDirectory() as tmpdir:
         manager = SessionManager(Path(tmpdir))
         assert isinstance(manager._lock, aio.Lock)
+
+
+@pytest.mark.asyncio
+async def test_internal_sessions_are_hidden_from_counts_and_lists():
+    """Internal child sessions must stay out of ordinary operator surfaces."""
+    from graph.session_manager import SessionManager, count_session_files
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manager = SessionManager(Path(tmpdir))
+        await manager.create_session("public-1", title="Public Session")
+        await manager.create_session(
+            "child-1",
+            title="Internal Child",
+            hidden=True,
+            internal=True,
+            metadata={"session_kind": "delegate_child"},
+        )
+
+        visible = await manager.list_sessions()
+        all_sessions = await manager.list_sessions(include_hidden=True)
+
+        assert [row["session_id"] for row in visible] == ["public-1"]
+        assert {row["session_id"] for row in all_sessions} == {"public-1", "child-1"}
+        assert count_session_files(manager.sessions_dir) == 1
+        assert count_session_files(manager.sessions_dir, include_hidden=True) == 2

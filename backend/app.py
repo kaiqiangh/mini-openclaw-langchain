@@ -333,6 +333,7 @@ async def lifespan(_: FastAPI):
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
     audit.set_agent_manager(agent_manager)
+    hooks.set_agent_manager(agent_manager)
     setup.set_base_dir(BASE_DIR)
     replay.set_agent_manager(agent_manager)
     approval.set_dependencies(ApprovalStore(BASE_DIR))

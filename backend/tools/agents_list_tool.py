@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from graph.session_manager import count_session_files
+
 from .base import ToolContext
 from .contracts import ToolResult
 from .policy import PermissionLevel
@@ -28,17 +30,8 @@ class AgentsListTool:
         agents: list[dict[str, Any]] = []
         for agent_id, root in list_agent_roots(project_root):
             sessions_dir = root / "sessions"
-            active_sessions = (
-                len([item for item in sessions_dir.glob("*.json") if item.is_file()])
-                if sessions_dir.exists()
-                else 0
-            )
-            archived_dir = sessions_dir / "archived_sessions"
-            archived_sessions = (
-                len([item for item in archived_dir.glob("*.json") if item.is_file()])
-                if archived_dir.exists()
-                else 0
-            )
+            active_sessions = count_session_files(sessions_dir, archived=False)
+            archived_sessions = count_session_files(sessions_dir, archived=True)
             stat = root.stat()
             agents.append(
                 {

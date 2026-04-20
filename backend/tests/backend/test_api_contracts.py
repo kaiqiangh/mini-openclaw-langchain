@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
+from graph.compaction import CompactionPipeline
+from langchain_core.messages import HumanMessage
+
 
 def test_sessions_files_tokens_compress_and_config_contracts(client, api_app):
     created = client.post("/api/v1/agents/default/sessions", json={})
@@ -220,6 +223,189 @@ def test_agents_endpoint_and_session_isolation(client):
     ]
     assert "memory/MEMORY.md" in default_files
     assert "memory/MEMORY.md" in other_files
+
+
+def test_internal_sessions_are_hidden_and_rejected_by_public_session_endpoints(
+    client, api_app
+):
+    public_session_id = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
+    runtime = api_app["agent_manager"].get_runtime("default")
+
+    asyncio.run(
+        runtime.session_manager.create_session(
+            "delegate-child-1",
+            title="Delegate Child",
+            hidden=True,
+            internal=True,
+            metadata={
+                "session_kind": "delegate_child",
+                "parent_session_id": public_session_id,
+                "delegate_id": "del_test1234",
+            },
+        )
+    )
+
+    listed = client.get("/api/v1/agents/default/sessions")
+    assert listed.status_code == 200
+    assert all(
+        item["session_id"] != "delegate-child-1"
+        for item in listed.json()["data"]
+    )
+
+    history = client.get(
+        "/api/v1/agents/default/sessions/delegate-child-1/history"
+    )
+    rename = client.put(
+        "/api/v1/agents/default/sessions/delegate-child-1",
+        json={"title": "Renamed Child"},
+    )
+    delete = client.delete("/api/v1/agents/default/sessions/delegate-child-1")
+
+    assert history.status_code == 404
+    assert rename.status_code == 404
+    assert delete.status_code == 404
+
+
+def test_delegate_endpoints_use_raw_session_scoped_contract(client, api_app):
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
+    registry = api_app["agent_manager"].runtime_services.delegate_registry
+    registration = registry.register(
+        agent_id="default",
+        parent_session_id=session_id,
+        task="Summarize the latest session state",
+        role="researcher",
+        allowed_tools=["read_files"],
+        blocked_tools=["agents_list"],
+        timeout_seconds=60,
+    )
+    registry.mark_completed(
+        registration["delegate_id"],
+        {
+            "summary": "Delegate finished successfully.",
+            "steps": 2,
+            "tools_used": ["read_files"],
+            "token_usage": {"input_tokens": 10, "output_tokens": 4},
+        },
+    )
+
+    listed = client.get(f"/api/v1/agents/default/sessions/{session_id}/delegates")
+    assert listed.status_code == 200
+    listed_payload = listed.json()
+    assert set(listed_payload.keys()) == {"delegates"}
+    assert len(listed_payload["delegates"]) == 1
+    assert listed_payload["delegates"][0]["delegate_id"] == registration["delegate_id"]
+
+    detail = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/delegates/{registration['delegate_id']}"
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert "data" not in detail_payload
+    assert detail_payload["delegate_id"] == registration["delegate_id"]
+    assert detail_payload["parent_session_id"] == session_id
+    assert detail_payload["allowed_tools"] == ["read_files"]
+    assert detail_payload["blocked_tools"] == ["agents_list"]
+    assert detail_payload["tools_used"] == ["read_files"]
+    assert detail_payload["result_summary"] == "Delegate finished successfully."
+    assert detail_payload["result_file"].endswith("/result_summary.md")
+
+
+def test_delegate_detail_exposes_timeout_terminal_contract(client, api_app):
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
+    registry = api_app["agent_manager"].runtime_services.delegate_registry
+    registration = registry.register(
+        agent_id="default",
+        parent_session_id=session_id,
+        task="Summarize the latest session state",
+        role="researcher",
+        allowed_tools=["read_files"],
+        blocked_tools=["agents_list"],
+        timeout_seconds=7,
+    )
+    registry.mark_timeout(registration["delegate_id"])
+
+    detail = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/delegates/{registration['delegate_id']}"
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert "data" not in detail_payload
+    assert detail_payload["delegate_id"] == registration["delegate_id"]
+    assert detail_payload["status"] == "timeout"
+    assert detail_payload["allowed_tools"] == ["read_files"]
+    assert detail_payload["blocked_tools"] == ["agents_list"]
+    assert detail_payload["error_message"] == "Sub-agent exceeded timeout (7s)"
+    assert detail_payload["result_file"].endswith("/result_summary.md")
+
+
+def test_checkpoint_endpoints_enforce_exact_session_ownership(client, api_app):
+    session_a = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
+        "session_id"
+    ]
+    session_b = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
+        "session_id"
+    ]
+    runtime = api_app["agent_manager"].get_runtime("default")
+    pipeline = CompactionPipeline(
+        model_name="gpt-4o",
+        checkpoint_dir=runtime.root_dir / "storage" / "checkpoints",
+    )
+
+    owned_checkpoint = asyncio.run(
+        pipeline.create_checkpoint(
+            [HumanMessage(content="owned")],
+            run_id="owned-a",
+            step=1,
+            agent_id="default",
+            session_id=session_a,
+        )
+    )
+    other_checkpoint = asyncio.run(
+        pipeline.create_checkpoint(
+            [HumanMessage(content="other")],
+            run_id="owned-b",
+            step=2,
+            agent_id="default",
+            session_id=session_b,
+        )
+    )
+    legacy_checkpoint = asyncio.run(
+        pipeline.create_checkpoint(
+            [HumanMessage(content="legacy")],
+            run_id="legacy",
+            step=3,
+        )
+    )
+
+    listed = client.get(f"/api/v1/agents/default/sessions/{session_a}/checkpoints")
+    assert listed.status_code == 200
+    checkpoint_ids = [row["checkpoint_id"] for row in listed.json()["data"]]
+    assert checkpoint_ids == [owned_checkpoint]
+
+    other_rewind = client.post(
+        f"/api/v1/agents/default/sessions/{session_a}/rewind",
+        json={"checkpoint_id": other_checkpoint},
+    )
+    legacy_rewind = client.post(
+        f"/api/v1/agents/default/sessions/{session_a}/rewind",
+        json={"checkpoint_id": legacy_checkpoint},
+    )
+    owned_rewind = client.post(
+        f"/api/v1/agents/default/sessions/{session_a}/rewind",
+        json={"checkpoint_id": owned_checkpoint},
+    )
+
+    assert other_rewind.status_code == 404
+    assert legacy_rewind.status_code == 404
+    assert owned_rewind.status_code == 200
+    assert owned_rewind.json()["data"]["checkpoint_id"] == owned_checkpoint
+    assert owned_rewind.json()["data"]["message_count"] == 1
 
 
 def test_cron_sessions_use_job_name_in_session_lists(client):

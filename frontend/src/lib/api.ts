@@ -1115,6 +1115,7 @@ export interface DelegateDetail extends DelegateSummary {
   agent_id: string;
   parent_session_id: string;
   allowed_tools: string[];
+  blocked_tools?: string[];
   result_summary?: string;
   steps_completed?: number;
   tools_used?: string[];

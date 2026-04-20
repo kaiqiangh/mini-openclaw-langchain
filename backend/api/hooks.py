@@ -1,35 +1,68 @@
-"""FastAPI router for hook management."""
+"""FastAPI router for hook management and audit visibility."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from api.errors import ApiError
+from graph.agent import AgentManager
 from hooks.engine import HookEngine
-from hooks.types import HookConfig, HookEvent, HookType
+from hooks.types import HookConfig, HookEvent
 
-router = APIRouter(prefix="/api/v1/hooks", tags=["hooks"])
+router = APIRouter(prefix="/hooks", tags=["hooks"])
 
-# ── Helpers ─────────────────────────────────────────────────────
+_agent_manager: AgentManager | None = None
+
+
+def set_agent_manager(agent_manager: AgentManager) -> None:
+    global _agent_manager
+    _agent_manager = agent_manager
+
+
+def _require_agent_manager() -> AgentManager:
+    if _agent_manager is None:
+        raise ApiError(
+            status_code=500,
+            code="not_initialized",
+            message="Agent manager not initialized",
+        )
+    return _agent_manager
 
 
 def _get_engine(agent_id: str) -> HookEngine:
-    """Get the HookEngine for an agent via dependency injection.
-
-    This is overridden at app startup via the manager dependency.
-    For now, we use a simple lookup pattern. If the agent manager
-    is not available, the API returns 501 Not Implemented.
-    """
-    # This will be wired through app.py — for now return a sentinel
-    # that the calling code checks.
-    raise NotImplementedError(
-        "HookEngine lookup requires AgentManager wiring. "
-        "Use the agent_manager.get_hook_engine(agent_id) pattern."
-    )
+    manager = _require_agent_manager()
+    try:
+        return manager.get_hook_engine(agent_id)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=400,
+            code="invalid_request",
+            message=str(exc),
+        ) from exc
 
 
-# ── Request Models ──────────────────────────────────────────────
+def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in reversed(path.read_text(encoding="utf-8").splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+        if len(rows) >= limit:
+            break
+    return rows
+
 
 class HookCreateRequest(BaseModel):
     id: str
@@ -47,69 +80,153 @@ class HookResponse(BaseModel):
     timeout_ms: int
 
 
-# ── Endpoints ───────────────────────────────────────────────────
+class HookAuditRow(BaseModel):
+    timestamp_ms: int
+    session_id: str
+    run_id: str
+    event: str
+    hook_type: str
+    status: str
+    details: dict[str, Any]
 
-@router.get("/")
-async def list_hooks(agent_id: str):
-    """List all configured hooks for an agent."""
-    try:
-        engine = _get_engine(agent_id)
-    except NotImplementedError:
-        raise HTTPException(501, "HookEngine not wired yet")
+
+def _row_agent_id(row: dict[str, Any]) -> str:
+    details = row.get("details")
+    if isinstance(details, dict):
+        nested = str(details.get("agent_id", "")).strip()
+        if nested:
+            return nested
+    return str(row.get("agent_id", "")).strip()
+
+
+def _normalize_hook_audit_row(row: dict[str, Any]) -> HookAuditRow | None:
+    event = str(row.get("event", "")).strip()
+    if not event.startswith("hook_"):
+        return None
+    details = row.get("details")
+    normalized_details = dict(details) if isinstance(details, dict) else {}
+    hook_type = str(row.get("hook_type", "")).strip() or str(normalized_details.get("hook_type", "")).strip()
+    status = str(row.get("status", "")).strip() or str(normalized_details.get("status", "")).strip()
+    return HookAuditRow(
+        timestamp_ms=int(row.get("timestamp_ms", 0) or 0),
+        session_id=str(row.get("session_id", "")).strip(),
+        run_id=str(row.get("run_id", "")).strip(),
+        event=event,
+        hook_type=hook_type,
+        status=status,
+        details=normalized_details,
+    )
+
+
+@router.get("")
+async def list_hooks(
+    agent_id: str = Query(..., min_length=1, max_length=128),
+) -> list[HookResponse]:
+    engine = _get_engine(agent_id)
     hooks = engine.list_hooks()
     return [
         HookResponse(
-            id=h.id, type=h.type.value, handler=h.handler,
-            mode=h.mode, timeout_ms=h.timeout_ms,
+            id=hook.id,
+            type=hook.type.value,
+            handler=hook.handler,
+            mode=hook.mode,
+            timeout_ms=hook.timeout_ms,
         )
-        for h in hooks
+        for hook in hooks
     ]
 
 
-@router.post("/")
-async def add_hook(req: HookCreateRequest, agent_id: str):
-    """Add a new hook configuration."""
+@router.get("/audit")
+async def list_hook_audit(
+    agent_id: str = Query(..., min_length=1, max_length=128),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> dict[str, Any]:
+    manager = _require_agent_manager()
     try:
-        engine = _get_engine(agent_id)
-    except NotImplementedError:
-        raise HTTPException(501, "HookEngine not wired yet")
+        runtime = manager.get_runtime(agent_id)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=400,
+            code="invalid_request",
+            message=str(exc),
+        ) from exc
+    rows = _read_jsonl(runtime.audit_store.steps_file, limit=limit * 8)
+    normalized_rows: list[HookAuditRow] = []
+    for row in rows:
+        if _row_agent_id(row) != agent_id:
+            continue
+        normalized = _normalize_hook_audit_row(row)
+        if normalized is None:
+            continue
+        normalized_rows.append(normalized)
+        if len(normalized_rows) >= limit:
+            break
+    return {"rows": [row.model_dump() for row in normalized_rows]}
+
+
+@router.post("")
+async def add_hook(
+    req: HookCreateRequest,
+    agent_id: str = Query(..., min_length=1, max_length=128),
+) -> HookResponse:
+    engine = _get_engine(agent_id)
     try:
         config = HookConfig.from_dict(req.model_dump())
         engine.add_hook(config)
     except FileNotFoundError as exc:
-        raise HTTPException(400, str(exc))
+        raise ApiError(
+            status_code=400,
+            code="invalid_request",
+            message=str(exc),
+        ) from exc
     except Exception as exc:
-        raise HTTPException(400, str(exc))
+        raise ApiError(
+            status_code=400,
+            code="invalid_request",
+            message=str(exc),
+        ) from exc
     return HookResponse(
-        id=config.id, type=config.type.value, handler=config.handler,
-        mode=config.mode, timeout_ms=config.timeout_ms,
+        id=config.id,
+        type=config.type.value,
+        handler=config.handler,
+        mode=config.mode,
+        timeout_ms=config.timeout_ms,
     )
 
 
 @router.delete("/{hook_id}")
-async def remove_hook(hook_id: str, agent_id: str):
-    """Remove a hook by id."""
-    try:
-        engine = _get_engine(agent_id)
-    except NotImplementedError:
-        raise HTTPException(501, "HookEngine not wired yet")
+async def remove_hook(
+    hook_id: str,
+    agent_id: str = Query(..., min_length=1, max_length=128),
+) -> dict[str, Any]:
+    engine = _get_engine(agent_id)
     if not engine.remove_hook(hook_id):
-        raise HTTPException(404, f"Hook '{hook_id}' not found")
+        raise ApiError(
+            status_code=404,
+            code="not_found",
+            message=f"Hook '{hook_id}' not found",
+        )
     return {"deleted": hook_id}
 
 
 @router.post("/{hook_id}/test")
-async def test_hook(hook_id: str, agent_id: str):
-    """Dry-run a hook with a synthetic event."""
-    try:
-        engine = _get_engine(agent_id)
-    except NotImplementedError:
-        raise HTTPException(501, "HookEngine not wired yet")
-    hooks = engine.list_hooks()
-    hook = next((h for h in hooks if h.id == hook_id), None)
+async def test_hook(
+    hook_id: str,
+    agent_id: str = Query(..., min_length=1, max_length=128),
+) -> dict[str, Any]:
+    engine = _get_engine(agent_id)
+    hook = next((item for item in engine.list_hooks() if item.id == hook_id), None)
     if hook is None:
-        raise HTTPException(404, f"Hook '{hook_id}' not found")
+        raise ApiError(
+            status_code=404,
+            code="not_found",
+            message=f"Hook '{hook_id}' not found",
+        )
 
-    event = HookEvent(hook_type=hook.type.value, agent_id=agent_id, payload={"test": True})
+    event = HookEvent(
+        hook_type=hook.type.value,
+        agent_id=agent_id,
+        payload={"test": True},
+    )
     result = engine.dispatch_sync(event)
     return {"hook_id": hook_id, "allow": result.allow, "reason": result.reason}

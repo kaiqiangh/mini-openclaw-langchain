@@ -40,6 +40,8 @@ class RuntimeRequest:
     agent_id: str = "default"
     graph_name: str = "default"
     resume_same_turn: bool = False
+    explicit_enabled_tools: list[str] | None = None
+    explicit_blocked_tools: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,26 @@ class RuntimeEvent:
 
     def as_payload(self) -> dict[str, Any]:
         return {"type": self.type, "data": self.data}
+
+
+@dataclass(frozen=True)
+class BlockingDelegateRef:
+    delegate_id: str
+    role: str
+    task: str
+    sub_session_id: str
+
+
+@dataclass(frozen=True)
+class ResolvedDelegateResult:
+    delegate_id: str
+    role: str
+    task: str
+    status: Literal["completed", "failed", "timeout"]
+    result_summary: str = ""
+    tools_used: list[str] = field(default_factory=list)
+    duration_ms: int = 0
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +187,11 @@ class RuntimeGraphState(TypedDict, total=False):
     model_messages: list[BaseMessage]
     pending_tool_calls: list[dict[str, Any]]
     pending_new_response: bool
+    pending_blocking_delegates: list[BlockingDelegateRef]
+    resolved_delegate_results: list[ResolvedDelegateResult]
+    pending_delegate_result_injection: list[ResolvedDelegateResult]
+    delegate_synthesis_retry_count: int
+    delegate_waiting: bool
     token_source: str | None
     latest_model_snapshot: str
     fallback_final_text: str

@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import Any
 
+from config import DEFAULT_DELEGATION_CONFIG
+
 ALL_KNOWN_TOOLS = {
     "web_search", "fetch_url", "read_files", "read_pdf", "search_knowledge_base",
     "terminal", "python_repl", "sessions_list", "session_history", "agents_list",
@@ -9,14 +11,10 @@ ALL_KNOWN_TOOLS = {
 }
 
 DELEGATE_DEFAULTS: dict[str, Any] = {
-    "enabled": True,
-    "max_per_session": 5,
-    "default_timeout_seconds": 120,
-    "max_timeout_seconds": 600,
+    **DEFAULT_DELEGATION_CONFIG,
     "allowed_tool_scopes": {
-        "researcher": ["web_search", "fetch_url", "read_files", "search_knowledge_base"],
-        "analyst": ["read_files", "read_pdf", "search_knowledge_base", "terminal"],
-        "writer": ["read_files", "search_knowledge_base", "apply_patch"],
+        role: list(tools)
+        for role, tools in DEFAULT_DELEGATION_CONFIG["allowed_tool_scopes"].items()
     },
 }
 

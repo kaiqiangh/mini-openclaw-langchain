@@ -8,7 +8,13 @@ import pytest
 from langchain_core.messages import AIMessage, ToolMessage
 
 from graph.agent import AgentManager
-from graph.runtime_types import RuntimeRequest
+from graph.runtime_types import (
+    BlockingDelegateRef,
+    ResolvedDelegateResult,
+    RuntimeEvent,
+    RuntimeRequest,
+)
+from graph.skill_selector import SelectedSkill
 from graph.session_manager import LegacySessionStateError
 
 
@@ -62,6 +68,78 @@ def test_graph_state_wrappers_create_sqlite_checkpoint(tmp_path: Path):
     assert checkpoint_db.exists()
     assert state["messages"][0]["content"] == "hello"
     assert state["compressed_context"] == "summary"
+    assert history
+
+
+def test_graph_state_wrappers_round_trip_blocking_delegate_runtime_types(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    asyncio.run(
+        manager.update_graph_state(
+            session_id="delegate-session",
+            values={
+                "messages": [{"role": "user", "content": "delegate", "timestamp_ms": 1}],
+                "pending_blocking_delegates": [
+                    BlockingDelegateRef(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        sub_session_id="sub_1234",
+                    )
+                ],
+                "resolved_delegate_results": [
+                    ResolvedDelegateResult(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        status="timeout",
+                        result_summary="",
+                        tools_used=[],
+                        duration_ms=120_000,
+                        error_message="Sub-agent exceeded timeout (120s)",
+                    )
+                ],
+                "pending_delegate_result_injection": [
+                    ResolvedDelegateResult(
+                        delegate_id="del_1234",
+                        role="researcher",
+                        task="Summarize memory",
+                        status="timeout",
+                        result_summary="",
+                        tools_used=[],
+                        duration_ms=120_000,
+                        error_message="Sub-agent exceeded timeout (120s)",
+                    )
+                ],
+                "selected_skill_items": [
+                    SelectedSkill(
+                        name="memory-helper",
+                        location="./skills/memory-helper/SKILL.md",
+                        description="memory helper",
+                        reason="matched terms: memory",
+                        score=12,
+                    )
+                ],
+                "delegate_waiting": False,
+            },
+        )
+    )
+
+    reloaded = AgentManager()
+    reloaded.initialize(tmp_path)
+
+    state = asyncio.run(reloaded.get_graph_state(session_id="delegate-session"))
+    history = asyncio.run(reloaded.get_graph_state_history(session_id="delegate-session"))
+
+    assert state["pending_blocking_delegates"][0].delegate_id == "del_1234"
+    assert state["resolved_delegate_results"][0].status == "timeout"
+    assert (
+        state["pending_delegate_result_injection"][0].error_message
+        == "Sub-agent exceeded timeout (120s)"
+    )
+    assert state["selected_skill_items"][0].name == "memory-helper"
     assert history
 
 
@@ -124,6 +202,66 @@ def test_prepare_runtime_request_uses_checkpoint_history_for_resume(tmp_path: Pa
     assert prepared.resume_same_turn is True
     assert prepared.history == []
     assert [row["content"] for row in state["messages"]] == ["hello"]
+
+
+def test_finalize_stream_prefers_done_content_over_stale_stream_text(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    repository = manager.get_session_repository("default")
+    session_id = "stream-session"
+    asyncio.run(
+        repository.append_message(
+            agent_id="default",
+            session_id=session_id,
+            role="user",
+            content="delegate",
+        )
+    )
+
+    request = RuntimeRequest(
+        message="delegate",
+        history=[],
+        session_id=session_id,
+        agent_id="default",
+    )
+    stale_text = "Research delegate has started and is still running."
+    final_text = (
+        "Partial answer: required delegate results are available, "
+        "but the parent synthesis step failed, so this response may be incomplete."
+    )
+
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="run_start", data={"run_id": "run-stream"}),
+        )
+    )
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="token", data={"content": stale_text}),
+        )
+    )
+    asyncio.run(
+        repository.apply_stream_event(
+            request,
+            RuntimeEvent(type="done", data={"content": final_text}),
+        )
+    )
+    asyncio.run(repository.finalize_stream(request))
+
+    snapshot = asyncio.run(
+        repository.load_snapshot(
+            agent_id="default",
+            session_id=session_id,
+            include_live=False,
+        )
+    )
+
+    assert snapshot.messages[-1]["role"] == "assistant"
+    assert snapshot.messages[-1]["content"] == final_text
 
 
 def test_delete_session_removes_checkpoint_thread(tmp_path: Path):

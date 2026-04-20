@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from config import (
+    DelegationConfig,
     LlmRuntimeConfig,
     LlmRoutePatch,
     RetrievalConfig,
@@ -157,6 +158,16 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
     runtime = RuntimeConfig()
     runtime.chat_enabled_tools = ["terminal"]
     runtime.chat_blocked_tools = ["read_files"]
+    runtime.delegation = DelegationConfig(
+        enabled=True,
+        max_per_session=3,
+        default_timeout_seconds=45,
+        max_timeout_seconds=90,
+        allowed_tool_scopes={
+            "researcher": ["web_search", "fetch_url"],
+            "writer": ["read_files", "apply_patch"],
+        },
+    )
     runtime.llm = LlmRoutePatch(
         default="azure_foundry",
         fallbacks=[],
@@ -180,6 +191,14 @@ def test_runtime_config_round_trip_preserves_terminal_execution_settings():
 
     assert loaded.chat_enabled_tools == ["terminal"]
     assert loaded.chat_blocked_tools == ["read_files"]
+    assert loaded.delegation.enabled is True
+    assert loaded.delegation.max_per_session == 3
+    assert loaded.delegation.default_timeout_seconds == 45
+    assert loaded.delegation.max_timeout_seconds == 90
+    assert loaded.delegation.allowed_tool_scopes == {
+        "researcher": ["web_search", "fetch_url"],
+        "writer": ["read_files", "apply_patch"],
+    }
     assert loaded.llm.default == "azure_foundry"
     assert loaded.llm.fallbacks == []
     assert loaded.llm.tool_loop_model == "gpt-4.1-mini"
