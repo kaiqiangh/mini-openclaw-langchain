@@ -632,7 +632,11 @@ def build_delegate_tool(
             try:
                 await asyncio.wait_for(asyncio.shield(task_ref), timeout=wait_seconds)
             except asyncio.TimeoutError:
-                pass
+                logging.debug(
+                    "Delegate inline wait timed out after %.2fs; task continues in background (delegate_id=%s)",
+                    wait_seconds,
+                    launch.delegate_id,
+                )
         return _delegate_payload(launch)
 
     return StructuredTool.from_function(
