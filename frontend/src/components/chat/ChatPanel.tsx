@@ -6,6 +6,7 @@ import { useAppStore } from "@/lib/store";
 import { Badge, Button, EmptyState } from "@/components/ui/primitives";
 import { activityTone } from "@/lib/badge-tones";
 import { DelegateBadge } from "@/components/delegates/DelegateBadge";
+import { DelegateResultCard } from "@/components/delegates/DelegateResultCard";
 
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
@@ -58,6 +59,13 @@ export function ChatPanel() {
         />
       )),
     [messages],
+  );
+  const terminalDelegates = useMemo(
+    () =>
+      delegates.filter(
+        (delegate) => delegate.status !== "running" && delegate.detail,
+      ),
+    [delegates],
   );
 
   useEffect(() => {
@@ -142,6 +150,16 @@ export function ChatPanel() {
                 </div>
               ))}
             </div>
+            {terminalDelegates.length > 0 && (
+              <div className="mt-2 flex flex-col gap-2">
+                {terminalDelegates.map((delegate) => (
+                  <DelegateResultCard
+                    key={`${delegate.delegate_id}-detail`}
+                    delegate={delegate.detail!}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
 

@@ -26,6 +26,23 @@ const mockStore = vi.hoisted(() => ({
     status: "running" | "completed" | "failed" | "timeout";
     sub_session_id: string;
     created_at: number;
+    detail?: {
+      delegate_id: string;
+      role: string;
+      task: string;
+      status: "running" | "completed" | "failed" | "timeout";
+      sub_session_id: string;
+      created_at: number;
+      agent_id: string;
+      parent_session_id: string;
+      allowed_tools: string[];
+      result_summary?: string;
+      steps_completed?: number;
+      tools_used?: string[];
+      duration_ms?: number;
+      error_message?: string;
+      result_file?: string;
+    };
   }>,
   continueAfterMaxSteps: vi.fn(async () => undefined),
   cancelAfterMaxSteps: vi.fn(async () => undefined),
@@ -194,5 +211,69 @@ describe("ChatPanel", () => {
     expect(screen.getByText("read_files (1)")).toBeInTheDocument();
     expect(screen.getByText("weather_helper (1)")).toBeInTheDocument();
     expect(screen.getByText("get_weather (1)")).toBeInTheDocument();
+  });
+
+  it("renders a terminal delegate result card when detail is available", () => {
+    mockStore.delegates = [
+      {
+        delegate_id: "del_done",
+        role: "researcher",
+        task: "Summarize memory",
+        status: "completed",
+        sub_session_id: "sub_done",
+        created_at: 1,
+        detail: {
+          delegate_id: "del_done",
+          role: "researcher",
+          task: "Summarize memory",
+          status: "completed",
+          sub_session_id: "sub_done",
+          created_at: 1,
+          agent_id: "default",
+          parent_session_id: "sess_1",
+          allowed_tools: ["read_files"],
+          result_summary: "Delegate finished successfully.",
+          steps_completed: 2,
+          tools_used: ["read_files"],
+          duration_ms: 1200,
+        },
+      },
+    ];
+
+    render(<ChatPanel />);
+
+    expect(screen.getByText("Delegated Tasks")).toBeInTheDocument();
+    expect(screen.getByTestId("delegate-result-card")).toBeInTheDocument();
+  });
+
+  it("shows timeout detail text for terminal delegate failures", () => {
+    mockStore.delegates = [
+      {
+        delegate_id: "del_timeout",
+        role: "researcher",
+        task: "Summarize memory",
+        status: "timeout",
+        sub_session_id: "sub_timeout",
+        created_at: 1,
+        detail: {
+          delegate_id: "del_timeout",
+          role: "researcher",
+          task: "Summarize memory",
+          status: "timeout",
+          sub_session_id: "sub_timeout",
+          created_at: 1,
+          agent_id: "default",
+          parent_session_id: "sess_1",
+          allowed_tools: ["read_files"],
+          error_message: "Sub-agent exceeded timeout (60s)",
+          result_file: "/tmp/result_summary.md",
+        },
+      },
+    ];
+
+    render(<ChatPanel />);
+
+    expect(screen.getByText("Sub-agent exceeded timeout (60s)")).toBeInTheDocument();
+    expect(screen.getByTestId("delegate-result-card")).toBeInTheDocument();
   });
 });
