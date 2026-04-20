@@ -52,6 +52,26 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <AppProvider>{children}</AppProvider>;
 }
 
+const completedDelegateSummary = {
+  delegate_id: "del_done",
+  role: "researcher",
+  task: "Summarize memory",
+  status: "completed" as const,
+  sub_session_id: "sub_done",
+  created_at: 1,
+};
+
+const completedDelegateDetail = {
+  ...completedDelegateSummary,
+  agent_id: "default",
+  parent_session_id: "sess_1",
+  allowed_tools: ["read_files"],
+  result_summary: "Delegate finished successfully.",
+  steps_completed: 2,
+  tools_used: ["read_files"],
+  duration_ms: 1200,
+};
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
@@ -88,32 +108,9 @@ describe("delegate store wiring", () => {
 
   it("hydrates terminal delegate detail once and does not refetch it on later polls", async () => {
     apiMocks.listDelegates.mockResolvedValue({
-      delegates: [
-        {
-          delegate_id: "del_done",
-          role: "researcher",
-          task: "Summarize memory",
-          status: "completed",
-          sub_session_id: "sub_done",
-          created_at: 1,
-        },
-      ],
+      delegates: [completedDelegateSummary],
     });
-    apiMocks.getDelegateDetail.mockResolvedValue({
-      delegate_id: "del_done",
-      role: "researcher",
-      task: "Summarize memory",
-      status: "completed",
-      sub_session_id: "sub_done",
-      created_at: 1,
-      agent_id: "default",
-      parent_session_id: "sess_1",
-      allowed_tools: ["read_files"],
-      result_summary: "Delegate finished successfully.",
-      steps_completed: 2,
-      tools_used: ["read_files"],
-      duration_ms: 1200,
-    });
+    apiMocks.getDelegateDetail.mockResolvedValue(completedDelegateDetail);
 
     const { result } = renderHook(() => useAppStore(), { wrapper });
 
@@ -315,16 +312,7 @@ describe("delegate store wiring", () => {
 
   it("stops retrying a terminal detail fetch after the retry budget is exhausted", async () => {
     apiMocks.listDelegates.mockResolvedValue({
-      delegates: [
-        {
-          delegate_id: "del_done",
-          role: "researcher",
-          task: "Summarize memory",
-          status: "completed",
-          sub_session_id: "sub_done",
-          created_at: 1,
-        },
-      ],
+      delegates: [completedDelegateSummary],
     });
     apiMocks.getDelegateDetail.mockRejectedValue(new Error("detail failed"));
 
@@ -354,5 +342,99 @@ describe("delegate store wiring", () => {
     });
 
     expect(apiMocks.getDelegateDetail).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores the previous workspace view when an agent switch fails", async () => {
+    apiMocks.getAgents.mockResolvedValue([
+      defaultAgent,
+      {
+        ...defaultAgent,
+        agent_id: "agent-b",
+        path: "/tmp/agent-b",
+      },
+    ]);
+    apiMocks.getSessionHistory.mockResolvedValue({
+      session_id: "sess_1",
+      messages: [
+        {
+          role: "user",
+          content: "original session message",
+          timestamp_ms: 1,
+        },
+      ],
+    });
+    apiMocks.listDelegates.mockResolvedValue({
+      delegates: [completedDelegateSummary],
+    });
+    apiMocks.getDelegateDetail.mockResolvedValue(completedDelegateDetail);
+    apiMocks.getRagMode.mockImplementation(async (agentId: string) => {
+      if (agentId === "agent-b") {
+        throw new Error("agent switch failed");
+      }
+      return false;
+    });
+
+    const { result } = renderHook(() => useAppStore(), { wrapper });
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(result.current.currentAgentId).toBe("default");
+    expect(result.current.currentSessionId).toBe("sess_1");
+    expect(result.current.messages[0]?.content).toBe("original session message");
+    expect(result.current.delegates[0]?.detail?.result_summary).toBe(
+      "Delegate finished successfully.",
+    );
+
+    await act(async () => {
+      await result.current.setCurrentAgent("agent-b");
+      await flushMicrotasks();
+    });
+
+    expect(result.current.currentAgentId).toBe("default");
+    expect(result.current.currentSessionId).toBe("sess_1");
+    expect(result.current.messages[0]?.content).toBe("original session message");
+    expect(result.current.delegates[0]?.detail?.result_summary).toBe(
+      "Delegate finished successfully.",
+    );
+    expect(result.current.error).toBe("agent switch failed");
+  });
+
+  it("clears delegates when switching to an empty session scope", async () => {
+    apiMocks.getSessions.mockImplementation(async (scope?: string) =>
+      scope === "archived" ? [] : [defaultSession],
+    );
+    apiMocks.listDelegates.mockResolvedValue({
+      delegates: [completedDelegateSummary],
+    });
+    apiMocks.getDelegateDetail.mockResolvedValue(completedDelegateDetail);
+    apiMocks.getSessionHistory.mockResolvedValue({
+      session_id: "sess_1",
+      messages: [
+        {
+          role: "user",
+          content: "original session message",
+          timestamp_ms: 1,
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => useAppStore(), { wrapper });
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    expect(result.current.delegates).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.setSessionsScope("archived");
+      await flushMicrotasks();
+    });
+
+    expect(result.current.currentSessionId).toBeNull();
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.delegates).toHaveLength(0);
   });
 });

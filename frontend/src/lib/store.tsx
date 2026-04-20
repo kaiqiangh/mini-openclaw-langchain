@@ -130,6 +130,20 @@ type AppState = {
   cancelAfterMaxSteps: () => Promise<void>;
 };
 
+type AppViewSnapshot = {
+  currentAgentId: string;
+  sessionsScope: "active" | "archived";
+  sessions: SessionMeta[];
+  currentSessionId: string | null;
+  messages: ChatMessage[];
+  isStreaming: boolean;
+  delegates: DelegateViewModel[];
+  selectedFilePath: string;
+  selectedFileContent: string;
+  fileDirty: boolean;
+  ragEnabled: boolean;
+};
+
 const AppContext = createContext<AppState | null>(null);
 const CURRENT_AGENT_STORAGE_KEY = "mini-openclaw:current-agent:v1";
 const MAX_DELEGATE_DETAIL_ATTEMPTS = 3;
@@ -364,6 +378,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [delegateDetailsById, delegateSummaries],
   );
 
+  const captureAppViewSnapshot = useCallback(
+    (): AppViewSnapshot => ({
+      currentAgentId,
+      sessionsScope,
+      sessions,
+      currentSessionId,
+      messages,
+      isStreaming,
+      delegates,
+      selectedFilePath,
+      selectedFileContent,
+      fileDirty,
+      ragEnabled,
+    }),
+    [
+      currentAgentId,
+      currentSessionId,
+      delegates,
+      fileDirty,
+      isStreaming,
+      messages,
+      ragEnabled,
+      selectedFileContent,
+      selectedFilePath,
+      sessions,
+      sessionsScope,
+    ],
+  );
+
+  const restoreAppViewSnapshot = useCallback(
+    (
+      snapshot: AppViewSnapshot,
+      options?: {
+        preserveStreaming?: boolean;
+      },
+    ) => {
+      const split = splitDelegateViewModels(snapshot.delegates);
+      setCurrentAgentId(snapshot.currentAgentId);
+      setSessionsScopeState(snapshot.sessionsScope);
+      setSessions(snapshot.sessions);
+      setCurrentSessionId(snapshot.currentSessionId);
+      setMessages(snapshot.messages);
+      setIsStreaming(options?.preserveStreaming === false ? false : snapshot.isStreaming);
+      setDelegateSummariesState(split.summaries);
+      setDelegateDetailsById(split.details);
+      setDelegateDetailAttemptsById({});
+      setDelegatesHydrated(true);
+      setSelectedFilePathState(snapshot.selectedFilePath);
+      setSelectedFileContent(snapshot.selectedFileContent);
+      setFileDirty(snapshot.fileDirty);
+      setRagEnabledState(snapshot.ragEnabled);
+    },
+    [],
+  );
+
   const setDelegates = useCallback((next: DelegateViewModel[]) => {
     const split = splitDelegateViewModels(next);
     setDelegateSummariesState(split.summaries);
@@ -569,6 +638,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const setCurrentAgent = useCallback(
     async (agentId: string) => {
       if (agentId === currentAgentId) return;
+      const snapshot = captureAppViewSnapshot();
       cancelActiveStream();
       const switchEpoch = agentSwitchEpochRef.current + 1;
       agentSwitchEpochRef.current = switchEpoch;
@@ -605,15 +675,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setFileDirty(false);
       } catch (err) {
         if (agentSwitchEpochRef.current !== switchEpoch) return;
+        restoreAppViewSnapshot(snapshot, { preserveStreaming: false });
         setError(err instanceof Error ? err.message : "Failed to switch agent");
       }
     },
     [
       cancelActiveStream,
+      captureAppViewSnapshot,
       currentAgentId,
       loadSession,
       refreshSessions,
       resetDelegateState,
+      restoreAppViewSnapshot,
     ],
   );
 
@@ -696,14 +769,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createNewSession = useCallback(async () => {
+    const snapshot = captureAppViewSnapshot();
     setError(null);
     setSessionsScopeState("active");
     resetDelegateState();
-    const created = await createSession(undefined, currentAgentId);
-    await refreshSessions("active", currentAgentId);
-    setCurrentSessionId(created.session_id);
-    setMessages([]);
-  }, [currentAgentId, refreshSessions, resetDelegateState]);
+    try {
+      const created = await createSession(undefined, currentAgentId);
+      await refreshSessions("active", currentAgentId);
+      setCurrentSessionId(created.session_id);
+      setMessages([]);
+      setIsStreaming(false);
+    } catch (error) {
+      restoreAppViewSnapshot(snapshot);
+      throw error;
+    }
+  }, [
+    captureAppViewSnapshot,
+    currentAgentId,
+    refreshSessions,
+    resetDelegateState,
+    restoreAppViewSnapshot,
+  ]);
 
   const selectSession = useCallback(
     async (sessionId: string) => {
@@ -743,6 +829,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sessionId: string;
       scope?: "active" | "archived";
     }) => {
+      const snapshot = captureAppViewSnapshot();
       const nextAgentId = agentId.trim() || "default";
       const nextScope = scope === "archived" ? "archived" : "active";
       cancelActiveStream();
@@ -790,13 +877,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (err) {
         if (agentSwitchEpochRef.current !== switchEpoch) return;
+        restoreAppViewSnapshot(snapshot, { preserveStreaming: false });
         const message =
           err instanceof Error ? err.message : "Failed to open workspace session";
         setError(message);
         throw err instanceof Error ? err : new Error(message);
       }
     },
-    [cancelActiveStream, currentAgentId, loadSession],
+    [
+      cancelActiveStream,
+      captureAppViewSnapshot,
+      currentAgentId,
+      loadSession,
+      restoreAppViewSnapshot,
+    ],
   );
 
   const setSelectedFilePath = useCallback(
@@ -844,32 +938,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setSessionsScope = useCallback(
     async (scope: "active" | "archived") => {
+      const snapshot = captureAppViewSnapshot();
       setError(null);
       if (scope === "archived") {
         cancelActiveStream();
       }
-      setSessionsScopeState(scope);
-      if (scope === "archived") {
-        setIsStreaming(false);
-      }
-      const list = await refreshSessions(scope, currentAgentId);
-      if (list.length > 0) {
-        await loadSession(
-          list[0].session_id,
-          scope === "archived",
-          currentAgentId,
-        );
-      } else {
-        setCurrentSessionId(null);
-        setMessages([]);
+      try {
+        setSessionsScopeState(scope);
+        if (scope === "archived") {
+          setIsStreaming(false);
+        }
+        const list = await refreshSessions(scope, currentAgentId);
+        if (list.length > 0) {
+          await loadSession(
+            list[0].session_id,
+            scope === "archived",
+            currentAgentId,
+          );
+        } else {
+          setCurrentSessionId(null);
+          setMessages([]);
+          setIsStreaming(false);
+          resetDelegateState();
+        }
+      } catch (error) {
+        restoreAppViewSnapshot(snapshot, {
+          preserveStreaming: scope !== "archived",
+        });
+        throw error;
       }
     },
     [
       cancelActiveStream,
+      captureAppViewSnapshot,
       currentAgentId,
       loadSession,
       refreshSessions,
       resetDelegateState,
+      restoreAppViewSnapshot,
     ],
   );
 
