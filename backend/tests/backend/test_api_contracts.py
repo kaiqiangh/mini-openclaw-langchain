@@ -308,7 +308,40 @@ def test_delegate_endpoints_use_raw_session_scoped_contract(client, api_app):
     assert detail_payload["delegate_id"] == registration["delegate_id"]
     assert detail_payload["parent_session_id"] == session_id
     assert detail_payload["allowed_tools"] == ["read_files"]
+    assert detail_payload["blocked_tools"] == ["agents_list"]
     assert detail_payload["tools_used"] == ["read_files"]
+    assert detail_payload["result_summary"] == "Delegate finished successfully."
+    assert detail_payload["result_file"].endswith("/result_summary.md")
+
+
+def test_delegate_detail_exposes_timeout_terminal_contract(client, api_app):
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
+    registry = api_app["agent_manager"].runtime_services.delegate_registry
+    registration = registry.register(
+        agent_id="default",
+        parent_session_id=session_id,
+        task="Summarize the latest session state",
+        role="researcher",
+        allowed_tools=["read_files"],
+        blocked_tools=["agents_list"],
+        timeout_seconds=7,
+    )
+    registry.mark_timeout(registration["delegate_id"])
+
+    detail = client.get(
+        f"/api/v1/agents/default/sessions/{session_id}/delegates/{registration['delegate_id']}"
+    )
+    assert detail.status_code == 200
+    detail_payload = detail.json()
+    assert "data" not in detail_payload
+    assert detail_payload["delegate_id"] == registration["delegate_id"]
+    assert detail_payload["status"] == "timeout"
+    assert detail_payload["allowed_tools"] == ["read_files"]
+    assert detail_payload["blocked_tools"] == ["agents_list"]
+    assert detail_payload["error_message"] == "Sub-agent exceeded timeout (7s)"
+    assert detail_payload["result_file"].endswith("/result_summary.md")
 
 
 def test_checkpoint_endpoints_enforce_exact_session_ownership(client, api_app):
