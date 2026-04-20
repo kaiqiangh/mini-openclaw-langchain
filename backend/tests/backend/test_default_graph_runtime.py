@@ -287,7 +287,6 @@ def test_tool_step_waits_for_blocking_delegate_result(monkeypatch, tmp_path: Pat
     }
     manager.runtime_services.delegate_registry = DelegateRegistry(base_dir=tmp_path)
     graph = manager._runtime_graph()
-    graph = manager._runtime_graph()
 
     class _ChildRuntime:
         async def invoke(self, request):  # type: ignore[no-untyped-def]
