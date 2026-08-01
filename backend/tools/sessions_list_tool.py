@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from graph.session_manager import SessionManager, read_session_listing_payload
+from graph.session_manager import (
+    SessionManager,
+    read_session_listing_payload,
+    session_id_from_path,
+)
 
 from .base import ToolContext
 from .contracts import ToolResult
@@ -41,13 +45,16 @@ class SessionsListTool:
             for path in sorted(manager.sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
                 if not path.is_file():
                     continue
+                session_id = session_id_from_path(path)
+                if session_id is None:
+                    continue
                 meta = _read_session_meta(path)
                 if meta is None:
                     continue
                 if bool(meta.get("internal")) or bool(meta.get("hidden")):
                     continue
                 items.append({
-                    "session_id": path.stem,
+                    "session_id": session_id,
                     "title": str(meta.get("title", "New Session")),
                     "created_at": float(meta.get("created_at", 0)),
                     "updated_at": float(meta.get("updated_at", 0)),
@@ -57,13 +64,16 @@ class SessionsListTool:
             for path in sorted(manager.archived_sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
                 if not path.is_file():
                     continue
+                session_id = session_id_from_path(path)
+                if session_id is None:
+                    continue
                 meta = _read_session_meta(path)
                 if meta is None:
                     continue
                 if bool(meta.get("internal")) or bool(meta.get("hidden")):
                     continue
                 items.append({
-                    "session_id": path.stem,
+                    "session_id": session_id,
                     "title": str(meta.get("title", "New Session")),
                     "created_at": float(meta.get("created_at", 0)),
                     "updated_at": float(meta.get("updated_at", 0)),

@@ -11,6 +11,7 @@ from graph.session_manager import (
     encode_session_path_component,
     validate_session_id,
 )
+from tools.sessions_list_tool import SessionsListTool
 
 
 @pytest.mark.parametrize(
@@ -91,3 +92,13 @@ async def test_existing_colon_bearing_legacy_files_still_round_trip(tmp_path: Pa
 
     assert (await manager.load_existing_session(session_id))["title"] == "legacy"
     assert any(item["session_id"] == session_id for item in await manager.list_sessions())
+
+
+def test_sessions_list_tool_returns_logical_ids_for_encoded_paths(tmp_path: Path):
+    manager = SessionManager(tmp_path)
+    session_id = "__cron__:cron-1"
+    asyncio.run(manager.create_session(session_id))
+
+    listed = SessionsListTool._list_sessions_sync(manager)
+
+    assert listed[0]["session_id"] == session_id

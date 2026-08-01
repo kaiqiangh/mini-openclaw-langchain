@@ -43,7 +43,7 @@ def _safe_session_path(root: Path, filename: str) -> Path:
     return candidate
 
 
-def _session_id_from_path(path: Path) -> str | None:
+def session_id_from_path(path: Path) -> str | None:
     try:
         return validate_session_id(unquote(path.stem))
     except InvalidSessionIdError:
@@ -83,7 +83,7 @@ def count_session_files(
         if (
             resolved.parent != resolved_root
             or not resolved.is_file()
-            or _session_id_from_path(path) is None
+            or session_id_from_path(path) is None
         ):
             continue
         payload = read_session_listing_payload(resolved)
@@ -134,7 +134,7 @@ class SessionManager:
             if (
                 resolved.parent != resolved_root
                 or not resolved.is_file()
-                or _session_id_from_path(path) is None
+                or session_id_from_path(path) is None
             ):
                 continue
             paths.append(resolved)
@@ -267,7 +267,7 @@ class SessionManager:
         items: list[dict[str, Any]] = []
         if include_active:
             for path in self._iter_session_paths(archived=False):
-                session_id = _session_id_from_path(path)
+                session_id = session_id_from_path(path)
                 if session_id is None:
                     continue
                 payload = self._read_session_payload(
@@ -288,7 +288,7 @@ class SessionManager:
                 )
         if include_archived:
             for path in self._iter_session_paths(archived=True):
-                session_id = _session_id_from_path(path)
+                session_id = session_id_from_path(path)
                 if session_id is None:
                     continue
                 payload = self._read_session_payload(

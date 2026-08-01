@@ -106,7 +106,8 @@ class SessionHistoryTool:
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
         started = time.monotonic()
-        session_id = str(args.get("session_id", "")).strip()
+        raw_session_id = args.get("session_id")
+        session_id = raw_session_id if isinstance(raw_session_id, str) else ""
         try:
             validate_session_id(session_id)
         except InvalidSessionIdError:

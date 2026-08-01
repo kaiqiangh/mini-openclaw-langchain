@@ -71,3 +71,21 @@ def test_session_history_rejects_hidden_internal_sessions(tmp_path: Path):
     assert result.ok is False
     assert result.error is not None
     assert result.error.code == "E_NOT_FOUND"
+
+
+def test_session_history_rejects_whitespace_padded_ids(tmp_path: Path):
+    tool = SessionHistoryTool(runtime_root=tmp_path)
+
+    result = tool.run(
+        {"session_id": " sub_hidden"},
+        ToolContext(
+            workspace_root=tmp_path,
+            trigger_type="chat",
+            agent_id="alpha",
+            session_id="parent",
+        ),
+    )
+
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "E_INVALID_ARGS"
