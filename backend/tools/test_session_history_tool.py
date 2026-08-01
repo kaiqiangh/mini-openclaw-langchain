@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from graph.session_manager import SessionManager
 from tools.base import ToolContext
 from tools.session_history_tool import SessionHistoryTool
@@ -73,11 +75,12 @@ def test_session_history_rejects_hidden_internal_sessions(tmp_path: Path):
     assert result.error.code == "E_NOT_FOUND"
 
 
-def test_session_history_rejects_whitespace_padded_ids(tmp_path: Path):
+@pytest.mark.parametrize("session_id", [" sub_hidden", 42])
+def test_session_history_rejects_invalid_boundary_ids(tmp_path: Path, session_id):
     tool = SessionHistoryTool(runtime_root=tmp_path)
 
     result = tool.run(
-        {"session_id": " sub_hidden"},
+        {"session_id": session_id},
         ToolContext(
             workspace_root=tmp_path,
             trigger_type="chat",
