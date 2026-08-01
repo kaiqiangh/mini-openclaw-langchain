@@ -60,13 +60,14 @@ def test_configure_system_deepseek(client):
         assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
 
     (tmp_path / ".env").chmod(0o644)
-    c.post("/api/v1/setup/configure", json={
+    rejected = c.post("/api/v1/setup/configure", json={
         "admin_token": "test-token-1234",
         "llm_provider": "deepseek",
         "llm_api_key": "sk-test-key-2",
     })
+    assert rejected.status_code == 401
     if os.name != "nt":
-        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o644
 
 
 def test_configure_system_openai(client):
@@ -128,6 +129,8 @@ def test_configure_rechecks_bootstrap_state_before_writing(client):
     )
     assert updated["data"]["configured"] is True
     assert "APP_ADMIN_TOKEN=updated-token-1234" in (tmp_path / ".env").read_text()
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
 
 
 def test_configure_rejects_short_token(client):

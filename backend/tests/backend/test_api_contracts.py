@@ -185,15 +185,6 @@ def test_missing_session_reads_return_404_without_creating_files(client, api_app
     session_path = runtime.session_manager.sessions_dir / f"{session_id}.json"
     assert not session_path.exists()
 
-
-def test_invalid_session_route_parameter_returns_400(client):
-    response = client.get(
-        "/api/v1/agents/default/sessions/bad%20session/history"
-    )
-
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "invalid_request"
-
     history = client.get(f"/api/v1/agents/default/sessions/{session_id}/history")
     messages = client.get(f"/api/v1/agents/default/sessions/{session_id}/messages")
 
@@ -202,6 +193,15 @@ def test_invalid_session_route_parameter_returns_400(client):
     assert messages.status_code == 404
     assert messages.json()["error"]["code"] == "not_found"
     assert not session_path.exists()
+
+
+def test_invalid_session_route_parameter_returns_400(client):
+    response = client.get(
+        "/api/v1/agents/default/sessions/bad%20session/history"
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_agents_endpoint_and_session_isolation(client):

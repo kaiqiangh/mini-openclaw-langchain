@@ -61,6 +61,7 @@ def test_delegate_tool_name(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     assert tool.name == "delegate"
 
@@ -69,6 +70,7 @@ def test_rejects_empty_task(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     result = tool.func(task="", role="researcher", allowed_tools=["web_search"])
     error = _unwrap_failure(result)
@@ -79,6 +81,7 @@ def test_uses_role_scope_when_allowed_tools_empty(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     result = tool.func(task="Do something", role="researcher", allowed_tools=[])
     data = _unwrap_success(result)
@@ -102,6 +105,7 @@ def test_local_summary_task_auto_narrows_delegate_scope(tmp_path: Path):
             ]
         }
     )
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(
         agent_manager=am,
         registry=registry,
@@ -125,6 +129,7 @@ def test_rejects_delegate_in_allowed(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     result = tool.func(task="Task", role="researcher", allowed_tools=["delegate"])
     error = _unwrap_failure(result)
@@ -135,6 +140,7 @@ def test_rejects_allowed_tools_outside_role_scope(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(
         agent_manager=am,
         registry=registry,
@@ -154,6 +160,7 @@ def test_launches_successfully(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     result = tool.func(task="Find REST APIs", role="researcher", allowed_tools=["web_search", "fetch_url"])
     data = _unwrap_success(result)
@@ -167,6 +174,7 @@ def test_blocking_delegate_payload_marks_wait_for_result(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(
         agent_manager=am,
         registry=registry,
@@ -191,6 +199,7 @@ def test_rejects_delegate_launch_without_context_agent_id(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(
         agent_manager=am,
         registry=registry,
@@ -212,6 +221,7 @@ def test_rejects_task_too_long(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     am = MagicMock()
     am.get_runtime.return_value = _runtime_with_delegation()
+    am.get_existing_runtime.return_value = am.get_runtime.return_value
     tool = build_delegate_tool(agent_manager=am, registry=registry, base_dir=tmp_path, context=_ctx(tmp_path))
     long_task = "x" * 4001
     result = tool.func(task=long_task, role="researcher", allowed_tools=["web_search"])
@@ -250,6 +260,7 @@ def test_delegate_child_runtime_preserves_agent_identity_and_scope(tmp_path: Pat
 
     am = MagicMock()
     am.get_runtime.return_value = runtime
+    am.get_existing_runtime.return_value = runtime
     am.get_session_repository.return_value = _Repository()
     am.graph_registry.resolve.return_value = _GraphRuntime()
 
@@ -278,7 +289,7 @@ def test_delegate_child_runtime_preserves_agent_identity_and_scope(tmp_path: Pat
 
     assert payload["status"] == "running"
     assert state.status == "completed"
-    am.get_runtime.assert_any_call("alpha")
+    am.get_existing_runtime.assert_any_call("alpha")
     request = captured_request["request"]
     assert request.agent_id == "alpha"
     assert request.session_id == state.sub_session_id
@@ -318,6 +329,7 @@ def test_delegate_ainvoke_schedules_background_subagent(tmp_path: Path):
 
     am = MagicMock()
     am.get_runtime.return_value = runtime
+    am.get_existing_runtime.return_value = runtime
     am.get_session_repository.return_value = _Repository()
     am.graph_registry.resolve.return_value = _GraphRuntime()
 
@@ -378,6 +390,7 @@ def test_delegate_ainvoke_returns_completed_payload_for_fast_delegate(tmp_path: 
 
     am = MagicMock()
     am.get_runtime.return_value = runtime
+    am.get_existing_runtime.return_value = runtime
     am.get_session_repository.return_value = _Repository()
     am.graph_registry.resolve.return_value = _GraphRuntime()
 
@@ -429,6 +442,7 @@ def test_delegate_ainvoke_preserves_blocking_flags(tmp_path: Path):
 
     am = MagicMock()
     am.get_runtime.return_value = runtime
+    am.get_existing_runtime.return_value = runtime
     am.get_session_repository.return_value = _Repository()
     am.graph_registry.resolve.return_value = _GraphRuntime()
 
