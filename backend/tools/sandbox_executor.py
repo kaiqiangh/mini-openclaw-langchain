@@ -1,4 +1,4 @@
-"""Docker-based sandbox executor with fallback to in-process execution."""
+"""Docker-based sandbox executor with explicit in-process execution mode."""
 from __future__ import annotations
 
 import json
@@ -113,7 +113,7 @@ def _run_in_process(code: str, timeout_seconds: int = 30) -> dict[str, Any]:
 
 
 class SandboxExecutor:
-    """Unified executor: Docker sandbox with in-process fallback."""
+    """Unified executor: Docker sandbox or explicitly selected in-process mode."""
 
     def __init__(self, config: SandboxConfig | None = None):
         self.config = config or SandboxConfig.from_env()
@@ -133,14 +133,7 @@ class SandboxExecutor:
     def run(self, code: str) -> dict[str, Any]:
         if self.use_docker:
             logger.debug("Executing via Docker sandbox")
-            result = _run_in_docker(code, self.config)
-            if not result["ok"] and "Docker execution error" in result.get("error", ""):
-                logger.warning(
-                    "Docker execution failed, falling back to in-process: %s",
-                    result["error"],
-                )
-                return _run_in_process(code, self.config.timeout_seconds)
-            return result
+            return _run_in_docker(code, self.config)
         else:
             logger.debug("Executing via in-process sandbox")
             return _run_in_process(code, self.config.timeout_seconds)

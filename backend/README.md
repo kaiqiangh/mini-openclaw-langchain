@@ -432,7 +432,7 @@ Isolated Python execution via Docker containers. Configure with `REPL_SANDBOX_MO
 | ----------- | ------------------------------------------------------------ |
 | `in_process`| Default. Multiprocessing with resource limits.               |
 | `docker`    | Always use Docker container isolation.                        |
-| `auto`      | Use Docker if available, fall back to in-process.             |
+| `auto`      | Use Docker if available; fall back to in-process only when Docker or the image is unavailable before execution. |
 
 Docker flags: `--memory=256m --cpus=1 --network=none --read-only --cap-drop ALL`
 
