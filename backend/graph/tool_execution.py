@@ -20,6 +20,7 @@ from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.contracts import ErrorCode
 from tools.langchain_tools import build_langchain_tools
+from tools.runner import ToolRunner
 from hooks.engine import HookEngine
 from hooks.types import HookEvent
 
@@ -93,6 +94,7 @@ class ToolExecutionService:
         run_id: str,
         session_id: str,
         runtime_audit_store: AuditStore,
+        tool_runner: ToolRunner | None = None,
         delegate_tools: list[Any] | None = None,
         hook_engine: HookEngine | None = None,
         explicit_enabled_tools: list[str] | None = None,
@@ -134,7 +136,7 @@ class ToolExecutionService:
                 trigger_type,
                 config_base_dir=config_base_dir,
             )
-        runner = get_tool_runner(
+        runner = tool_runner or get_tool_runner(
             runtime_root,
             runtime_audit_store,
             repeat_identical_failure_limit=runtime.tool_retry_guard.repeat_identical_failure_limit,

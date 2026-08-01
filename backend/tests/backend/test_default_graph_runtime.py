@@ -1661,6 +1661,47 @@ def test_graph_runtime_streams_tool_loop_events(monkeypatch, tmp_path: Path):
     assert "token" in event_types
     assert events[-1]["type"] == "done"
     assert events[-1]["data"]["content"] == "final answer"
+    graph = manager.graph_registry.resolve("default")
+    assert graph._tool_runners == {}
+
+
+def test_graph_runtime_reuses_tool_runner_per_request(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    graph = manager.graph_registry.resolve("default")
+    runtime = manager.get_runtime("default")
+    request = RuntimeRequest(
+        message="run tool",
+        history=[],
+        session_id="session-runner-scope",
+        agent_id="default",
+    )
+
+    first = graph._tool_runner_for_request(
+        request=request,
+        runtime_state=runtime,
+        runtime_config=runtime.runtime_config,
+    )
+    second = graph._tool_runner_for_request(
+        request=request,
+        runtime_state=runtime,
+        runtime_config=runtime.runtime_config,
+    )
+    other_request = RuntimeRequest(
+        message="run another tool",
+        history=[],
+        session_id="session-runner-scope-2",
+        agent_id="default",
+    )
+    other = graph._tool_runner_for_request(
+        request=other_request,
+        runtime_state=runtime,
+        runtime_config=runtime.runtime_config,
+    )
+
+    assert first is second
+    assert first is not other
 
 
 def test_graph_runtime_rebuilds_model_input_after_tool_results(
