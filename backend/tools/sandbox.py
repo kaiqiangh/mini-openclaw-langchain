@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
@@ -59,11 +60,12 @@ class SandboxSelection:
 
 
 def _darwin_profile(root_dir: Path, allow_network: bool) -> str:
-    root = str(root_dir.resolve()).replace("\\", "\\\\").replace('"', '\\"')
+    root = str(root_dir.resolve())
     network_rule = "(allow network*)" if allow_network else "(deny network*)"
+    runtime_paths = (*_DARWIN_RUNTIME_READ_PATHS, *_darwin_python_runtime_paths())
     read_rules = "".join(
-        f'(allow file-read-data (subpath "{path}"))'
-        for path in (root, *_DARWIN_RUNTIME_READ_PATHS)
+        f'(allow file-read-data (subpath "{_escape_profile_path(path)}"))'
+        for path in (root, *runtime_paths)
     )
     # Metadata traversal is needed to resolve approved paths, but file contents stay scoped.
     return (
@@ -72,10 +74,29 @@ def _darwin_profile(root_dir: Path, allow_network: bool) -> str:
         "(allow process*)"
         '(allow file-read-metadata (subpath "/"))'
         f"{read_rules}"
-        f'(allow file-write* (subpath "{root}"))'
+        f'(allow file-write* (subpath "{_escape_profile_path(root)}"))'
         '(allow file-write* (subpath "/tmp"))'
         '(allow file-write* (subpath "/private/tmp"))'
     )
+
+
+def _escape_profile_path(path: str) -> str:
+    return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _darwin_python_runtime_paths() -> tuple[str, ...]:
+    candidates = (
+        Path(sys.prefix),
+        Path(sys.base_prefix),
+        Path(sys.executable).resolve().parent.parent,
+    )
+    paths: list[str] = []
+    for candidate in candidates:
+        resolved = str(candidate.resolve())
+        if resolved == "/" or resolved in paths:
+            continue
+        paths.append(resolved)
+    return tuple(paths)
 
 
 def _linux_bwrap_command(

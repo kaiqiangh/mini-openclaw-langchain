@@ -4,6 +4,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -106,6 +107,23 @@ def test_darwin_profile_scopes_file_content_reads(tmp_path):
     assert "(allow file-read*)" not in profile
     assert '(allow file-read-metadata (subpath "/"))' in profile
     assert f'(allow file-read-data (subpath "{root}"))' in profile
+
+
+def test_darwin_profile_allows_active_python_runtime(tmp_path):
+    profile = _darwin_profile(tmp_path, allow_network=False)
+
+    for runtime_root in {Path(sys.prefix).resolve(), Path(sys.base_prefix).resolve()}:
+        if str(runtime_root) != "/":
+            assert f'(allow file-read-data (subpath "{runtime_root}"))' in profile
+
+
+def test_darwin_profile_escapes_workspace_path(tmp_path):
+    root = tmp_path / 'quoted"root'
+    profile = _darwin_profile(root, allow_network=False)
+    escaped = str(root.resolve()).replace("\\", "\\\\").replace('"', '\\"')
+
+    assert f'(allow file-read-data (subpath "{escaped}"))' in profile
+    assert f'(allow file-write* (subpath "{escaped}"))' in profile
 
 
 @pytest.mark.skipif(
