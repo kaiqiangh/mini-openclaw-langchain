@@ -25,7 +25,10 @@ def require_existing_runtime(manager: AgentManager, agent_id: str) -> Any:
     if not known:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
 
+    runtime_getter = getattr(manager, "get_existing_runtime", None)
     try:
+        if callable(runtime_getter):
+            return runtime_getter(normalized)
         return manager.get_runtime(normalized)
     except ValueError as exc:
         raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc

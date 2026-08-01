@@ -195,8 +195,14 @@ def build_delegate_tool(
     base_dir: Any,
     context: ToolContext,
 ) -> StructuredTool:
+    def _existing_runtime(agent_id: str) -> Any:
+        runtime_getter = getattr(
+            agent_manager, "get_existing_runtime", agent_manager.get_runtime
+        )
+        return runtime_getter(agent_id)
+
     def _delegation_config() -> DelegationConfig:
-        runtime = agent_manager.get_runtime(context.agent_id)
+        runtime = _existing_runtime(context.agent_id)
         return runtime.runtime_config.delegation
 
     async def _append_parent_delegate_event(
@@ -227,7 +233,7 @@ def build_delegate_tool(
     ) -> None:
         """Execute sub-agent in background. Called via asyncio.create_task."""
         try:
-            runtime = agent_manager.get_runtime(context.agent_id)
+            runtime = _existing_runtime(context.agent_id)
 
             # Create sub-agent session
             await runtime.session_manager.create_session(

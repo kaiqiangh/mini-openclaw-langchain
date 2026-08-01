@@ -68,14 +68,14 @@ class AgentManager:
         self.runtime_services = RuntimeExecutionServices(
             base_dir_getter=lambda: self.base_dir,
             app_config_getter=self._refresh_app_config,
-            runtime_getter=self.get_runtime,
+            runtime_getter=self.get_existing_runtime,
             prompt_builder=self.prompt_builder,
             usage_orchestrator=self.usage_orchestrator,
             agent_manager=self,
             hook_engine_getter=self._get_hook_engine,
         )
         self.runtime_checkpointer = SQLiteRuntimeCheckpointer(
-            runtime_getter=self.get_runtime
+            runtime_getter=self.get_existing_runtime
         )
         self.graph_registry = GraphRuntimeRegistry()
         self.graph_registry.register(
@@ -88,7 +88,7 @@ class AgentManager:
             ),
         )
         self.session_repository = CheckpointSessionRepository(
-            runtime_getter=self.get_runtime,
+            runtime_getter=self.get_existing_runtime,
             graph_getter=self._runtime_graph,
             checkpointer=self.runtime_checkpointer,
         )
@@ -150,7 +150,7 @@ class AgentManager:
         return self._global_config_path(), workspace_root / "config.json"
 
     def get_agent_config_path(self, agent_id: str = "default") -> Path:
-        runtime = self.get_runtime(agent_id)
+        runtime = self.get_existing_runtime(agent_id)
         return runtime.root_dir / "config.json"
 
     def _copy_text_if_missing(
@@ -343,12 +343,28 @@ class AgentManager:
         self._refresh_runtime_config(runtime)
         return runtime
 
+    def get_existing_runtime(self, agent_id: str = "default") -> AgentRuntime:
+        """Load a runtime only for an agent workspace that already exists."""
+        self._refresh_app_config()
+        normalized = self._normalize_agent_id(agent_id)
+        _, workspaces_dir = self._require_initialized()
+        if not (workspaces_dir / normalized).is_dir():
+            raise ValueError(f"Agent not found: {normalized}")
+
+        runtime = self._runtimes.get(normalized)
+        if runtime is None:
+            runtime = self._build_runtime(normalized)
+            self._runtimes[normalized] = runtime
+            return runtime
+        self._refresh_runtime_config(runtime)
+        return runtime
+
     def _get_hook_engine(self, agent_id: str) -> "HookEngine | None":
         """Get the HookEngine for a given agent, if available."""
         return self._hook_engines.get(agent_id)
 
     def get_hook_engine(self, agent_id: str = "default") -> "HookEngine":
-        runtime = self.get_runtime(agent_id)
+        runtime = self.get_existing_runtime(agent_id)
         engine = self._hook_engines.get(runtime.agent_id)
         if engine is None:
             raise ValueError(f"Agent not found: {agent_id}")
@@ -363,7 +379,7 @@ class AgentManager:
         return self.session_repository
 
     def get_llm_status(self, agent_id: str = "default") -> dict[str, Any]:
-        runtime = self.get_runtime(agent_id)
+        runtime = self.get_existing_runtime(agent_id)
         return self.runtime_services.resolve_llm_route(runtime).to_status_dict()
 
     def list_agents(self) -> list[dict[str, Any]]:
@@ -479,7 +495,7 @@ class AgentManager:
     async def generate_title(self, seed_text: str, agent_id: str = "default") -> str:
         if self.config is None:
             return seed_text[:10] or "New Session"
-        runtime = self.get_runtime(agent_id)
+        runtime = self.get_existing_runtime(agent_id)
         candidate = self.runtime_services.resolve_auxiliary_llm_candidate(runtime)
         if candidate is None:
             return seed_text[:40] or "New Session"
@@ -502,7 +518,7 @@ class AgentManager:
                 f"{m.get('role','user')}: {m.get('content','')[:80]}" for m in messages
             )
             return joined[:500]
-        runtime = self.get_runtime(agent_id)
+        runtime = self.get_existing_runtime(agent_id)
         candidate = self.runtime_services.resolve_auxiliary_llm_candidate(runtime)
         if candidate is None:
             corpus = "\n".join(

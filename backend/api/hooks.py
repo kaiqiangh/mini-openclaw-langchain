@@ -37,6 +37,7 @@ def _require_agent_manager() -> AgentManager:
 def _get_engine(agent_id: str) -> HookEngine:
     manager = _require_agent_manager()
     try:
+        require_existing_runtime(manager, agent_id)
         return manager.get_hook_engine(agent_id)
     except ValueError as exc:
         raise ApiError(

@@ -93,7 +93,8 @@ class SessionHistoryTool:
         archived: bool,
     ) -> dict[str, Any]:
         manager = self._agent_manager()
-        runtime = manager.get_runtime(agent_id)
+        runtime_getter = getattr(manager, "get_existing_runtime", manager.get_runtime)
+        runtime = runtime_getter(agent_id)
         payload = _run_async(
             runtime.session_manager.load_existing_session(
                 session_id,

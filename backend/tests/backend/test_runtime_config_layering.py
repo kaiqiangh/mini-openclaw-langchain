@@ -4,6 +4,8 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from config import (
     DelegationConfig,
     LlmRuntimeConfig,
@@ -132,6 +134,18 @@ def test_agent_runtime_auto_reload_on_agent_config_change(tmp_path: Path):
     assert unchanged.runtime_config_digest == refreshed.runtime_config_digest
     assert id(unchanged.runtime_config) == id(refreshed.runtime_config)
     assert id(unchanged.runtime_config) != first_obj_id
+
+
+def test_existing_runtime_lookup_rejects_unknown_agent_without_provisioning(
+    tmp_path: Path,
+):
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    manager = _seed_manager_dirs(tmp_path)
+
+    with pytest.raises(ValueError, match="Agent not found"):
+        manager.get_existing_runtime("ghost")
+
+    assert not (tmp_path / "workspaces" / "ghost").exists()
 
 
 def test_agent_runtime_isolation_between_agents(tmp_path: Path):
