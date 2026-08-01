@@ -65,3 +65,10 @@ class SQLiteRuntimeCheckpointer(RuntimeCheckpointer):
     async def delete_thread(self, *, agent_id: str, thread_id: str) -> None:
         saver = await self._get_saver(agent_id)
         await saver.adelete_thread(thread_id)
+
+    async def close(self) -> None:
+        async with self._lock:
+            entries = tuple(self._entries.values())
+            self._entries.clear()
+        for entry in entries:
+            await entry.saver.conn.close()

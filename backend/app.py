@@ -415,6 +415,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await scheduler_api.stop_all_schedulers()
+        await agent_manager.runtime_checkpointer.close()
         heartbeat_scheduler = None
         cron_scheduler = None
 

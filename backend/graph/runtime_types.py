@@ -124,6 +124,9 @@ class RuntimeCheckpointer(Protocol):
     async def delete_thread(self, *, agent_id: str, thread_id: str) -> None:
         pass
 
+    async def close(self) -> None:
+        pass
+
 
 class ToolCapableChatModel(Protocol):
     def bind_tools(
