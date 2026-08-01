@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 import time
@@ -129,6 +130,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return limit, window_sec
         return None
 
+    @staticmethod
+    def _client_address(request: Request) -> str:
+        direct = request.client.host if request.client else "unknown"
+        if not _env_bool("APP_TRUST_PROXY_HEADERS"):
+            return direct
+
+        candidates = [request.headers.get("X-Real-IP", "")]
+        candidates.extend(
+            reversed(
+                [
+                    value.strip()
+                    for value in request.headers.get("X-Forwarded-For", "").split(",")
+                ]
+            )
+        )
+        for candidate in candidates:
+            try:
+                return str(ipaddress.ip_address(candidate.strip()))
+            except ValueError:
+                continue
+        return direct
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         # Skip rate limiting for non-API routes and health/ready
         path = request.url.path
@@ -137,7 +160,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path in {"/api/v1/health", "/api/v1/ready"}:
             return await call_next(request)
 
-        client = request.client.host if request.client else "unknown"
+        client = self._client_address(request)
 
         # Global rate limit
         global_key = f"{client}:__global__"

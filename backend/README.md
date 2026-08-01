@@ -373,6 +373,7 @@ resolved default profile, fallback profiles, warnings, and errors.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
   - health, readiness, and setup status are public; setup configuration is public only before the first admin token exists
+  - rate limits use direct peer addresses by default and trust `X-Real-IP` / `X-Forwarded-For` only when `APP_TRUST_PROXY_HEADERS=true`
 
 ## Local Runtime and Proxy Modes
 

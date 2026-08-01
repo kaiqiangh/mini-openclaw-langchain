@@ -244,7 +244,7 @@ Mini-OpenClaw applies a defense-in-depth approach:
 - **Tool policy gates:** Autonomous scheduler triggers (`heartbeat`, `cron`) use explicit allowlists.
 - **Network controls:** `fetch_url` blocks private/loopback/link-local addresses by default.
 - **Terminal sandboxing:** Sandboxed terminal reads are scoped to the agent workspace and approved runtime paths; the child receives an allowlisted runtime environment. The canonical config disables terminal networking and shell syntax; `terminal-flex` opts into both explicitly.
-- **Middleware:** CORS + trusted hosts + rate limiting enabled by default.
+- **Middleware:** CORS + trusted hosts + rate limiting enabled by default; the Docker production profile trusts the client IP supplied by its internal Nginx proxy.
 - **Docker prod profile:** Nginx is the only public service; backend and frontend stay on the internal Compose network.
 
 ---

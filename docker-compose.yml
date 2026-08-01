@@ -40,6 +40,7 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
       APP_ENABLE_FRONTEND_PROXY: "false"
+      APP_TRUST_PROXY_HEADERS: "true"
     expose:
       - "8000"
     volumes:
