@@ -33,6 +33,10 @@ class CheckpointSessionSnapshot:
     live_response: dict[str, Any] | None = None
 
 
+class ConcurrentSessionMutationError(RuntimeError):
+    """Raised when a session changes during a read-modify-write operation."""
+
+
 @dataclass
 class _StreamAccumulator:
     agent_id: str
@@ -944,6 +948,8 @@ class CheckpointSessionRepository:
         session_id: str,
         summary: str,
         n: int,
+        expected_messages: list[dict[str, Any]] | None = None,
+        expected_compressed_context: str | None = None,
         graph_name: str = "default",
     ) -> dict[str, int]:
         async with self._session_lock(agent_id, session_id):
@@ -952,6 +958,8 @@ class CheckpointSessionRepository:
                 session_id=session_id,
                 summary=summary,
                 n=n,
+                expected_messages=expected_messages,
+                expected_compressed_context=expected_compressed_context,
                 graph_name=graph_name,
             )
 
@@ -962,6 +970,8 @@ class CheckpointSessionRepository:
         session_id: str,
         summary: str,
         n: int,
+        expected_messages: list[dict[str, Any]] | None = None,
+        expected_compressed_context: str | None = None,
         graph_name: str = "default",
     ) -> dict[str, int]:
         session_manager = self._session_manager(agent_id)
@@ -977,6 +987,19 @@ class CheckpointSessionRepository:
             graph_name=graph_name,
         )
         messages = self._normalize_messages(state.get("messages", []))
+        session = await session_manager.load_session(session_id)
+        current_compressed_context = str(session.get("compressed_context", "")).strip()
+        if expected_messages is not None and messages != expected_messages:
+            raise ConcurrentSessionMutationError(
+                "Session changed while compression was preparing; retry"
+            )
+        if (
+            expected_compressed_context is not None
+            and current_compressed_context != expected_compressed_context.strip()
+        ):
+            raise ConcurrentSessionMutationError(
+                "Session changed while compression was preparing; retry"
+            )
         archive_count = min(max(0, n), len(messages))
         to_archive = messages[:archive_count]
         remain = messages[archive_count:]
@@ -987,8 +1010,7 @@ class CheckpointSessionRepository:
             )
             session_manager._write_json_file(archive_path, to_archive)  # noqa: SLF001
 
-        session = await session_manager.load_session(session_id)
-        prior = str(session.get("compressed_context", "")).strip()
+        prior = current_compressed_context
         normalized = summary.strip()
         if prior and normalized:
             session["compressed_context"] = f"{prior}\n---\n{normalized}"

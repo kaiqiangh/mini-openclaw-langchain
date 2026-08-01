@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.checkpoint_session_repository import ConcurrentSessionMutationError
 from graph.session_manager import InvalidSessionIdError, LegacySessionStateError
 
 router = APIRouter(tags=["compress"])
@@ -43,10 +44,7 @@ async def compress_session(
     session_id: str,
 ) -> dict[str, Any]:
     agent_manager = _require_agent_manager()
-    try:
-        require_existing_runtime(agent_manager, agent_id)
-    except ApiError:
-        raise
+    require_existing_runtime(agent_manager, agent_id)
     repository = agent_manager.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(
@@ -74,12 +72,17 @@ async def compress_session(
     n = min(n, len(messages))
 
     summary = await agent_manager.summarize_messages(messages[:n], agent_id=agent_id)
-    result = await repository.compress_history(
-        agent_id=agent_id,
-        session_id=session_id,
-        summary=summary,
-        n=n,
-    )
+    try:
+        result = await repository.compress_history(
+            agent_id=agent_id,
+            session_id=session_id,
+            summary=summary,
+            n=n,
+            expected_messages=messages,
+            expected_compressed_context=snapshot.compressed_context,
+        )
+    except ConcurrentSessionMutationError as exc:
+        raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc
     return {
         "data": {
             "session_id": session_id,
