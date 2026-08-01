@@ -950,6 +950,7 @@ class CheckpointSessionRepository:
         n: int,
         expected_messages: list[dict[str, Any]] | None = None,
         expected_compressed_context: str | None = None,
+        expected_live_response: dict[str, Any] | None = None,
         graph_name: str = "default",
     ) -> dict[str, int]:
         async with self._session_lock(agent_id, session_id):
@@ -960,6 +961,7 @@ class CheckpointSessionRepository:
                 n=n,
                 expected_messages=expected_messages,
                 expected_compressed_context=expected_compressed_context,
+                expected_live_response=expected_live_response,
                 graph_name=graph_name,
             )
 
@@ -972,6 +974,7 @@ class CheckpointSessionRepository:
         n: int,
         expected_messages: list[dict[str, Any]] | None = None,
         expected_compressed_context: str | None = None,
+        expected_live_response: dict[str, Any] | None = None,
         graph_name: str = "default",
     ) -> dict[str, int]:
         session_manager = self._session_manager(agent_id)
@@ -989,6 +992,7 @@ class CheckpointSessionRepository:
         messages = self._normalize_messages(state.get("messages", []))
         session = await session_manager.load_session(session_id)
         current_compressed_context = str(session.get("compressed_context", "")).strip()
+        current_live_response = self._normalize_live_response(state.get("live_response"))
         if expected_messages is not None and messages != expected_messages:
             raise ConcurrentSessionMutationError(
                 "Session changed while compression was preparing; retry"
@@ -999,6 +1003,10 @@ class CheckpointSessionRepository:
         ):
             raise ConcurrentSessionMutationError(
                 "Session changed while compression was preparing; retry"
+            )
+        if expected_live_response is not None or current_live_response is not None:
+            raise ConcurrentSessionMutationError(
+                "Cannot compress while a response is streaming; retry"
             )
         archive_count = min(max(0, n), len(messages))
         to_archive = messages[:archive_count]

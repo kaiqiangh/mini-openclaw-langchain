@@ -216,12 +216,14 @@ class FakeSessionRepository:
         n: int,
         expected_messages: list[dict[str, object]] | None = None,
         expected_compressed_context: str | None = None,
+        expected_live_response: dict[str, object] | None = None,
         graph_name: str = "default",
     ) -> dict[str, int]:
         _ = (
             agent_id,
             expected_messages,
             expected_compressed_context,
+            expected_live_response,
             graph_name,
         )
         key = self._key(session_id, archived=False)

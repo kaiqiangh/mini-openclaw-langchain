@@ -50,7 +50,7 @@ async def compress_session(
         snapshot = await repository.load_snapshot(
             agent_id=agent_id,
             session_id=session_id,
-            include_live=False,
+            include_live=True,
         )
     except InvalidSessionIdError as exc:
         raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
@@ -80,6 +80,7 @@ async def compress_session(
             n=n,
             expected_messages=messages,
             expected_compressed_context=snapshot.compressed_context,
+            expected_live_response=snapshot.live_response,
         )
     except ConcurrentSessionMutationError as exc:
         raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc

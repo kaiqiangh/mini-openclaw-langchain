@@ -284,6 +284,43 @@ async def test_compression_rejects_stale_session_snapshot(tmp_path: Path):
     ]
 
 
+@pytest.mark.asyncio
+async def test_compression_rejects_active_live_response(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    repository = manager.get_session_repository("default")
+
+    for content in ("one", "two", "three", "four"):
+        await repository.append_message(
+            agent_id="default",
+            session_id="live-session",
+            role="user",
+            content=content,
+        )
+    snapshot = await repository.load_snapshot(
+        agent_id="default",
+        session_id="live-session",
+        include_live=True,
+    )
+    await repository.update_state(
+        agent_id="default",
+        session_id="live-session",
+        values={"live_response": {"run_id": "run-1", "content": "typing"}},
+    )
+
+    with pytest.raises(ConcurrentSessionMutationError, match="streaming"):
+        await repository.compress_history(
+            agent_id="default",
+            session_id="live-session",
+            summary="summary",
+            n=4,
+            expected_messages=snapshot.messages,
+            expected_compressed_context=snapshot.compressed_context,
+            expected_live_response=snapshot.live_response,
+        )
+
+
 def test_finalize_stream_prefers_done_content_over_stale_stream_text(tmp_path: Path):
     _seed_base(tmp_path)
     manager = AgentManager()
