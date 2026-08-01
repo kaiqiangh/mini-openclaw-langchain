@@ -7,7 +7,7 @@ import {
   useRouter,
   useSearchParams,
 } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   Badge,
@@ -321,19 +321,16 @@ function RunsPageContent() {
     rows.find((row) => row.rowId === selectedRunId) ??
     null;
 
-  function navigateWithUpdates(
+  const navigateWithUpdates = useCallback((
     updates: Record<string, string | undefined>,
     mode: "push" | "replace" = "replace",
-  ) {
+  ) => {
     const params = buildParams(searchParams, updates);
     const nextQuery = params.toString();
     const href = nextQuery ? `${pathname}?${nextQuery}` : pathname;
-    if (mode === "push") {
-      router.push(href, { scroll: false });
-      return;
-    }
-    router.replace(href, { scroll: false });
-  }
+    if (mode === "push") router.push(href, { scroll: false });
+    else router.replace(href, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,7 +365,7 @@ function RunsPageContent() {
     if (!requestedAgentId) return;
     if (requestedAgentId === agentId) return;
     navigateWithUpdates({ agent: agentId });
-  }, [agentId, agents, agentsLoading, requestedAgentId]);
+  }, [agentId, agents, agentsLoading, navigateWithUpdates, requestedAgentId]);
 
   useEffect(() => {
     let cancelled = false;

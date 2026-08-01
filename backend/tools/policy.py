@@ -25,7 +25,7 @@ DEFAULT_MAX_LEVEL_BY_TRIGGER: dict[str, PermissionLevel] = {
 }
 
 AUTONOMOUS_TRIGGERS = {"heartbeat", "cron"}
-CHAT_HIGH_RISK_TOOLS = {"terminal"}
+CHAT_HIGH_RISK_TOOLS = {"terminal", "python_repl", "apply_patch"}
 
 
 class ToolPolicyEngine:
@@ -57,7 +57,10 @@ class ToolPolicyEngine:
                 )
             return PolicyDecision(True, "allowed_via_explicit_enable")
 
-        if trigger_type == "chat" and tool_name in CHAT_HIGH_RISK_TOOLS:
+        if trigger_type == "chat" and (
+            tool_name in CHAT_HIGH_RISK_TOOLS
+            or permission_level in {PermissionLevel.L1_WRITE, PermissionLevel.L3_SYSTEM}
+        ):
             if tool_name in enabled:
                 return PolicyDecision(True, "allowed_via_explicit_enable")
             return PolicyDecision(

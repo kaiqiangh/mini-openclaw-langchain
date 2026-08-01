@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -133,8 +134,18 @@ class DefaultGraphRuntime(GraphRuntime):
             workspace_root=runtime_state.root_dir,
             trigger_type=request.trigger_type,
             agent_id=request.agent_id,
-            explicit_enabled_tools=(),
-            explicit_blocked_tools=(),
+            explicit_enabled_tools=tuple(
+                runtime_config.chat_enabled_tools
+                if request.trigger_type == "chat"
+                else runtime_config.autonomous_tools.heartbeat_enabled_tools
+                if request.trigger_type == "heartbeat"
+                else runtime_config.autonomous_tools.cron_enabled_tools
+            ),
+            explicit_blocked_tools=tuple(
+                runtime_config.chat_blocked_tools
+                if request.trigger_type == "chat"
+                else []
+            ),
             run_id=run_id,
             session_id=request.session_id,
         )
@@ -400,7 +411,7 @@ class DefaultGraphRuntime(GraphRuntime):
 
     @staticmethod
     def _terminal_delegate_status(status: str) -> bool:
-        return status in {"completed", "failed", "timeout"}
+        return status in {"completed", "failed", "timeout", "cancelled"}
 
     def _blocking_delegate_refs_from_envelopes(
         self,
@@ -1666,27 +1677,57 @@ class DefaultGraphRuntime(GraphRuntime):
             },
         )
 
-        while True:
-            unresolved: list[BlockingDelegateRef] = []
-            resolved: list[ResolvedDelegateResult] = []
-            for ref in pending:
-                result = self._materialize_delegate_result(ref)
-                if result is None:
-                    unresolved.append(ref)
+        request = state.get("request")
+        agent_id = str(getattr(request, "agent_id", "default"))
+        runtime = self.services.get_runtime(agent_id)
+        wait_deadline = asyncio.get_running_loop().time() + max(
+            1, int(runtime.runtime_config.delegation.max_timeout_seconds)
+        )
+        registry = getattr(self.services, "delegate_registry", None)
+        try:
+            while True:
+                unresolved: list[BlockingDelegateRef] = []
+                resolved: list[ResolvedDelegateResult] = []
+                now = time.time()
+                for ref in pending:
+                    delegate_state = registry.get_status(ref.delegate_id) if registry else None
+                    if (
+                        delegate_state is not None
+                        and delegate_state.status == "running"
+                        and delegate_state.timeout_seconds
+                        and now - delegate_state.created_at >= delegate_state.timeout_seconds
+                    ):
+                        registry.cancel_task(ref.delegate_id)
+                        registry.mark_timeout(ref.delegate_id)
+                    result = self._materialize_delegate_result(ref)
+                    if result is None:
+                        unresolved.append(ref)
+                        continue
+                    resolved.append(result)
+                if not unresolved:
+                    return {
+                        "pending_blocking_delegates": [],
+                        "resolved_delegate_results": [
+                            *list(state.get("resolved_delegate_results", [])),
+                            *resolved,
+                        ],
+                        "pending_delegate_result_injection": resolved,
+                        "delegate_synthesis_retry_count": 0,
+                        "delegate_waiting": False,
+                    }
+                if asyncio.get_running_loop().time() >= wait_deadline:
+                    for ref in unresolved:
+                        if registry is not None:
+                            registry.cancel_task(ref.delegate_id)
+                            registry.mark_timeout(ref.delegate_id)
                     continue
-                resolved.append(result)
-            if not unresolved:
-                return {
-                    "pending_blocking_delegates": [],
-                    "resolved_delegate_results": [
-                        *list(state.get("resolved_delegate_results", [])),
-                        *resolved,
-                    ],
-                    "pending_delegate_result_injection": resolved,
-                    "delegate_synthesis_retry_count": 0,
-                    "delegate_waiting": False,
-                }
-            await asyncio.sleep(0.1)
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            if registry is not None:
+                for ref in pending:
+                    registry.cancel_task(ref.delegate_id)
+                    registry.mark_cancelled(ref.delegate_id)
+            raise
 
     def _finalize_success(self, state: RuntimeGraphState) -> dict[str, Any]:
         request = state["request"]

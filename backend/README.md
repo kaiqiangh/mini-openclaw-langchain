@@ -479,7 +479,7 @@ These utilities are the foundation for future async migration of `SessionManager
 ```bash
 cd backend
 uv venv --python=python3.13.7
-uv pip install -r requirements.txt
+uv pip install -r requirements.lock
 # Optional PDF tool support:
 # uv pip install -r requirements-pdf.txt
 cp .env.example .env

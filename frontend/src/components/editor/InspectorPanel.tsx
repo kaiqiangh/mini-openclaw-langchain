@@ -11,7 +11,9 @@ import {
   getRuntimeConfig,
   listWorkspaceFiles,
   setRuntimeConfig,
+  getRetrievalStatus,
 } from "@/lib/api";
+import type { RetrievalStatus } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
 import {
   Badge,
@@ -90,6 +92,7 @@ export function InspectorPanel() {
   const [bulkPatchLoading, setBulkPatchLoading] = useState<boolean>(false);
   const [runtimeActionStatus, setRuntimeActionStatus] = useState<string>("");
   const [runtimeFullscreen, setRuntimeFullscreen] = useState<boolean>(false);
+  const [retrievalStatus, setRetrievalStatus] = useState<RetrievalStatus | null>(null);
   const [inspectorExpanded, setInspectorExpanded] = useState<boolean>(true);
   const [runtimeSections, setRuntimeSections] =
     useState<Record<RuntimeSectionKey, boolean>>(DEFAULT_RUNTIME_SECTIONS);
@@ -169,6 +172,28 @@ export function InspectorPanel() {
     [updateRuntimeConfigContent],
   );
 
+  const saveRuntimeConfigContent = useCallback(async () => {
+    setRuntimeConfigError("");
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(
+        runtimeConfigContentRef.current,
+      ) as Record<string, unknown>;
+    } catch {
+      setRuntimeConfigError("Runtime config JSON is invalid.");
+      return;
+    }
+    try {
+      const saved = await setRuntimeConfig(payload, currentAgentIdRef.current);
+      updateRuntimeConfigContent(JSON.stringify(saved, null, 2));
+      setRuntimeConfigDirty(false);
+    } catch (err) {
+      setRuntimeConfigError(
+        err instanceof Error ? err.message : "Failed to save runtime config",
+      );
+    }
+  }, [updateRuntimeConfigContent]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -229,6 +254,20 @@ export function InspectorPanel() {
   useEffect(() => {
     void reloadRuntimeConfig({ confirmDiscard: false, announce: false });
   }, [currentAgentId, reloadRuntimeConfig]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getRetrievalStatus(currentAgentId)
+      .then((status) => {
+        if (!cancelled) setRetrievalStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setRetrievalStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAgentId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -332,7 +371,7 @@ export function InspectorPanel() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [mode, runtimeFullscreen]);
+  }, [mode, runtimeFullscreen, saveRuntimeConfigContent]);
 
   const fileOptions = useMemo(() => {
     const merged = [...workspaceFileOptions, ...skillFileOptions];
@@ -341,28 +380,6 @@ export function InspectorPanel() {
     }
     return merged;
   }, [selectedFilePath, skillFileOptions, workspaceFileOptions]);
-
-  async function saveRuntimeConfigContent() {
-    setRuntimeConfigError("");
-    let payload: Record<string, unknown>;
-    try {
-      payload = JSON.parse(
-        runtimeConfigContentRef.current,
-      ) as Record<string, unknown>;
-    } catch {
-      setRuntimeConfigError("Runtime config JSON is invalid.");
-      return;
-    }
-    try {
-      const saved = await setRuntimeConfig(payload, currentAgentIdRef.current);
-      updateRuntimeConfigContent(JSON.stringify(saved, null, 2));
-      setRuntimeConfigDirty(false);
-    } catch (err) {
-      setRuntimeConfigError(
-        err instanceof Error ? err.message : "Failed to save runtime config",
-      );
-    }
-  }
 
   async function applyTemplateSelection() {
     if (!selectedTemplate) return;
@@ -825,6 +842,33 @@ export function InspectorPanel() {
                       </div>
                     </div>
                   ) : null}
+                </section>
+
+                <section className="rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="ui-label">Retrieval Indexes</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        void getRetrievalStatus(currentAgentId).then(setRetrievalStatus).catch(() => undefined);
+                      }}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                  {retrievalStatus ? (
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <Badge tone={retrievalStatus.memory.state === "ready" ? "success" : retrievalStatus.memory.state === "failed" ? "danger" : "warn"}>
+                        memory: {retrievalStatus.memory.state}
+                      </Badge>
+                      <Badge tone={retrievalStatus.knowledge.state === "ready" ? "success" : retrievalStatus.knowledge.state === "failed" ? "danger" : "warn"}>
+                        knowledge: {retrievalStatus.knowledge.state}
+                      </Badge>
+                    </div>
+                  ) : (
+                    <span className="ui-helper">Retrieval status unavailable.</span>
+                  )}
                 </section>
 
                 {runtimeConfigError ? (

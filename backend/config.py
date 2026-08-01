@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import threading
 import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
@@ -346,6 +348,67 @@ _LLM_FALLBACK_POLICY_KEYS = {
 }
 _STARTUP_POLICY_VALUES = {"warn", "error"}
 _RUNTIME_FALLBACK_POLICY_VALUES = {"fail", "fallback"}
+_RUNTIME_CONFIG_LOCK = threading.RLock()
+
+
+class RuntimeConfigConflictError(ValueError):
+    def __init__(self, current_version: int) -> None:
+        super().__init__(str(current_version))
+        self.current_version = current_version
+
+
+def _validate_runtime_payload_shape(payload: dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        raise ValueError("runtime config must be an object")
+    sections = {
+        "agent_runtime", "llm_runtime", "retrieval", "tool_retry_guard",
+        "tool_network", "tool_timeouts", "tool_output_limits", "tool_execution",
+        "autonomous_tools", "scheduler", "heartbeat", "cron", "hooks", "delegation",
+    }
+    for key in sections:
+        if key in payload and not isinstance(payload[key], dict):
+            raise ValueError(f"{key} must be an object")
+    injection = payload.get("injection_mode")
+    if injection is not None and injection not in {item.value for item in InjectionMode}:
+        raise ValueError("injection_mode is invalid")
+    retrieval = payload.get("retrieval", {})
+    for domain in ("memory", "knowledge"):
+        section = retrieval.get(domain, {})
+        if not isinstance(section, dict):
+            raise ValueError(f"retrieval.{domain} must be an object")
+        for key in ("top_k", "chunk_size", "chunk_overlap"):
+            if key in section and (not isinstance(section[key], int) or isinstance(section[key], bool)):
+                raise ValueError(f"retrieval.{domain}.{key} must be an integer")
+        if "top_k" in section and section["top_k"] < 1:
+            raise ValueError(f"retrieval.{domain}.top_k must be positive")
+        if "chunk_size" in section and section["chunk_size"] < 64:
+            raise ValueError(f"retrieval.{domain}.chunk_size is too small")
+        if "chunk_overlap" in section and section["chunk_overlap"] < 0:
+            raise ValueError(f"retrieval.{domain}.chunk_overlap must not be negative")
+        if (
+            "chunk_size" in section
+            and "chunk_overlap" in section
+            and section["chunk_overlap"] >= section["chunk_size"]
+        ):
+            raise ValueError(f"retrieval.{domain}.chunk_overlap must be smaller than chunk_size")
+        for key in ("semantic_weight", "lexical_weight"):
+            if key in section and (
+                not isinstance(section[key], (int, float))
+                or isinstance(section[key], bool)
+                or not math.isfinite(float(section[key]))
+            ):
+                raise ValueError(f"retrieval.{domain}.{key} must be a finite number")
+    tool_execution = payload.get("tool_execution", {})
+    terminal = tool_execution.get("terminal", {})
+    if not isinstance(terminal, dict):
+        raise ValueError("tool_execution.terminal must be an object")
+    if "sandbox_mode" in terminal and terminal["sandbox_mode"] not in {item.value for item in TerminalSandboxMode}:
+        raise ValueError("tool_execution.terminal.sandbox_mode is invalid")
+    if "command_policy_mode" in terminal and terminal["command_policy_mode"] not in {item.value for item in TerminalCommandPolicyMode}:
+        raise ValueError("tool_execution.terminal.command_policy_mode is invalid")
+    network = payload.get("tool_network", {})
+    if "block_private_networks" in network and not isinstance(network["block_private_networks"], bool):
+        raise ValueError("tool_network.block_private_networks must be boolean")
 
 
 def _validate_delegation_config(config: dict[str, Any]) -> list[str] | None:
@@ -728,6 +791,8 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
 def _runtime_from_payload(
     payload: dict[str, Any], *, strict: bool = False
 ) -> RuntimeConfig:
+    if strict:
+        _validate_runtime_payload_shape(payload)
     tool_timeouts = payload.get("tool_timeouts", {})
     tool_output_limits = payload.get("tool_output_limits", {})
     autonomous_tools = payload.get("autonomous_tools", {})
@@ -881,9 +946,7 @@ def _runtime_from_payload(
                 if str(item).strip()
             ]
             or ["http", "https"],
-            block_private_networks=bool(
-                tool_network.get("block_private_networks", True)
-            ),
+            block_private_networks=True,
             max_redirects=max(0, int(tool_network.get("max_redirects", 3))),
             max_content_bytes=max(
                 1024, int(tool_network.get("max_content_bytes", 2_000_000))
@@ -913,7 +976,12 @@ def _runtime_from_payload(
                     ),
                     is_explicit="command_policy_mode" in terminal_execution,
                 ),
-                require_sandbox=bool(terminal_execution.get("require_sandbox", True)),
+                require_sandbox=(
+                    bool(terminal_execution.get("require_sandbox", True))
+                    if str(terminal_execution.get("sandbox_mode", "")).strip().lower()
+                    == TerminalSandboxMode.UNSAFE_NONE.value
+                    else True
+                ),
                 allowed_command_prefixes=_normalized_tool_list(
                     terminal_execution.get("allowed_command_prefixes"),
                     (),
@@ -1322,21 +1390,61 @@ def save_runtime_config(base_dir: Path, runtime: RuntimeConfig) -> None:
 
 
 def save_runtime_config_to_path(config_path: Path, runtime: RuntimeConfig) -> None:
-    payload = _runtime_to_payload(runtime)
-    merged_payload: dict[str, Any] = dict(payload)
-    if config_path.exists():
-        try:
-            existing = json.loads(config_path.read_text(encoding="utf-8"))
-            if isinstance(existing, dict):
-                for key, value in existing.items():
-                    if key not in payload:
-                        merged_payload[key] = value
-        except Exception:
-            merged_payload = dict(payload)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
-    tmp_path.write_text(
-        json.dumps(merged_payload, ensure_ascii=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    tmp_path.replace(config_path)
+    with _RUNTIME_CONFIG_LOCK:
+        payload = _runtime_to_payload(runtime)
+        merged_payload: dict[str, Any] = dict(payload)
+        if config_path.exists():
+            try:
+                existing = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    for key, value in existing.items():
+                        if key not in payload:
+                            merged_payload[key] = value
+            except Exception:
+                merged_payload = dict(payload)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
+        tmp_path.write_text(
+            json.dumps(merged_payload, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(config_path)
+
+
+def save_runtime_config_overlay_to_path(
+    config_path: Path,
+    runtime: RuntimeConfig,
+    baseline_path: Path,
+    *,
+    expected_version: int | None = None,
+) -> None:
+    """Persist only agent overrides while retaining non-runtime metadata."""
+    with _RUNTIME_CONFIG_LOCK:
+        current_version = (
+            int(config_path.stat().st_mtime_ns) if config_path.exists() else 0
+        )
+        if expected_version is not None and expected_version != current_version:
+            raise RuntimeConfigConflictError(current_version)
+        candidate = _runtime_to_payload(runtime)
+        baseline = _runtime_to_payload(load_runtime_config(baseline_path))
+        overlay = _deep_diff(candidate, baseline)
+        existing: dict[str, Any] = {}
+        if config_path.exists():
+            try:
+                raw = json.loads(config_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    existing = {
+                        key: value
+                        for key, value in raw.items()
+                        if key not in candidate
+                    }
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+        existing.update(overlay)
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
+        tmp_path.write_text(
+            json.dumps(existing, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(config_path)

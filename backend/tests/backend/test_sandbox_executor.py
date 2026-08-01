@@ -9,15 +9,15 @@ from tools.python_repl_tool import _get_mp_context
 
 
 class TestSandboxConfig:
-    def test_default_mode_is_in_process(self):
+    def test_default_mode_requires_real_sandbox(self):
         config = SandboxConfig()
-        assert config.mode == "in_process"
+        assert config.mode == "docker"
 
-    def test_from_env_default(self):
+    def test_from_env_default_requires_real_sandbox(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("REPL_SANDBOX_MODE", None)
             config = SandboxConfig.from_env()
-            assert config.mode == "in_process"
+            assert config.mode == "docker"
 
     def test_from_env_docker(self):
         with patch.dict(os.environ, {"REPL_SANDBOX_MODE": "docker"}):
@@ -60,6 +60,10 @@ class TestSandboxExecutor:
         monkeypatch.setattr(
             "tools.sandbox_executor._run_in_docker",
             lambda code, config: docker_failure,
+        )
+        monkeypatch.setattr(
+            "tools.sandbox_executor._docker_available",
+            lambda image: True,
         )
         monkeypatch.setattr(
             "tools.sandbox_executor._run_in_process",

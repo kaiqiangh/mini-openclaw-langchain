@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +23,13 @@ _ALLOWED_ROOT_FILES = {"SKILLS_SNAPSHOT.md"}
 _BROWSE_DIRS = ("workspace", "memory", "knowledge")
 _BROWSE_FILE_SUFFIXES = {".md", ".txt", ".json", ".yaml", ".yml", ".toml"}
 _MAX_BROWSE_FILES = 1000
+MAX_FILE_BYTES = 1_048_576
+MAX_PATH_CHARS = 512
 
 
 class SaveFileRequest(BaseModel):
-    path: str = Field(min_length=1)
-    content: str
+    path: str = Field(min_length=1, max_length=MAX_PATH_CHARS)
+    content: str = Field(max_length=MAX_FILE_BYTES)
 
 
 def set_dependencies(base_dir: Path, agent_manager: AgentManager) -> None:
@@ -87,6 +90,8 @@ def _list_workspace_files(workspace_root: Path) -> list[str]:
         if len(rows) >= _MAX_BROWSE_FILES:
             break
     for root_file in sorted(_ALLOWED_ROOT_FILES):
+        if len(rows) >= _MAX_BROWSE_FILES:
+            break
         if (workspace_root / root_file).is_file():
             rows.append(root_file)
     return sorted(set(rows))
@@ -106,7 +111,7 @@ def _serialize_skills(base_dir: Path) -> list[dict[str, str]]:
 @router.get("/agents/{agent_id}/files")
 async def read_file(
     agent_id: str,
-    path: str = Query(..., min_length=1),
+    path: str = Query(..., min_length=1, max_length=MAX_PATH_CHARS),
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
@@ -125,7 +130,17 @@ async def read_file(
             details={"path": path},
         )
 
-    content = target.read_text(encoding="utf-8", errors="replace")
+    size = target.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise ApiError(
+            status_code=413,
+            code="file_too_large",
+            message=f"File exceeds the {MAX_FILE_BYTES} byte read limit",
+            details={"path": path, "max_bytes": MAX_FILE_BYTES},
+        )
+    content = (await asyncio.to_thread(target.read_bytes))[:MAX_FILE_BYTES].decode(
+        "utf-8", errors="replace"
+    )
     return {"data": {"path": path, "content": content}}
 
 
@@ -143,17 +158,29 @@ async def save_file(
         ) from exc
     target = _resolve_allowed_path(runtime.root_dir, request.path)
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_suffix(target.suffix + ".tmp")
-    tmp_path.write_text(request.content, encoding="utf-8")
-    tmp_path.replace(target)
+    content_bytes = request.content.encode("utf-8")
+    if len(content_bytes) > MAX_FILE_BYTES:
+        raise ApiError(
+            status_code=413,
+            code="file_too_large",
+            message=f"File exceeds the {MAX_FILE_BYTES} byte write limit",
+            details={"path": request.path, "max_bytes": MAX_FILE_BYTES},
+        )
+
+    def _write() -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_suffix(target.suffix + ".tmp")
+        tmp_path.write_bytes(content_bytes)
+        tmp_path.replace(target)
+
+    await asyncio.to_thread(_write)
 
     if request.path == "memory/MEMORY.md":
-        runtime.memory_indexer.rebuild_index(
-            settings=runtime.runtime_config.retrieval.memory
+        runtime.memory_indexer.schedule_rebuild(
+            settings=runtime.runtime_config.retrieval.memory,
         )
     elif request.path.startswith("skills/"):
-        ensure_skills_snapshot(runtime.root_dir)
+        await asyncio.to_thread(ensure_skills_snapshot, runtime.root_dir)
 
     return {"data": {"path": request.path, "saved": True}}
 
@@ -204,6 +231,6 @@ async def list_workspace_files(
         "data": {
             "agent_id": agent_id,
             "workspace_root": str(runtime.root_dir),
-            "files": _list_workspace_files(runtime.root_dir),
+            "files": await asyncio.to_thread(_list_workspace_files, runtime.root_dir),
         }
     }

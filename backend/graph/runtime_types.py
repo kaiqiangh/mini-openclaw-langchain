@@ -66,7 +66,7 @@ class ResolvedDelegateResult:
     delegate_id: str
     role: str
     task: str
-    status: Literal["completed", "failed", "timeout"]
+    status: Literal["completed", "failed", "timeout", "cancelled"]
     result_summary: str = ""
     tools_used: list[str] = field(default_factory=list)
     duration_ms: int = 0

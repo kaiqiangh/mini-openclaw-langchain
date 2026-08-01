@@ -43,7 +43,11 @@ def test_terminal_timeout_contract(tmp_path):
 
 
 def test_python_repl_timeout_contract():
-    tool = PythonReplTool(timeout_seconds=1, output_char_limit=200)
+    tool = PythonReplTool(
+        timeout_seconds=1,
+        output_char_limit=200,
+        use_sandbox=False,
+    )
     result = tool.run({"code": "while True:\n    pass"}, context=None)  # type: ignore[arg-type]
 
     assert result.ok is False

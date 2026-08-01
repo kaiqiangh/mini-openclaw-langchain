@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "backend/requirements*.txt"
+      - "backend/requirements*.lock"
       - "frontend/package*.json"
       - ".github/workflows/security-audit.yml"
   push:
     branches: ["main", "master"]
     paths:
       - "backend/requirements*.txt"
+      - "backend/requirements*.lock"
       - "frontend/package*.json"
       - ".github/workflows/security-audit.yml"
   schedule:
@@ -33,9 +35,9 @@ jobs:
       matrix:
         include:
           - label: backend-runtime
-            requirements: backend/requirements.txt
+            requirements: backend/requirements.lock
           - label: backend-dev
-            requirements: backend/requirements-dev.txt
+            requirements: backend/requirements-dev.lock
           - label: backend-pdf-optional
             requirements: backend/requirements-pdf.txt
     steps:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
@@ -16,10 +18,21 @@ router = APIRouter(tags=["tokens"])
 
 _BASE_DIR: Path | None = None
 _AGENT_MANAGER: AgentManager | None = None
+MAX_TOKEN_FILES = 32
+MAX_TOKEN_FILE_BYTES = 256_000
+MAX_TOKEN_TOTAL_BYTES = 1_048_576
+MAX_PATH_CHARS = 512
 
 
 class FileTokenRequest(BaseModel):
-    paths: list[str]
+    paths: list[str] = Field(min_length=1, max_length=MAX_TOKEN_FILES)
+
+    @field_validator("paths")
+    @classmethod
+    def validate_paths(cls, value: list[str]) -> list[str]:
+        if any(not path.strip() or len(path) > MAX_PATH_CHARS for path in value):
+            raise ValueError(f"paths must be non-empty and at most {MAX_PATH_CHARS} characters")
+        return value
 
 
 def set_dependencies(base_dir: Path, agent_manager: AgentManager) -> None:
@@ -28,12 +41,16 @@ def set_dependencies(base_dir: Path, agent_manager: AgentManager) -> None:
     _AGENT_MANAGER = agent_manager
 
 
+@lru_cache(maxsize=1)
+def _encoding():
+    import tiktoken
+
+    return tiktoken.get_encoding("cl100k_base")
+
+
 def _token_count(text: str) -> int:
     try:
-        import tiktoken
-
-        encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(text))
+        return len(_encoding().encode(text))
     except Exception:
         return max(1, len(text) // 4)
 
@@ -111,6 +128,7 @@ async def file_tokens(
     runtime = require_existing_runtime(agent_manager, agent_id)
 
     items: list[dict[str, Any]] = []
+    total_bytes = 0
     for rel_path in request.paths:
         try:
             abs_path = resolve_workspace_path(runtime.root_dir, rel_path)
@@ -122,7 +140,17 @@ async def file_tokens(
             items.append({"path": rel_path, "tokens": 0, "error": "not_found"})
             continue
 
-        content = abs_path.read_text(encoding="utf-8", errors="replace")
+        size = abs_path.stat().st_size
+        if size > MAX_TOKEN_FILE_BYTES:
+            items.append({"path": rel_path, "tokens": 0, "error": "file_too_large"})
+            continue
+        if total_bytes + size > MAX_TOKEN_TOTAL_BYTES:
+            items.append({"path": rel_path, "tokens": 0, "error": "total_size_limit"})
+            continue
+        total_bytes += size
+        content = await asyncio.to_thread(
+            lambda: abs_path.read_bytes().decode("utf-8", errors="replace")
+        )
         items.append({"path": rel_path, "tokens": _token_count(content)})
 
     return {"data": items}

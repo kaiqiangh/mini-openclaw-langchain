@@ -14,6 +14,7 @@ from config import HeartbeatRuntimeConfig
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
 from utils.async_io import iter_jsonl_reversed
+from utils.jsonl_retention import trim_jsonl
 
 
 @dataclass
@@ -98,6 +99,7 @@ class HeartbeatScheduler:
             }
             with self.audit_file.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            trim_jsonl(self.audit_file, max_records=2000, max_bytes=8 * 1024 * 1024)
 
     def query_runs(
         self, *, limit: int = 100, since_ms: int | None = None

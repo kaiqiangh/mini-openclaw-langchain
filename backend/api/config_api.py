@@ -6,17 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from config import (
     load_config,
     load_runtime_config,
+    RuntimeConfigConflictError,
     runtime_from_payload,
     runtime_to_payload,
-    save_runtime_config,
-    save_runtime_config_to_path,
+    save_runtime_config_overlay_to_path,
 )
 from graph.agent import AgentManager
 from observability.tracing import is_langsmith_tracing_enabled
@@ -33,6 +33,7 @@ class RagModeRequest(BaseModel):
 
 class RuntimeConfigRequest(BaseModel):
     config: dict[str, Any]
+    version: int | None = Field(default=None, ge=0)
 
 
 class TracingConfigRequest(BaseModel):
@@ -87,6 +88,20 @@ def _save_runtime_state(base_dir: Path, payload: dict[str, Any]) -> None:
         json.dumps(payload, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
+    tmp.replace(path)
+
+
+def _config_version(path: Path) -> int:
+    try:
+        return int(path.stat().st_mtime_ns)
+    except OSError:
+        return 0
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
 
 
@@ -154,9 +169,16 @@ async def set_rag_mode(
     try:
         runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
         agent_config_path = runtime.root_dir / "config.json"
-        runtime = load_runtime_config(agent_config_path)
-        runtime.rag_mode = request.enabled
-        save_runtime_config_to_path(agent_config_path, runtime)
+        payload: dict[str, Any] = {}
+        if agent_config_path.exists():
+            try:
+                raw = json.loads(agent_config_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    payload = raw
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+        payload["rag_mode"] = request.enabled
+        _write_json_atomic(agent_config_path, payload)
         refreshed = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
@@ -181,6 +203,7 @@ async def get_runtime_config(
             "data": {
                 "agent_id": "default",
                 "config": runtime_to_payload(config.runtime),
+                "version": _config_version(base_dir / "config.json"),
             }
         }
     try:
@@ -193,6 +216,7 @@ async def get_runtime_config(
         "data": {
             "agent_id": runtime.agent_id,
             "config": runtime_to_payload(runtime.runtime_config),
+            "version": _config_version(runtime.root_dir / "config.json"),
         }
     }
 
@@ -224,7 +248,20 @@ async def set_runtime_config(
     try:
         current_runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
         config_path = current_runtime.root_dir / "config.json"
-        save_runtime_config_to_path(config_path, parsed_runtime)
+        try:
+            save_runtime_config_overlay_to_path(
+                config_path,
+                parsed_runtime,
+                base_dir / "config.json",
+                expected_version=request.version,
+            )
+        except RuntimeConfigConflictError as exc:
+            raise ApiError(
+                status_code=409,
+                code="config_conflict",
+                message="Runtime config changed; reload before saving",
+                details={"version": exc.current_version},
+            ) from exc
         refreshed = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
@@ -234,6 +271,7 @@ async def set_runtime_config(
         "data": {
             "agent_id": refreshed.agent_id,
             "config": runtime_to_payload(refreshed.runtime_config),
+            "version": _config_version(config_path),
         }
     }
 

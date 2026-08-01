@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/primitives";
 
 interface Props {
-  status: "running" | "completed" | "failed" | "timeout";
+  status: "running" | "completed" | "failed" | "timeout" | "cancelled";
   role: string;
 }
 
@@ -10,6 +10,7 @@ const STATUS: Record<string, { tone: "accent" | "success" | "danger" | "warn"; l
   completed: { tone: "success", label: "Done" },
   failed: { tone: "danger", label: "Failed" },
   timeout: { tone: "warn", label: "Timeout" },
+  cancelled: { tone: "warn", label: "Cancelled" },
 };
 
 export function DelegateBadge({ status, role }: Props) {

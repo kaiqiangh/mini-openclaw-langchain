@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,90 @@ class SearchKnowledgeTool:
     name: str = "search_knowledge_base"
     description: str = "Search local knowledge files with lexical scoring"
     permission_level: PermissionLevel = PermissionLevel.L0_READ
+
+    def __post_init__(self) -> None:
+        self._status_lock = threading.Lock()
+        self._build_thread: threading.Thread | None = None
+        self._status: dict[str, object] = {
+            "state": "idle",
+            "last_error": "",
+            "last_success_ms": 0,
+            "last_good_digest": "",
+        }
+
+    def status(self) -> dict[str, object]:
+        with self._status_lock:
+            snapshot = dict(self._status)
+        if snapshot["state"] == "idle":
+            try:
+                storage = self._resolve_storage_settings()
+                if storage.engine == "sqlite":
+                    meta = self._sqlite_store(storage).get_meta("knowledge")
+                    if meta is not None:
+                        snapshot.update(
+                            state="ready",
+                            last_good_digest=str(meta.get("digest", "")),
+                        )
+                elif self._index_file.exists():
+                    payload = json.loads(self._index_file.read_text(encoding="utf-8"))
+                    snapshot.update(
+                        state="ready",
+                        last_good_digest=str(payload.get("digest", "")),
+                    )
+            except Exception:
+                pass
+        return snapshot
+
+    def _schedule_rebuild(
+        self,
+        files: list[Path],
+        *,
+        chunk_size: int,
+        chunk_overlap: int,
+        storage: RetrievalStorageConfig,
+    ) -> dict[str, object]:
+        with self._status_lock:
+            if self._build_thread is not None and self._build_thread.is_alive():
+                return dict(self._status)
+            self._status.update(state="building", last_error="")
+            self._build_thread = threading.Thread(
+                target=self._background_rebuild,
+                kwargs={
+                    "files": files,
+                    "chunk_size": chunk_size,
+                    "chunk_overlap": chunk_overlap,
+                    "storage": storage,
+                },
+                name="knowledge-index-build",
+                daemon=True,
+            )
+            self._build_thread.start()
+            return dict(self._status)
+
+    def _background_rebuild(
+        self,
+        *,
+        files: list[Path],
+        chunk_size: int,
+        chunk_overlap: int,
+        storage: RetrievalStorageConfig,
+    ) -> None:
+        try:
+            payload = self._build_index(
+                files, self._knowledge_digest(files, chunk_size=chunk_size, chunk_overlap=chunk_overlap),
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
+            self._persist_payload(payload, storage)
+            with self._status_lock:
+                self._status.update(
+                    state="ready",
+                    last_success_ms=int(time.time() * 1000),
+                    last_good_digest=str(payload.get("digest", "")),
+                )
+        except Exception:
+            with self._status_lock:
+                self._status.update(state="failed", last_error="index build failed")
 
     @property
     def _index_dir(self) -> Path:
@@ -72,7 +157,7 @@ class SearchKnowledgeTool:
     ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         for file_path in files:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
+            text = file_path.read_bytes()[:5 * 1024 * 1024].decode("utf-8", errors="replace")
             for chunk in self._chunk(text, chunk_size, chunk_overlap):
                 rows.append(
                     {
@@ -112,6 +197,52 @@ class SearchKnowledgeTool:
             "embedding_error": embedding_error,
             "rows": rows,
         }
+
+    @staticmethod
+    def _payload_chunks(payload: dict[str, Any]) -> list[RetrievalChunk]:
+        raw_rows = payload.get("rows", [])
+        if not isinstance(raw_rows, list):
+            return []
+        chunks: list[RetrievalChunk] = []
+        for row in raw_rows[:5000]:
+            if not isinstance(row, dict):
+                continue
+            embedding = row.get("embedding", [])
+            parsed_embedding: list[float] = []
+            if isinstance(embedding, list):
+                for item in embedding:
+                    try:
+                        parsed_embedding.append(float(item))
+                    except Exception:
+                        continue
+            chunks.append(
+                RetrievalChunk(
+                    source=str(row.get("source", "knowledge/unknown")),
+                    text=str(row.get("text", "")),
+                    embedding=parsed_embedding,
+                )
+            )
+        return chunks
+
+    def _persist_payload(
+        self, payload: dict[str, Any], storage: RetrievalStorageConfig
+    ) -> None:
+        if storage.engine == "sqlite":
+            store = self._sqlite_store(storage)
+            store.replace_domain_index(
+                domain="knowledge",
+                digest=str(payload.get("digest", "")),
+                chunk_size=int(payload.get("chunk_size", self.chunk_size)),
+                chunk_overlap=int(payload.get("chunk_overlap", self.chunk_overlap)),
+                embedding_provider=str(payload.get("embedding_provider", "openai")),
+                embedding_model=str(payload.get("embedding_model", "text-embedding-3-small")),
+                chunks=self._payload_chunks(payload),
+            )
+            return
+        self._index_dir.mkdir(parents=True, exist_ok=True)
+        self._index_file.write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
+        )
 
     def _resolve_storage_settings(self) -> RetrievalStorageConfig:
         config_base = self.config_base_dir or self.root_dir
@@ -157,43 +288,17 @@ class SearchKnowledgeTool:
         if meta is not None and str(meta.get("digest", "")) == digest:
             return store
 
+        if meta is not None:
+            self._schedule_rebuild(
+                files, chunk_size=chunk_size, chunk_overlap=chunk_overlap, storage=storage
+            )
+            return store
+
         payload = self._build_index(
             files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
-        rows = payload.get("rows", [])
-        if not isinstance(rows, list):
-            rows = []
-        chunks: list[RetrievalChunk] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            embedding = row.get("embedding", [])
-            parsed_embedding: list[float] = []
-            if isinstance(embedding, list):
-                for item in embedding:
-                    try:
-                        parsed_embedding.append(float(item))
-                    except Exception:
-                        continue
-            chunks.append(
-                RetrievalChunk(
-                    source=str(row.get("source", "knowledge/unknown")),
-                    text=str(row.get("text", "")),
-                    embedding=parsed_embedding,
-                )
-            )
         try:
-            store.replace_domain_index(
-                domain="knowledge",
-                digest=digest,
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                embedding_provider=str(payload.get("embedding_provider", "openai")),
-                embedding_model=str(
-                    payload.get("embedding_model", "text-embedding-3-small")
-                ),
-                chunks=chunks,
-            )
+            self._persist_payload(payload, storage)
             return store
         except Exception:
             return None
@@ -205,17 +310,22 @@ class SearchKnowledgeTool:
             files, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
         if self._index_file.exists():
-            payload = json.loads(self._index_file.read_text(encoding="utf-8"))
-            if payload.get("digest") == digest:
+            try:
+                payload = json.loads(self._index_file.read_text(encoding="utf-8"))
+                if payload.get("digest") == digest:
+                    return payload
+                self._schedule_rebuild(
+                    files, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+                    storage=self._resolve_storage_settings(),
+                )
                 return payload
+            except (OSError, json.JSONDecodeError):
+                pass
 
-        self._index_dir.mkdir(parents=True, exist_ok=True)
         payload = self._build_index(
             files, digest, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
-        self._index_file.write_text(
-            json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
-        )
+        self._persist_payload(payload, self._resolve_storage_settings())
         return payload
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -235,7 +345,7 @@ class SearchKnowledgeTool:
             )
 
         knowledge_dir = resolve_workspace_path(self.root_dir, "knowledge")
-        files = [p for p in knowledge_dir.rglob("*") if p.is_file()]
+        files = [p for p in sorted(knowledge_dir.rglob("*")) if p.is_file()][:1000]
 
         query_embedding: list[float] = []
         try:

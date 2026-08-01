@@ -9,7 +9,7 @@ export function DelegateResultCard({ delegate }: Props) {
   const [expanded, setExpanded] = useState(false);
   if (delegate.status === "running") return null;
 
-  const isError = delegate.status === "failed" || delegate.status === "timeout";
+  const isError = ["failed", "timeout", "cancelled"].includes(delegate.status);
 
   return (
     <div className="ui-panel my-2" data-testid="delegate-result-card">

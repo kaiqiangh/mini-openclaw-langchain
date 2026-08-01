@@ -638,6 +638,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       captureAppViewSnapshot,
       currentAgentId,
       loadSession,
+      resetDelegateState,
       restoreAppViewSnapshot,
     ],
   );
@@ -1331,6 +1332,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
+  // This boot effect intentionally runs once; currentAgentId is selected inside it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadSession, refreshAgents]);
 
   const value = useMemo<AppState>(

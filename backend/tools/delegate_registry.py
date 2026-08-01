@@ -178,6 +178,25 @@ class DelegateRegistry:
         )
         self._persist_config(state)
 
+    def mark_cancelled(self, delegate_id: str) -> None:
+        state = self._delegates.get(delegate_id)
+        if not state or state.status != "running":
+            return
+        state.status = "cancelled"
+        state.completed_at = time.time()
+        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
+        state.error_message = "Sub-agent execution was cancelled"
+        self._persist_error(state, state.error_message)
+        self._persist_config(state)
+
+    def cancel_task(self, delegate_id: str) -> None:
+        state = self._delegates.get(delegate_id)
+        if state is None:
+            return
+        task = state.task_ref
+        if task is not None and hasattr(task, "done") and not task.done():
+            task.cancel()
+
     def check_max_per_session(
         self, agent_id: str, parent_session_id: str, max_count: int
     ) -> bool:

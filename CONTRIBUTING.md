@@ -23,7 +23,7 @@ Backend:
 ```bash
 cd backend
 uv venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements-dev.lock
 cp .env.example .env
 uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000
 ```
@@ -74,8 +74,12 @@ Frontend:
 ```bash
 cd frontend
 npm run test:run
+npm run lint
 npm run build
 ```
+
+Dependency locks are committed for the Python 3.13 runtime and development environments;
+regenerate them with `uv pip compile` when direct requirements change.
 
 Docker changes:
 

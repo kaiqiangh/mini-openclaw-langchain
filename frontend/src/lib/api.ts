@@ -908,6 +908,19 @@ export type ConfigureResponse = {
   message: string;
 };
 
+export type RetrievalIndexStatus = {
+  state: "idle" | "building" | "ready" | "failed";
+  last_error: string;
+  last_success_ms: number;
+  last_good_digest: string;
+};
+
+export type RetrievalStatus = {
+  agent_id: string;
+  memory: RetrievalIndexStatus;
+  knowledge: RetrievalIndexStatus;
+};
+
 export async function listApprovals(
   agentId = "default",
 ): Promise<ApprovalRequest[]> {
@@ -950,6 +963,15 @@ export async function configureSystem(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     },
+  );
+  return payload.data;
+}
+
+export async function getRetrievalStatus(
+  agentId = "default",
+): Promise<RetrievalStatus> {
+  const payload = await requestJson<{ data: RetrievalStatus }>(
+    `${agentBase(agentId)}/retrieval/status`,
   );
   return payload.data;
 }
@@ -1106,7 +1128,7 @@ export interface DelegateSummary {
   delegate_id: string;
   role: string;
   task: string;
-  status: "running" | "completed" | "failed" | "timeout";
+  status: "running" | "completed" | "failed" | "timeout" | "cancelled";
   sub_session_id: string;
   created_at: number;
 }
@@ -1138,6 +1160,19 @@ export async function getDelegateDetail(agentId: string, sessionId: string, dele
     `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates/${encodeURIComponent(delegateId)}`,
   );
   if (!resp.ok) throw new Error(`GET delegate detail: ${resp.status}`);
+  return resp.json();
+}
+
+export async function cancelDelegate(
+  agentId: string,
+  sessionId: string,
+  delegateId: string,
+): Promise<DelegateDetail> {
+  const resp = await fetchWithAdminSession(
+    `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates/${encodeURIComponent(delegateId)}/cancel`,
+    { method: "POST" },
+  );
+  if (!resp.ok) throw new Error(`POST cancel delegate: ${resp.status}`);
   return resp.json();
 }
 

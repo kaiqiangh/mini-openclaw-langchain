@@ -14,7 +14,7 @@ from api.errors import ApiError
 from config import (
     runtime_from_payload,
     runtime_to_payload,
-    save_runtime_config_to_path,
+    save_runtime_config_overlay_to_path,
 )
 from graph.agent import AgentManager
 from tools import build_tool_catalog, get_all_declared_tools
@@ -385,7 +385,9 @@ async def bulk_runtime_patch(request: BulkRuntimePatchRequest) -> dict[str, Any]
             )
             parsed = runtime_from_payload(next_payload)
             config_path = current_runtime.root_dir / "config.json"
-            save_runtime_config_to_path(config_path, parsed)
+            save_runtime_config_overlay_to_path(
+                config_path, parsed, _base_dir(manager) / "config.json"
+            )
             refreshed = require_existing_runtime(manager, agent_id)
             updated_count += 1
             results.append(
@@ -548,5 +550,9 @@ async def update_agent_tool_selection(
         runtime.runtime_config.autonomous_tools.cron_enabled_tools = normalized_enabled
 
     config_path = runtime.root_dir / "config.json"
-    save_runtime_config_to_path(config_path, runtime.runtime_config)
+    save_runtime_config_overlay_to_path(
+        config_path,
+        runtime.runtime_config,
+        _base_dir(manager) / "config.json",
+    )
     return {"data": _agent_tools_payload(manager, runtime.agent_id)}

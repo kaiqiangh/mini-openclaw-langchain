@@ -16,7 +16,7 @@ from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
 from tools.delegate_registry import DelegateRegistry
-from tools.policy import PermissionLevel
+from tools.policy import PermissionLevel, ToolPolicyEngine
 
 # Hard limit for task description length (chars)
 _DELEGATE_MAX_TASK_CHARS = 4000
@@ -336,6 +336,9 @@ def build_delegate_tool(
                 },
             )
             return
+        except asyncio.CancelledError:
+            registry.mark_cancelled(delegate_id)
+            raise
         except Exception as exc:
             logger.exception(f"Sub-agent {delegate_id} failed")
             registry.mark_failed(delegate_id, str(exc))
@@ -502,6 +505,27 @@ def build_delegate_tool(
                 None,
             )
 
+        if context.trigger_type == "chat":
+            parent_policy = ToolPolicyEngine()
+            network_tools = {"web_search", "fetch_url"}
+            write_tools = {"terminal", "python_repl", "apply_patch", "delegate"}
+            resolved_allowed_tools = [
+                tool_name
+                for tool_name in resolved_allowed_tools
+                if parent_policy.is_allowed(
+                    tool_name=tool_name,
+                    permission_level=(
+                        PermissionLevel.L1_WRITE
+                        if tool_name in write_tools
+                        else PermissionLevel.L2_NETWORK
+                        if tool_name in network_tools
+                        else PermissionLevel.L0_READ
+                    ),
+                    trigger_type="chat",
+                    explicit_enabled_tools=list(context.explicit_enabled_tools),
+                ).allowed
+            ]
+
         reg = registry.register(
             agent_id=agent_id,
             parent_session_id=session_id,
@@ -545,8 +569,8 @@ def build_delegate_tool(
                     "allowed_tools": list(launch.allowed_tools),
                     "blocked_tools": list(launch.blocked_tools),
                 },
+                )
             )
-        )
         task_ref = loop.create_task(
             _run_sub_agent(
                 task=launch.task,
@@ -583,7 +607,7 @@ def build_delegate_tool(
             payload["tools_used"] = list(state.tools_used)
             payload["token_usage"] = dict(state.token_usage)
             payload["duration_ms"] = state.duration_ms
-        elif state.status in {"failed", "timeout"}:
+        elif state.status in {"failed", "timeout", "cancelled"}:
             payload["error_message"] = state.error_message or "Sub-agent failed"
             payload["duration_ms"] = state.duration_ms
         return _success_payload(
@@ -700,7 +724,7 @@ def build_delegate_status_tool(
             "sub_session_id": state.sub_session_id,
             "created_at": state.created_at,
         }
-        if state.status in ("completed", "failed", "timeout"):
+        if state.status in ("completed", "failed", "timeout", "cancelled"):
             result["completed_at"] = state.completed_at
             result["duration_ms"] = state.duration_ms
         if state.status == "completed":
@@ -708,7 +732,7 @@ def build_delegate_status_tool(
             result["steps_completed"] = state.steps_completed
             result["tools_used"] = state.tools_used
             result["token_usage"] = state.token_usage
-        if state.status in ("failed", "timeout"):
+        if state.status in ("failed", "timeout", "cancelled"):
             result["error_message"] = state.error_message or "Sub-agent timed out"
         return _success_payload(
             tool_name="delegate_status",
