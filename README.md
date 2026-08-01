@@ -239,7 +239,7 @@ The production-like profile needs one public origin so browser auth cookie boots
 
 Mini-OpenClaw applies a defense-in-depth approach:
 
-- **Auth:** All `/api/v1/*` routes require `APP_ADMIN_TOKEN` — via `Authorization: Bearer` header (API clients) or an `HttpOnly` cookie (browser clients). Health and readiness endpoints are exempt.
+- **Auth:** `/api/v1/*` routes require `APP_ADMIN_TOKEN` after initial setup — via `Authorization: Bearer` header (API clients) or an `HttpOnly` cookie (browser clients). Health, readiness, and setup status are public; setup configuration is public only until the first admin token exists.
 - **File APIs:** Workspace-root scoped with path traversal guards.
 - **Tool policy gates:** Autonomous scheduler triggers (`heartbeat`, `cron`) use explicit allowlists.
 - **Network controls:** `fetch_url` blocks private/loopback/link-local addresses by default.
@@ -455,7 +455,7 @@ GET              /api/v1/agents/{agent_id}/runs/replays
 
 ### Setup
 
-First-time configuration endpoints (exempt from auth).
+First-time configuration endpoints; setup status is public, while configuration is public only until the first admin token exists.
 
 ```text
 GET              /api/v1/setup/status

@@ -344,10 +344,10 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET /api/v1/agents/{agent_id}/runs/compare?run_a=...&run_b=...` — side-by-side diff of two run outputs
 - `GET /api/v1/agents/{agent_id}/runs/replays` — list replay sessions
 
-### Setup (Auth-Exempt)
+### Setup (Initial Bootstrap)
 
 - `GET /api/v1/setup/status` — check if system needs initial configuration
-- `POST /api/v1/setup/configure` — write admin token + LLM provider config
+- `POST /api/v1/setup/configure` — write admin token + LLM provider config; public only before an admin token exists, then requires the existing token
 
 ### Scheduler
 
@@ -372,6 +372,7 @@ resolved default profile, fallback profiles, warnings, and errors.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
+  - health, readiness, and setup status are public; setup configuration is public only before the first admin token exists
 
 ## Local Runtime and Proxy Modes
 
