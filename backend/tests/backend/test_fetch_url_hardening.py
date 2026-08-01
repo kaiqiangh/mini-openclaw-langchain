@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import io
+import socket
 from pathlib import Path
 
+import pytest
+
 from tools.base import ToolContext
-from tools.fetch_url_tool import FetchUrlTool
+from tools.fetch_url_tool import FetchUrlTool, _PinnedHTTPConnection
 
 
 def _context(tmp_path: Path) -> ToolContext:
@@ -68,7 +71,8 @@ def test_fetch_url_enforces_content_size_limit(tmp_path: Path, monkeypatch):
 def test_fetch_url_enforces_redirect_limit(tmp_path: Path, monkeypatch):
     tool = FetchUrlTool(timeout_seconds=1, max_redirects=1, max_content_bytes=1024)
 
-    def _fake_build_opener(handler):
+    def _fake_build_opener(*handlers):
+        handler = handlers[1]
         class _FakeOpener:
             def open(self, request, timeout=0):  # noqa: D401, ARG002
                 headers: dict[str, str] = {}
@@ -99,3 +103,25 @@ def test_fetch_url_enforces_redirect_limit(tmp_path: Path, monkeypatch):
     assert result.ok is False
     assert result.error is not None
     assert result.error.code == "E_HTTP"
+
+
+def test_fetch_url_rejects_dns_rebinding_before_connect(tmp_path: Path, monkeypatch):
+    tool = FetchUrlTool(block_private_networks=True)
+    public = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 0))
+    private = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))
+    resolutions = iter([(public,), (private,)])
+    monkeypatch.setattr(
+        "tools.fetch_url_tool.socket.getaddrinfo",
+        lambda *args, **kwargs: next(resolutions),
+    )
+
+    tool._validate_url("http://example.com/")
+    connection = _PinnedHTTPConnection(
+        "example.com", resolver=tool._resolve_validated_addresses
+    )
+    connect_calls: list[tuple[object, ...]] = []
+    connection._create_connection = lambda *args: connect_calls.append(args)  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="private or loopback"):
+        connection.connect()
+    assert connect_calls == []
