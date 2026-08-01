@@ -74,3 +74,12 @@ def test_double_resolve_rejected(client):
     c.post(f"/api/v1/agents/default/approvals/{req.request_id}", json={"action": "approve"})
     r = c.post(f"/api/v1/agents/default/approvals/{req.request_id}", json={"action": "deny"})
     assert r.status_code == 409
+
+
+def test_unknown_approval_rejected(client):
+    c, _ = client
+    r = c.post(
+        "/api/v1/agents/default/approvals/missing",
+        json={"action": "approve"},
+    )
+    assert r.status_code == 404

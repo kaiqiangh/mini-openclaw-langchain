@@ -1,5 +1,6 @@
 """Tests for approval store."""
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from storage.approval_store import ApprovalStore, ApprovalStatus
 
@@ -54,3 +55,22 @@ def test_list_pending():
         store.resolve_request("default", pending[0].request_id, ApprovalStatus.DENIED)
         pending = store.list_pending("default")
         assert len(pending) == 0
+
+
+def test_concurrent_resolutions_have_one_winner():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = ApprovalStore(Path(tmpdir))
+        req = store.create_request(
+            agent_id="default", session_id="s1", run_id="r1",
+            tool_name="terminal", tool_args={}, trigger_type="chat",
+        )
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda status: store.resolve_request("default", req.request_id, status),
+                (ApprovalStatus.APPROVED, ApprovalStatus.DENIED),
+            ))
+
+        assert sorted(results) == [False, True]
+        fetched = store.get_request("default", req.request_id)
+        assert fetched is not None
+        assert fetched.status in {ApprovalStatus.APPROVED, ApprovalStatus.DENIED}

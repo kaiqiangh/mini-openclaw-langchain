@@ -337,6 +337,8 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET /api/v1/agents/{agent_id}/approvals` — list pending approval requests
 - `POST /api/v1/agents/{agent_id}/approvals/{request_id}` — approve or deny (body: `{ action: "approve"|"deny", reason?: string }`)
 
+Approval waiters are process-local; keep the backend single-process while using the JSONL approval store.
+
 ### Run Comparison & Replay
 
 - `GET /api/v1/agents/{agent_id}/runs/{run_id}` — run details + tool calls
