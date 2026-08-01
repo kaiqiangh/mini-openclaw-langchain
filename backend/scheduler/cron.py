@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -88,11 +89,12 @@ def _parse_iso_datetime(value: str, zone: ZoneInfo) -> datetime:
     return parsed.astimezone(zone)
 
 
-def _parse_cron_field(field: str, lower: int, upper: int) -> set[int]:
+@lru_cache(maxsize=256)
+def _parse_cron_field(field: str, lower: int, upper: int) -> frozenset[int]:
     values: set[int] = set()
     source = field.strip()
     if source == "*":
-        return set(range(lower, upper + 1))
+        return frozenset(range(lower, upper + 1))
 
     for part in source.split(","):
         token = part.strip()
@@ -111,7 +113,7 @@ def _parse_cron_field(field: str, lower: int, upper: int) -> set[int]:
 
     if not values:
         raise ValueError(f"Invalid cron field: {field}")
-    return values
+    return frozenset(values)
 
 
 def _cron_matches(expr: str, dt: datetime) -> bool:

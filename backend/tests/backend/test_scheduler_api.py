@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from scheduler.cron import _parse_cron_field
 from api import scheduler_api
 
 
@@ -149,6 +150,18 @@ def test_due_cron_jobs_run_with_bounded_concurrency(api_app):
     asyncio.run(scheduler.tick_once())
 
     assert max_active == 2
+
+
+def test_cron_field_parser_reuses_bounded_immutable_cache():
+    _parse_cron_field.cache_clear()
+
+    first = _parse_cron_field("*/15", 0, 59)
+    second = _parse_cron_field("*/15", 0, 59)
+
+    assert first is second
+    assert isinstance(first, frozenset)
+    assert first == frozenset({0, 15, 30, 45})
+    assert _parse_cron_field.cache_info().hits >= 1
 
 
 def test_scheduler_metrics_endpoints(client):
