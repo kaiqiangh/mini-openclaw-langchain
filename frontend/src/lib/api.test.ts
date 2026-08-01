@@ -8,6 +8,7 @@ import {
   getSchedulerMetrics,
   getSchedulerMetricsTimeseries,
   getSessionHistory,
+  getDelegateDetail,
   listAgentTemplates,
   listDelegates,
   archiveSession,
@@ -121,6 +122,28 @@ describe("agent-scoped rag mode requests", () => {
     expect(secondUrl).toContain("/api/v1/agents/alpha/config/rag-mode");
     expect(firstUrl).not.toContain("agent_id=");
     expect(secondUrl).not.toContain("agent_id=");
+  });
+});
+
+describe("delegate URL encoding", () => {
+  it("encodes every delegate path segment", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ delegates: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listDelegates("agent/id", "session:1");
+    await getDelegateDetail("agent/id", "session:1", "delegate/1");
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls[0]).toContain(
+      "/agents/agent%2Fid/sessions/session%3A1/delegates",
+    );
+    expect(urls[1]).toContain(
+      "/agents/agent%2Fid/sessions/session%3A1/delegates/delegate%2F1",
+    );
+    expect(urls.every((url) => !url.includes("agent/id"))).toBe(true);
   });
 });
 

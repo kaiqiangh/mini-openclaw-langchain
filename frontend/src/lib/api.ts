@@ -1127,7 +1127,7 @@ export interface DelegateDetail extends DelegateSummary {
 
 export async function listDelegates(agentId: string, sessionId: string): Promise<{ delegates: DelegateSummary[] }> {
   const resp = await fetchWithAdminSession(
-    `${API_BASE}/api/v1/agents/${agentId}/sessions/${encodeURIComponent(sessionId)}/delegates`,
+    `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates`,
   );
   if (!resp.ok) throw new Error(`GET delegates: ${resp.status}`);
   return resp.json();
@@ -1135,7 +1135,7 @@ export async function listDelegates(agentId: string, sessionId: string): Promise
 
 export async function getDelegateDetail(agentId: string, sessionId: string, delegateId: string): Promise<DelegateDetail> {
   const resp = await fetchWithAdminSession(
-    `${API_BASE}/api/v1/agents/${agentId}/sessions/${encodeURIComponent(sessionId)}/delegates/${delegateId}`,
+    `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates/${encodeURIComponent(delegateId)}`,
   );
   if (!resp.ok) throw new Error(`GET delegate detail: ${resp.status}`);
   return resp.json();
