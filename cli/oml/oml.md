@@ -58,6 +58,8 @@ QuickStart prompts:
 - `rag_mode`
 - tool preset: `safe`, `balanced`, `builder`
 
+The `safe` preset removes mutating tools (`terminal` and `apply_patch`) from enabled chat, heartbeat, cron, and delegation scopes.
+
 Advanced overrides:
 
 - `agent_runtime.max_steps`
