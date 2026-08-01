@@ -183,8 +183,10 @@ describe("UsagePage", () => {
 
     await waitFor(() => expect(apiMocks.getUsageRecords).toHaveBeenCalled());
 
-    expect(screen.getByTestId("usage-provider-model-scroll")).toBeInTheDocument();
-    expect(screen.getByTestId("usage-recent-runs-scroll")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("usage-provider-model-scroll")).toBeInTheDocument();
+      expect(screen.getByTestId("usage-recent-runs-scroll")).toBeInTheDocument();
+    });
   });
 
   it("restores saved section state over responsive defaults", async () => {
