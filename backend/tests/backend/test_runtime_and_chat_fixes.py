@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from api import tokens as token_api
+
 
 def test_chat_non_stream_respects_first_turn_flag(client):
     session_id = client.post("/api/v1/agents/default/sessions", json={}).json()["data"][
@@ -130,3 +132,27 @@ def test_tokens_session_uses_agent_effective_runtime(client):
     default_system = default_tokens.json()["data"]["system_tokens"]
     alpha_system = alpha_tokens.json()["data"]["system_tokens"]
     assert alpha_system > default_system
+
+
+def test_tokens_session_rejects_message_budget_overflow(client, api_app, monkeypatch):
+    session_id = client.post("/api/v1/agents/default/sessions", json={}).json()[
+        "data"
+    ]["session_id"]
+    repository = api_app["agent_manager"].get_session_repository("default")
+    asyncio.run(
+        repository.append_message(
+            agent_id="default", session_id=session_id, role="user", content="one"
+        )
+    )
+    asyncio.run(
+        repository.append_message(
+            agent_id="default", session_id=session_id, role="assistant", content="two"
+        )
+    )
+    monkeypatch.setattr(token_api, "MAX_SESSION_TOKEN_MESSAGES", 1)
+
+    response = client.get(f"/api/v1/agents/default/tokens/session/{session_id}")
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "session_token_budget_exceeded"
+    assert response.json()["error"]["details"]["reason"] == "message_count"

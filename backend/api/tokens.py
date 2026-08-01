@@ -22,6 +22,9 @@ MAX_TOKEN_FILES = 32
 MAX_TOKEN_FILE_BYTES = 256_000
 MAX_TOKEN_TOTAL_BYTES = 1_048_576
 MAX_PATH_CHARS = 512
+MAX_SESSION_TOKEN_MESSAGES = 1000
+MAX_SESSION_TOKEN_BYTES = 1_048_576
+MAX_SESSION_TOKEN_COUNT = 100_000
 
 
 class FileTokenRequest(BaseModel):
@@ -73,6 +76,25 @@ def _legacy_state_api_error(exc: LegacySessionStateError) -> ApiError:
     )
 
 
+def _session_token_budget_error(
+    *, reason: str, message_count: int, total_bytes: int, total_tokens: int
+) -> ApiError:
+    return ApiError(
+        status_code=413,
+        code="session_token_budget_exceeded",
+        message="Session token count exceeds the bounded request budget",
+        details={
+            "reason": reason,
+            "message_count": message_count,
+            "total_bytes": total_bytes,
+            "total_tokens": total_tokens,
+            "max_messages": MAX_SESSION_TOKEN_MESSAGES,
+            "max_bytes": MAX_SESSION_TOKEN_BYTES,
+            "max_tokens": MAX_SESSION_TOKEN_COUNT,
+        },
+    )
+
+
 @router.get("/agents/{agent_id}/tokens/session/{session_id}")
 async def session_tokens(
     agent_id: str,
@@ -102,11 +124,49 @@ async def session_tokens(
         is_first_turn=len(messages) == 0,
         agent_id=agent_id,
     )
+    total_bytes = len(system_prompt.encode("utf-8"))
+    if len(messages) > MAX_SESSION_TOKEN_MESSAGES:
+        raise _session_token_budget_error(
+            reason="message_count",
+            message_count=len(messages),
+            total_bytes=total_bytes,
+            total_tokens=0,
+        )
+    if total_bytes > MAX_SESSION_TOKEN_BYTES:
+        raise _session_token_budget_error(
+            reason="system_prompt",
+            message_count=0,
+            total_bytes=total_bytes,
+            total_tokens=0,
+        )
     system_tokens = _token_count(system_prompt)
+    if system_tokens > MAX_SESSION_TOKEN_COUNT:
+        raise _session_token_budget_error(
+            reason="system_prompt",
+            message_count=0,
+            total_bytes=total_bytes,
+            total_tokens=system_tokens,
+        )
 
     message_tokens = 0
-    for msg in messages:
-        message_tokens += _token_count(str(msg.get("content", "")))
+    for message_index, msg in enumerate(messages, start=1):
+        content = str(msg.get("content", ""))
+        total_bytes += len(content.encode("utf-8"))
+        if total_bytes > MAX_SESSION_TOKEN_BYTES:
+            raise _session_token_budget_error(
+                reason="byte_count",
+                message_count=message_index,
+                total_bytes=total_bytes,
+                total_tokens=system_tokens + message_tokens,
+            )
+        message_tokens += _token_count(content)
+        if system_tokens + message_tokens > MAX_SESSION_TOKEN_COUNT:
+            raise _session_token_budget_error(
+                reason="token_count",
+                message_count=message_index,
+                total_bytes=total_bytes,
+                total_tokens=system_tokens + message_tokens,
+            )
 
     return {
         "data": {

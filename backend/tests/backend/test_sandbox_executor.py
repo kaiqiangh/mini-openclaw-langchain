@@ -41,6 +41,14 @@ class TestSandboxExecutor:
         executor = SandboxExecutor(config)
         assert executor.use_docker is False
 
+    def test_unknown_mode_fails_closed(self):
+        executor = SandboxExecutor(SandboxConfig(mode="unexpected"))
+
+        result = executor.run("print(1)")
+
+        assert result["ok"] is False
+        assert result["code"] == "E_SANDBOX_UNAVAILABLE"
+
     def test_docker_mode_always_uses_docker(self):
         config = SandboxConfig(mode="docker")
         executor = SandboxExecutor(config)

@@ -121,7 +121,7 @@ class SandboxExecutor:
 
     @property
     def use_docker(self) -> bool:
-        if self.config.mode == "in_process":
+        if self.config.mode not in {"docker", "auto"}:
             return False
         if self.config.mode == "docker":
             return True
@@ -131,6 +131,12 @@ class SandboxExecutor:
         return self._docker_usable
 
     def run(self, code: str) -> dict[str, Any]:
+        if self.config.mode not in {"docker", "auto", "in_process"}:
+            return {
+                "ok": False,
+                "code": "E_SANDBOX_UNAVAILABLE",
+                "error": f"Unsupported Python sandbox mode: {self.config.mode}",
+            }
         if self.config.mode in {"docker", "auto"}:
             if self._docker_usable is None:
                 self._docker_usable = _docker_available(self.config.image)

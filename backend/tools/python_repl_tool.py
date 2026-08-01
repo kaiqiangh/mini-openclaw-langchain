@@ -153,7 +153,7 @@ class PythonReplTool:
     def __post_init__(self):
         if self.use_sandbox:
             mode = os.environ.get("REPL_SANDBOX_MODE", "docker").strip().lower()
-            self.use_sandbox = mode in {"docker", "auto"}
+            self.use_sandbox = mode != "in_process"
         self._executor = None
 
     def _get_executor(self):

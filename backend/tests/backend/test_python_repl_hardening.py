@@ -65,3 +65,15 @@ def test_list_comprehension_allowed():
     result = tool.run({"code": "print([x**2 for x in range(5)])"}, _ctx())
     assert result.ok
     assert "[0, 1, 4, 9, 16]" in result.data.get("output", "")
+
+
+def test_unknown_sandbox_mode_fails_closed(monkeypatch):
+    monkeypatch.setenv("REPL_SANDBOX_MODE", "unexpected")
+    tool = PythonReplTool()
+
+    result = tool.run({"code": "print(1)"}, _ctx())
+
+    assert tool.use_sandbox is True
+    assert result.ok is False
+    assert result.error is not None
+    assert result.error.code == "E_SANDBOX_UNAVAILABLE"
