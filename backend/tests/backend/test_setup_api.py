@@ -100,3 +100,20 @@ def test_configure_rejects_unknown_provider(client):
         "llm_api_key": "sk-test",
     })
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["admin_token", "llm_api_key", "llm_base_url"])
+def test_configure_rejects_env_line_injection(client, field):
+    c, tmp_path = client
+    payload = {
+        "admin_token": "test-token-1234",
+        "llm_provider": "deepseek",
+        "llm_api_key": "sk-test-key",
+        "llm_base_url": "https://api.deepseek.com",
+    }
+    payload[field] = "safe\nINJECTED=value"
+
+    response = c.post("/api/v1/setup/configure", json=payload)
+
+    assert response.status_code == 422
+    assert not (tmp_path / ".env").exists()

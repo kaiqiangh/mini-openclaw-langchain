@@ -29,6 +29,15 @@ class ConfigureRequest(BaseModel):
     llm_model: str | None = Field(default=None, max_length=128)
 
 
+def _require_single_line(name: str, value: str | None) -> None:
+    if value is not None and ("\r" in value or "\n" in value):
+        raise ApiError(
+            status_code=422,
+            code="validation_error",
+            message=f"{name} must not contain line breaks",
+        )
+
+
 @router.get("/setup/status")
 async def get_setup_status() -> dict[str, Any]:
     if _BASE_DIR is None:
@@ -64,6 +73,10 @@ async def get_setup_status() -> dict[str, Any]:
 async def configure_system(req: ConfigureRequest) -> dict[str, Any]:
     if _BASE_DIR is None:
         raise ApiError(status_code=500, code="not_initialized", message="Base dir not set")
+
+    _require_single_line("admin_token", req.admin_token)
+    _require_single_line("llm_api_key", req.llm_api_key)
+    _require_single_line("llm_base_url", req.llm_base_url)
 
     env_path = _BASE_DIR / ".env"
     env_lines: list[str] = []
