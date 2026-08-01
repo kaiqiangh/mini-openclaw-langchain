@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass, field, replace
@@ -58,7 +59,21 @@ class CheckpointSessionRepository:
         self._runtime_getter = runtime_getter
         self._graph_getter = graph_getter
         self._checkpointer = checkpointer
-        self._streams: dict[tuple[str, str], _StreamAccumulator] = {}
+        self._streams: dict[tuple[str, str, int], _StreamAccumulator] = {}
+        # ponytail: retain one lock per seen session; prune the registry if session churn becomes unbounded.
+        self._session_locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def _session_lock(self, agent_id: str, session_id: str) -> asyncio.Lock:
+        key = (agent_id, session_id)
+        lock = self._session_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_locks[key] = lock
+        return lock
+
+    @staticmethod
+    def _stream_key(request: RuntimeRequest) -> tuple[str, str, int]:
+        return (request.agent_id, request.session_id, id(request))
 
     def _runtime(self, agent_id: str) -> RuntimeWithSessionManager:
         return self._runtime_getter(agent_id)
@@ -364,6 +379,26 @@ class CheckpointSessionRepository:
         create_if_missing: bool = False,
         graph_name: str = "default",
     ) -> CheckpointSessionSnapshot:
+        async with self._session_lock(agent_id, session_id):
+            return await self._load_snapshot(
+                agent_id=agent_id,
+                session_id=session_id,
+                archived=archived,
+                include_live=include_live,
+                create_if_missing=create_if_missing,
+                graph_name=graph_name,
+            )
+
+    async def _load_snapshot(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool = False,
+        include_live: bool = True,
+        create_if_missing: bool = False,
+        graph_name: str = "default",
+    ) -> CheckpointSessionSnapshot:
         session = await self._ensure_session_state(
             agent_id=agent_id,
             session_id=session_id,
@@ -415,6 +450,10 @@ class CheckpointSessionRepository:
         return self._history_with_summary(snapshot.messages, snapshot.compressed_context)
 
     async def prepare_runtime_request(self, request: RuntimeRequest) -> RuntimeRequest:
+        async with self._session_lock(request.agent_id, request.session_id):
+            return await self._prepare_runtime_request(request)
+
+    async def _prepare_runtime_request(self, request: RuntimeRequest) -> RuntimeRequest:
         session = await self._ensure_session_state(
             agent_id=request.agent_id,
             session_id=request.session_id,
@@ -431,7 +470,7 @@ class CheckpointSessionRepository:
         is_first_turn = len(messages) == 0
         normalized_message = request.message.strip()
 
-        key = (request.agent_id, request.session_id)
+        key = self._stream_key(request)
         self._streams.pop(key, None)
 
         if request.resume_same_turn and messages:
@@ -597,7 +636,13 @@ class CheckpointSessionRepository:
     async def apply_stream_event(
         self, request: RuntimeRequest, event: RuntimeEvent
     ) -> None:
-        key = (request.agent_id, request.session_id)
+        async with self._session_lock(request.agent_id, request.session_id):
+            await self._apply_stream_event(request, event)
+
+    async def _apply_stream_event(
+        self, request: RuntimeRequest, event: RuntimeEvent
+    ) -> None:
+        key = self._stream_key(request)
         state = self._streams.setdefault(
             key,
             _StreamAccumulator(
@@ -674,7 +719,11 @@ class CheckpointSessionRepository:
             state.completed_success = False
 
     async def finalize_stream(self, request: RuntimeRequest) -> None:
-        key = (request.agent_id, request.session_id)
+        async with self._session_lock(request.agent_id, request.session_id):
+            await self._finalize_stream(request)
+
+    async def _finalize_stream(self, request: RuntimeRequest) -> None:
+        key = self._stream_key(request)
         state = self._streams.pop(key, None)
         if state is None:
             return
@@ -728,7 +777,11 @@ class CheckpointSessionRepository:
         )
 
     async def fail_stream(self, request: RuntimeRequest) -> None:
-        key = (request.agent_id, request.session_id)
+        async with self._session_lock(request.agent_id, request.session_id):
+            await self._fail_stream(request)
+
+    async def _fail_stream(self, request: RuntimeRequest) -> None:
+        key = self._stream_key(request)
         self._streams.pop(key, None)
         await self.update_state(
             agent_id=request.agent_id,
@@ -774,6 +827,14 @@ class CheckpointSessionRepository:
         request: RuntimeRequest,
         result: RuntimeResult,
     ) -> None:
+        async with self._session_lock(request.agent_id, request.session_id):
+            await self._persist_invoke_result(request, result)
+
+    async def _persist_invoke_result(
+        self,
+        request: RuntimeRequest,
+        result: RuntimeResult,
+    ) -> None:
         state_values = await self.get_state(
             agent_id=request.agent_id,
             session_id=request.session_id,
@@ -801,6 +862,36 @@ class CheckpointSessionRepository:
         )
 
     async def append_message(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        tool_calls: list[dict[str, Any]] | None = None,
+        skill_uses: list[str] | None = None,
+        selected_skills: list[str] | None = None,
+        timestamp_ms: int | None = None,
+        event_kind: str | None = None,
+        delegate: dict[str, Any] | None = None,
+        graph_name: str = "default",
+    ) -> None:
+        async with self._session_lock(agent_id, session_id):
+            await self._append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role=role,
+                content=content,
+                tool_calls=tool_calls,
+                skill_uses=skill_uses,
+                selected_skills=selected_skills,
+                timestamp_ms=timestamp_ms,
+                event_kind=event_kind,
+                delegate=delegate,
+                graph_name=graph_name,
+            )
+
+    async def _append_message(
         self,
         *,
         agent_id: str,
@@ -855,6 +946,24 @@ class CheckpointSessionRepository:
         n: int,
         graph_name: str = "default",
     ) -> dict[str, int]:
+        async with self._session_lock(agent_id, session_id):
+            return await self._compress_history(
+                agent_id=agent_id,
+                session_id=session_id,
+                summary=summary,
+                n=n,
+                graph_name=graph_name,
+            )
+
+    async def _compress_history(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        summary: str,
+        n: int,
+        graph_name: str = "default",
+    ) -> dict[str, int]:
         session_manager = self._session_manager(agent_id)
         await self._ensure_session_state(
             agent_id=agent_id,
@@ -901,6 +1010,20 @@ class CheckpointSessionRepository:
         return {"archived_count": archive_count, "remaining_count": len(remain)}
 
     async def delete_session(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        archived: bool = False,
+    ) -> bool:
+        async with self._session_lock(agent_id, session_id):
+            return await self._delete_session(
+                agent_id=agent_id,
+                session_id=session_id,
+                archived=archived,
+            )
+
+    async def _delete_session(
         self,
         *,
         agent_id: str,

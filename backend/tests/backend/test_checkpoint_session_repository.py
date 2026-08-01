@@ -204,6 +204,35 @@ def test_prepare_runtime_request_uses_checkpoint_history_for_resume(tmp_path: Pa
     assert [row["content"] for row in state["messages"]] == ["hello"]
 
 
+@pytest.mark.asyncio
+async def test_concurrent_append_messages_preserves_all_messages(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    repository = manager.get_session_repository("default")
+
+    await asyncio.gather(
+        *[
+            repository.append_message(
+                agent_id="default",
+                session_id="concurrent-session",
+                role="user",
+                content=f"message-{index}",
+            )
+            for index in range(20)
+        ]
+    )
+
+    snapshot = await repository.load_snapshot(
+        agent_id="default",
+        session_id="concurrent-session",
+        include_live=False,
+    )
+    contents = [str(row.get("content", "")) for row in snapshot.messages]
+    assert len(contents) == 20
+    assert set(contents) == {f"message-{index}" for index in range(20)}
+
+
 def test_finalize_stream_prefers_done_content_over_stale_stream_text(tmp_path: Path):
     _seed_base(tmp_path)
     manager = AgentManager()
