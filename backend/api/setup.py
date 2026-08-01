@@ -1,4 +1,4 @@
-"""First-time setup API — exempt from admin auth."""
+"""Setup API with bootstrap access and post-configuration admin auth."""
 from __future__ import annotations
 
 import os

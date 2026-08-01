@@ -43,10 +43,7 @@ def _require_agent_manager() -> AgentManager:
 
 def _require_agent_root(agent_id: str) -> Path:
     manager = _require_agent_manager()
-    try:
-        runtime = require_existing_runtime(manager, agent_id)
-    except ApiError:
-        raise
+    runtime = require_existing_runtime(manager, agent_id)
     return runtime.root_dir
 
 

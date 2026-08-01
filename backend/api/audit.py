@@ -51,10 +51,7 @@ async def list_tool_calls(
     status: str | None = Query(default=None, max_length=20),
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
-    try:
-        runtime = require_existing_runtime(manager, agent_id)
-    except ApiError:
-        raise
+    runtime = require_existing_runtime(manager, agent_id)
 
     audit_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     entries = _read_jsonl(audit_file, limit=limit)
@@ -73,10 +70,7 @@ async def list_runs(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
-    try:
-        runtime = require_existing_runtime(manager, agent_id)
-    except ApiError:
-        raise
+    runtime = require_existing_runtime(manager, agent_id)
 
     audit_file = runtime.root_dir / "storage" / "audit" / "runs.jsonl"
     entries = _read_jsonl(audit_file, limit=limit)
