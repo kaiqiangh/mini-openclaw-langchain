@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import InvalidSessionIdError, LegacySessionStateError
@@ -43,11 +44,9 @@ async def compress_session(
 ) -> dict[str, Any]:
     agent_manager = _require_agent_manager()
     try:
-        agent_manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+        require_existing_runtime(agent_manager, agent_id)
+    except ApiError:
+        raise
     repository = agent_manager.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(

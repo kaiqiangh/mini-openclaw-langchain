@@ -9,6 +9,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from config import save_runtime_config_to_path
 from graph.agent import AgentManager
@@ -102,12 +103,7 @@ def _require_manager() -> AgentManager:
 
 def _runtime(agent_id: str, *, require_api_enabled: bool = True):
     manager = _require_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    runtime = require_existing_runtime(manager, agent_id)
     if require_api_enabled and not runtime.runtime_config.scheduler.api_enabled:
         raise ApiError(
             status_code=403,
@@ -501,7 +497,7 @@ async def update_heartbeat_config(
     request: HeartbeatUpdateRequest,
 ) -> dict[str, Any]:
     manager, runtime = _runtime(agent_id)
-    config_path = manager.get_agent_config_path(agent_id)
+    config_path = runtime.root_dir / "config.json"
     runtime_config = runtime.runtime_config
     heartbeat = runtime_config.heartbeat
 
@@ -520,7 +516,7 @@ async def update_heartbeat_config(
 
     save_runtime_config_to_path(config_path, runtime_config)
 
-    refreshed = manager.get_runtime(agent_id)
+    refreshed = require_existing_runtime(manager, agent_id)
     heartbeat_scheduler = _heartbeat_scheduler(
         agent_id, require_api_enabled=False
     )

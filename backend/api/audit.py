@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 
@@ -58,11 +59,9 @@ async def list_tool_calls(
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
     try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+        runtime = require_existing_runtime(manager, agent_id)
+    except ApiError:
+        raise
 
     audit_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     entries = _read_jsonl(audit_file, limit=limit)
@@ -82,11 +81,9 @@ async def list_runs(
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
     try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+        runtime = require_existing_runtime(manager, agent_id)
+    except ApiError:
+        raise
 
     audit_file = runtime.root_dir / "storage" / "audit" / "runs.jsonl"
     entries = _read_jsonl(audit_file, limit=limit)

@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import InvalidSessionIdError, LegacySessionStateError
@@ -61,12 +62,7 @@ async def session_tokens(
     session_id: str,
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
-    try:
-        agent_manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    runtime = require_existing_runtime(agent_manager, agent_id)
     repository = agent_manager.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(
@@ -84,8 +80,6 @@ async def session_tokens(
         raise ApiError(
             status_code=500, code="not_initialized", message="Agent config unavailable"
         )
-    runtime = agent_manager.get_runtime(agent_id)
-
     system_prompt = agent_manager.build_system_prompt(
         rag_mode=runtime.runtime_config.rag_mode,
         is_first_turn=len(messages) == 0,
@@ -114,12 +108,7 @@ async def file_tokens(
     request: FileTokenRequest,
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
-    try:
-        runtime = agent_manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    runtime = require_existing_runtime(agent_manager, agent_id)
 
     items: list[dict[str, Any]] = []
     for rel_path in request.paths:

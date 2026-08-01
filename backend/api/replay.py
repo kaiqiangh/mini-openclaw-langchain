@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import InvalidSessionIdError
@@ -33,10 +34,7 @@ def _require_agent_manager() -> AgentManager:
 async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
     """Get details of a specific run including tool calls."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     run = runtime.audit_store.get_run(run_id)
     if run is None:
@@ -60,10 +58,7 @@ async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
 async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     """Re-execute a past run and return the new output."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     original_run = runtime.audit_store.get_run(run_id)
     if original_run is None:
@@ -152,10 +147,7 @@ async def compare_runs(
 ) -> dict[str, Any]:
     """Compare outputs of two runs side-by-side."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     data_a = runtime.audit_store.get_run(run_a)
     data_b = runtime.audit_store.get_run(run_b)
@@ -228,10 +220,7 @@ async def list_replays(
 ) -> dict[str, Any]:
     """List replay sessions and their source runs."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     session_manager = runtime.session_manager
     all_sessions = await session_manager.list_sessions()

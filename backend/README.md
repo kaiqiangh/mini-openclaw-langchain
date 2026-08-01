@@ -284,6 +284,7 @@ Effective route resolution uses this order:
 
 ### Chat / Sessions / Agents
 
+- Create agents explicitly with `POST /api/v1/agents`; request-scoped routes return `404` for unknown agent IDs.
 - `POST /api/v1/agents/{agent_id}/chat`
 - `GET|POST /api/v1/agents/{agent_id}/sessions`
 - `GET /api/v1/agents/{agent_id}/sessions/{session_id}/messages`

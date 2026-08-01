@@ -402,6 +402,11 @@ class AgentManager:
             )
         return rows
 
+    def agent_exists(self, agent_id: str) -> bool:
+        normalized = self._normalize_agent_id(agent_id)
+        _, workspaces_dir = self._require_initialized()
+        return (workspaces_dir / normalized).is_dir()
+
     def create_agent(self, agent_id: str) -> dict[str, Any]:
         normalized = self._normalize_agent_id(agent_id)
         root = self._workspace_root(normalized)

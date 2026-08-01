@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import (
@@ -45,12 +46,7 @@ def _require_agent_manager() -> AgentManager:
 
 def _resolve_session_manager(agent_id: str) -> tuple[AgentManager, SessionManager]:
     manager = _require_agent_manager()
-    try:
-        session_manager = manager.get_runtime(agent_id).session_manager
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    session_manager = require_existing_runtime(manager, agent_id).session_manager
     return manager, session_manager
 
 
@@ -129,12 +125,7 @@ async def _require_public_session(
 
 def _require_delegate_registry(agent_id: str) -> DelegateRegistry:
     manager = _require_agent_manager()
-    try:
-        manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    require_existing_runtime(manager, agent_id)
     registry = getattr(getattr(manager, "runtime_services", None), "delegate_registry", None)
     if registry is None:
         raise ApiError(
@@ -361,7 +352,7 @@ async def get_messages(
             code="not_initialized",
             message="Agent config is unavailable",
         )
-    runtime = agent.get_runtime(agent_id)
+    runtime = require_existing_runtime(agent, agent_id)
 
     system_prompt = agent.build_system_prompt(
         rag_mode=runtime.runtime_config.rag_mode,
@@ -512,7 +503,7 @@ async def trigger_compact(
     """Manually trigger compaction for a session."""
     agent, session_manager = _resolve_session_manager(agent_id)
     await _require_public_session(session_manager, session_id=session_id)
-    runtime = agent.get_runtime(agent_id)
+    runtime = require_existing_runtime(agent, agent_id)
     pipeline = _build_compaction_pipeline(runtime)
 
     # Load current session messages from the repository
@@ -566,7 +557,7 @@ async def list_checkpoints(
     """List available checkpoints for a session's agent."""
     agent, session_manager = _resolve_session_manager(agent_id)
     await _require_public_session(session_manager, session_id=session_id)
-    runtime = agent.get_runtime(agent_id)
+    runtime = require_existing_runtime(agent, agent_id)
     pipeline = _build_compaction_pipeline(runtime)
     checkpoints = await pipeline.list_checkpoints(
         agent_id=agent_id,
@@ -585,7 +576,7 @@ async def rewind_session(
     """Restore session from a checkpoint."""
     agent, session_manager = _resolve_session_manager(agent_id)
     await _require_public_session(session_manager, session_id=session_id)
-    runtime = agent.get_runtime(agent_id)
+    runtime = require_existing_runtime(agent, agent_id)
     pipeline = _build_compaction_pipeline(runtime)
 
     try:

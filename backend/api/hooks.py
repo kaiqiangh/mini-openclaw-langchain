@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from hooks.engine import HookEngine
@@ -142,14 +143,7 @@ async def list_hook_audit(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400,
-            code="invalid_request",
-            message=str(exc),
-        ) from exc
+    runtime = require_existing_runtime(manager, agent_id)
     rows = _read_jsonl(runtime.audit_store.steps_file, limit=limit * 8)
     normalized_rows: list[HookAuditRow] = []
     for row in rows:

@@ -8,6 +8,7 @@ from typing import Any, Iterable
 
 from fastapi import APIRouter, Query
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 
@@ -43,13 +44,9 @@ def _require_agent_manager() -> AgentManager:
 def _require_agent_root(agent_id: str) -> Path:
     manager = _require_agent_manager()
     try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400,
-            code="invalid_request",
-            message=str(exc),
-        ) from exc
+        runtime = require_existing_runtime(manager, agent_id)
+    except ApiError:
+        raise
     return runtime.root_dir
 
 

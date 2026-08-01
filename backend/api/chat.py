@@ -12,6 +12,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from control import LocalCoordinator
 from graph.agent import AgentManager
@@ -114,7 +115,7 @@ async def _should_emit_title(
     agent_id: str,
     session_id: str,
 ) -> bool:
-    runtime = agent.get_runtime(agent_id)
+    runtime = require_existing_runtime(agent, agent_id)
     session = await runtime.session_manager.load_existing_session(session_id)
     if str(session.get("title", "New Session")).strip() != "New Session":
         return False
@@ -221,7 +222,9 @@ async def _run_stream_task(
                 session_id=state.session_id,
             ):
                 title = await agent.generate_title(state.message, agent_id=state.agent_id)
-                await agent.get_runtime(state.agent_id).session_manager.update_title(
+                await require_existing_runtime(
+                    agent, state.agent_id
+                ).session_manager.update_title(
                     state.session_id, title
                 )
                 await _publish_event(
@@ -279,7 +282,7 @@ async def _unsubscribe_run(
 async def chat(agent_id: str, request: ChatRequest) -> Any:
     agent = _require_agent_manager()
     try:
-        runtime = agent.get_runtime(agent_id)
+        runtime = require_existing_runtime(agent, agent_id)
         await runtime.session_manager.load_existing_session(request.session_id)
     except FileNotFoundError as exc:
         raise ApiError(
