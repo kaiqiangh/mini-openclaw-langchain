@@ -100,7 +100,7 @@ class TerminalTool:
 
     @staticmethod
     def _sanitized_env() -> dict[str, str]:
-        keep_exact = {
+        allowed_keys = {
             "PATH",
             "HOME",
             "PWD",
@@ -114,25 +114,9 @@ class TerminalTool:
             "LOGNAME",
             "TZ",
         }
-        sensitive_markers = (
-            "KEY",
-            "TOKEN",
-            "SECRET",
-            "PASSWORD",
-            "AUTH",
-            "CREDENTIAL",
-            "COOKIE",
-        )
-        sanitized: dict[str, str] = {}
-        for key, value in os.environ.items():
-            upper = key.upper()
-            if key in keep_exact:
-                sanitized[key] = value
-                continue
-            if any(marker in upper for marker in sensitive_markers):
-                continue
-            sanitized[key] = value
-        return sanitized
+        return {
+            key: value for key, value in os.environ.items() if key in allowed_keys
+        }
 
     @staticmethod
     def _contains_shell_syntax(command: str) -> bool:
