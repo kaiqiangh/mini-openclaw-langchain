@@ -1,5 +1,6 @@
 """Tests for setup API."""
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -54,6 +55,17 @@ def test_configure_system_deepseek(client):
     env_content = (tmp_path / ".env").read_text()
     assert "APP_ADMIN_TOKEN=test-token-1234" in env_content
     assert "DEEPSEEK_API_KEY=sk-test-key" in env_content
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
+
+    (tmp_path / ".env").chmod(0o644)
+    c.post("/api/v1/setup/configure", json={
+        "admin_token": "test-token-1234",
+        "llm_provider": "deepseek",
+        "llm_api_key": "sk-test-key-2",
+    })
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
 
 
 def test_configure_system_openai(client):

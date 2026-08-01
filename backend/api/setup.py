@@ -94,6 +94,7 @@ async def configure_system(req: ConfigureRequest) -> dict[str, Any]:
 
     tmp_path = env_path.with_suffix(".tmp")
     tmp_path.write_text("\n".join(env_lines) + "\n", encoding="utf-8")
+    os.chmod(tmp_path, 0o600)
     tmp_path.replace(env_path)
 
     os.environ["APP_ADMIN_TOKEN"] = req.admin_token

@@ -349,7 +349,7 @@ Approval waiters are process-local; keep the backend single-process while using 
 ### Setup (Initial Bootstrap)
 
 - `GET /api/v1/setup/status` — check if system needs initial configuration
-- `POST /api/v1/setup/configure` — write admin token + LLM provider config; public only before an admin token exists, then requires the existing token
+- `POST /api/v1/setup/configure` — write admin token + LLM provider config with owner-only `.env` permissions; public only before an admin token exists, then requires the existing token
 
 ### Scheduler
 
