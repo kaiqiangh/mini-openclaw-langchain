@@ -1,7 +1,6 @@
 """Audit browsing API."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Query
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
+from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(tags=["audit"])
 
@@ -35,16 +35,9 @@ def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
     """Read last N lines from a JSONL file, most recent first."""
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()
     results: list[dict[str, Any]] = []
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            results.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
+    for row in iter_jsonl_reversed(path):
+        results.append(row)
         if len(results) >= limit:
             break
     return results

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import difflib
-import json
 import time
 import uuid
 from typing import Any
@@ -13,6 +12,7 @@ from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import InvalidSessionIdError
+from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(tags=["replay"])
 
@@ -42,14 +42,10 @@ async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
 
     tool_calls_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     tool_calls: list[dict[str, Any]] = []
-    if tool_calls_file.exists():
-        for line in tool_calls_file.read_text(encoding="utf-8").splitlines():
-            try:
-                data = json.loads(line)
-                if data.get("run_id") == run_id:
-                    tool_calls.append(data)
-            except json.JSONDecodeError:
-                continue
+    for data in iter_jsonl_reversed(tool_calls_file):
+        if data.get("run_id") == run_id:
+            tool_calls.append(data)
+    tool_calls.reverse()
 
     return {"data": {"run": run, "tool_calls": tool_calls}}
 
@@ -160,17 +156,14 @@ async def compare_runs(
     tool_calls_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     tool_calls_a: list[dict[str, Any]] = []
     tool_calls_b: list[dict[str, Any]] = []
-    if tool_calls_file.exists():
-        for line in tool_calls_file.read_text(encoding="utf-8").splitlines():
-            try:
-                data = json.loads(line)
-                rid = data.get("run_id", "")
-                if rid == run_a:
-                    tool_calls_a.append(data)
-                elif rid == run_b:
-                    tool_calls_b.append(data)
-            except json.JSONDecodeError:
-                continue
+    for data in iter_jsonl_reversed(tool_calls_file):
+        rid = data.get("run_id", "")
+        if rid == run_a:
+            tool_calls_a.append(data)
+        elif rid == run_b:
+            tool_calls_b.append(data)
+    tool_calls_a.reverse()
+    tool_calls_b.reverse()
 
     # Extract assistant outputs from session histories
     repository = manager.get_session_repository(agent_id)

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import CronRuntimeConfig
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
+from utils.async_io import iter_jsonl_reversed
 
 
 ScheduleType = Literal["at", "every", "cron"]
@@ -307,34 +308,21 @@ class CronScheduler:
     ) -> list[dict[str, Any]]:
         max_rows = max(1, int(limit))
         with self._file_lock:
-            if not file_path.exists():
-                return []
-            lines = [
-                line
-                for line in file_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        rows: list[dict[str, Any]] = []
-        for line in reversed(lines):
-            try:
-                value = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(value, dict):
-                continue
-            if since_ms is not None:
-                observed_ts = int(
-                    value.get("finished_at_ms")
-                    or value.get("timestamp_ms")
-                    or value.get("started_at_ms")
-                    or 0
-                )
-                if observed_ts and observed_ts < since_ms:
-                    continue
-            rows.append(value)
-            if len(rows) >= max_rows:
-                break
-        return rows
+            rows: list[dict[str, Any]] = []
+            for value in iter_jsonl_reversed(file_path):
+                if since_ms is not None:
+                    observed_ts = int(
+                        value.get("finished_at_ms")
+                        or value.get("timestamp_ms")
+                        or value.get("started_at_ms")
+                        or 0
+                    )
+                    if observed_ts and observed_ts < since_ms:
+                        continue
+                rows.append(value)
+                if len(rows) >= max_rows:
+                    break
+            return rows
 
     def query_runs(
         self, *, limit: int = 100, since_ms: int | None = None

@@ -1,7 +1,6 @@
 """FastAPI router for hook management and audit visibility."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +12,7 @@ from api.errors import ApiError
 from graph.agent import AgentManager
 from hooks.engine import HookEngine
 from hooks.types import HookConfig, HookEvent
+from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(prefix="/hooks", tags=["hooks"])
 
@@ -50,16 +50,8 @@ def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for line in reversed(path.read_text(encoding="utf-8").splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
+    for payload in iter_jsonl_reversed(path):
+        rows.append(payload)
         if len(rows) >= limit:
             break
     return rows
