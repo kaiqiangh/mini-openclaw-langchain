@@ -70,6 +70,8 @@ Advanced overrides:
 - `tool_execution.terminal.command_policy_mode`
 - explicit `chat`, `heartbeat`, and `cron` enabled tool lists
 
+When `safe` is selected, it remains authoritative after these overrides and removes `terminal` and `apply_patch` from enabled scopes.
+
 Common flags:
 
 - `--agent <id>`

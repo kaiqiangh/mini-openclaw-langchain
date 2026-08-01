@@ -303,6 +303,8 @@ Advanced mode can override:
 - terminal sandbox and policy mode
 - explicit chat / heartbeat / cron tool lists
 
+When `safe` is selected, it remains authoritative after these overrides and removes `terminal` and `apply_patch` from enabled scopes.
+
 ### Runtime config
 
 Create `.oml/config.env` to override defaults:
