@@ -291,6 +291,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 ),
             )
 
+        request.state.admin_authenticated = True
         return await call_next(request)
 
 
