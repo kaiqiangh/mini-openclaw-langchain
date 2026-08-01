@@ -66,6 +66,8 @@ _PROXY_HOP_HEADERS = {
     "upgrade",
 }
 logger = logging.getLogger(__name__)
+_REQUEST_ID_MAX_LENGTH = 128
+_REQUEST_ID_EXTRA_CHARS = frozenset("._:-")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -105,6 +107,18 @@ def _request_id(request: Request) -> str:
     value = getattr(getattr(request, "state", None), "request_id", "")
     value = str(value).strip()
     return value or "unknown"
+
+
+def _validated_request_id(value: str) -> str:
+    candidate = value.strip()
+    if (
+        0 < len(candidate) <= _REQUEST_ID_MAX_LENGTH
+        and candidate.isascii()
+        and candidate[0].isalnum()
+        and all(char.isalnum() or char in _REQUEST_ID_EXTRA_CHARS for char in candidate)
+    ):
+        return candidate
+    return str(uuid.uuid4())
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -219,8 +233,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        incoming = request.headers.get("X-Request-Id", "").strip()
-        request_id = incoming or str(uuid.uuid4())
+        request_id = _validated_request_id(request.headers.get("X-Request-Id", ""))
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers.setdefault("X-Request-Id", request_id)

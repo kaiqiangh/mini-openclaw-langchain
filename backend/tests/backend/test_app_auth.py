@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.testclient import TestClient
 
 from app import AdminAuthMiddleware, RequestIdMiddleware, unhandled_error_handler
@@ -121,3 +124,34 @@ def test_unhandled_error_handler_hides_exception_details():
     assert payload["code"] == "internal_error"
     assert payload["message"] == "Internal server error"
     assert "details" not in payload
+
+
+def _build_request_id_app() -> FastAPI:
+    app = FastAPI()
+    app.add_middleware(RequestIdMiddleware)
+
+    @app.get("/")
+    async def request_id(request: Request) -> dict[str, str]:
+        return {"request_id": request.state.request_id}
+
+    return app
+
+
+def test_request_id_preserves_safe_bounded_value():
+    request_id = "trace-abc_123:foo.bar"
+    with TestClient(_build_request_id_app()) as client:
+        response = client.get("/", headers={"X-Request-Id": request_id})
+
+    assert response.json()["request_id"] == request_id
+    assert response.headers["X-Request-Id"] == request_id
+
+
+def test_request_id_replaces_invalid_or_overlong_value():
+    for value in ("", "not safe", "a" * 129):
+        with TestClient(_build_request_id_app()) as client:
+            response = client.get("/", headers={"X-Request-Id": value})
+
+        selected = response.json()["request_id"]
+        assert selected == response.headers["X-Request-Id"]
+        assert selected != value
+        UUID(selected)
