@@ -10,6 +10,21 @@ class SandboxUnavailableError(RuntimeError):
     pass
 
 
+_DARWIN_RUNTIME_READ_PATHS = (
+    "/bin",
+    "/usr/bin",
+    "/usr/lib",
+    "/usr/libexec",
+    "/usr/local",
+    "/opt/homebrew",
+    "/System/Library",
+    "/Library",
+    "/dev",
+    "/tmp",
+    "/private/tmp",
+)
+
+
 @dataclass(frozen=True)
 class SandboxSelection:
     backend_id: str
@@ -35,12 +50,17 @@ class SandboxSelection:
 def _darwin_profile(root_dir: Path, allow_network: bool) -> str:
     root = str(root_dir.resolve()).replace("\\", "\\\\").replace('"', '\\"')
     network_rule = "(allow network*)" if allow_network else "(deny network*)"
-    # Keep defaults restricted, allow command execution, and constrain writes to the workspace.
+    read_rules = "".join(
+        f'(allow file-read-data (subpath "{path}"))'
+        for path in (root, *_DARWIN_RUNTIME_READ_PATHS)
+    )
+    # Metadata traversal is needed to resolve approved paths, but file contents stay scoped.
     return (
         '(version 1)(deny default)(import "system.sb")'
         f"{network_rule}"
         "(allow process*)"
-        "(allow file-read*)"
+        '(allow file-read-metadata (subpath "/"))'
+        f"{read_rules}"
         f'(allow file-write* (subpath "{root}"))'
         '(allow file-write* (subpath "/tmp"))'
         '(allow file-write* (subpath "/private/tmp"))'
@@ -145,4 +165,3 @@ def resolve_sandbox(
         root_dir=root_dir,
         allow_network=allow_network,
     )
-
