@@ -524,7 +524,6 @@ app.include_router(hooks.router, prefix="/api/v1")
 
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
-    _ = load_config(BASE_DIR)
     return {"status": "ok"}
 
 

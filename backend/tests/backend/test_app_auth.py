@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID
 
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from app import AdminAuthMiddleware, RequestIdMiddleware, unhandled_error_handler
+from app import (
+    AdminAuthMiddleware,
+    RequestIdMiddleware,
+    health as app_health,
+    unhandled_error_handler,
+)
 
 
 def _build_app() -> FastAPI:
@@ -33,6 +39,14 @@ def test_auth_exempts_health(monkeypatch):
     with TestClient(_build_app()) as client:
         response = client.get("/api/v1/health")
     assert response.status_code == 200
+
+
+def test_health_does_not_load_runtime_config(monkeypatch):
+    def fail_load_config(_):
+        raise AssertionError("liveness must not load runtime config")
+
+    monkeypatch.setattr("app.load_config", fail_load_config)
+    assert asyncio.run(app_health()) == {"status": "ok"}
 
 
 def test_auth_requires_configured_token(monkeypatch):
