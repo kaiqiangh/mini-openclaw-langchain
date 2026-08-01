@@ -243,17 +243,29 @@ async def create_agent(req: CreateAgentRequest, response: Response) -> dict[str,
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(agent_id: str) -> Response:
     manager = _require_agent_manager()
+    normalized = _normalize_agent_id(agent_id)
+    if normalized == "default":
+        try:
+            manager.delete_agent(normalized)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=400, code="invalid_request", message=str(exc)
+            ) from exc
+    known = _existing_agents(manager)
+    if normalized not in known:
+        raise ApiError(status_code=404, code="not_found", message="Agent not found")
+
+    from api import scheduler_api
+
+    await scheduler_api.stop_agent_schedulers(normalized)
     try:
-        deleted = manager.delete_agent(agent_id)
+        deleted = manager.delete_agent(normalized)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
-    from api import scheduler_api
-
-    await scheduler_api.stop_agent_schedulers(agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -262,6 +274,7 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
     manager = _require_agent_manager()
     from api import scheduler_api
 
+    known = _existing_agents(manager)
     results: list[dict[str, Any]] = []
     deleted_count = 0
     for raw in request.agent_ids:
@@ -271,6 +284,18 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
                 {"agent_id": raw, "deleted": False, "error": "invalid_agent_id"}
             )
             continue
+        if agent_id == "default":
+            try:
+                manager.delete_agent(agent_id)
+            except ValueError as exc:
+                results.append(
+                    {"agent_id": agent_id, "deleted": False, "error": str(exc)}
+                )
+            continue
+        if agent_id not in known:
+            results.append({"agent_id": agent_id, "deleted": False, "error": "not_found"})
+            continue
+        await scheduler_api.stop_agent_schedulers(agent_id)
         try:
             deleted = manager.delete_agent(agent_id)
         except ValueError as exc:
@@ -281,8 +306,8 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
         if not deleted:
             results.append({"agent_id": agent_id, "deleted": False, "error": "not_found"})
             continue
-        await scheduler_api.stop_agent_schedulers(agent_id)
         deleted_count += 1
+        known.pop(agent_id, None)
         results.append({"agent_id": agent_id, "deleted": True})
     return {
         "data": {

@@ -6,10 +6,19 @@ from api import scheduler_api
 
 
 def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app, monkeypatch):
-    stopped_agents: list[str] = []
+    events: list[str] = []
+
+    manager = api_app["agent_manager"]
+    original_delete = manager.delete_agent
+
+    def tracked_delete(agent_id: str):
+        events.append(f"delete:{agent_id}")
+        return original_delete(agent_id)
+
+    monkeypatch.setattr(manager, "delete_agent", tracked_delete)
 
     async def fake_stop_agent_schedulers(agent_id: str) -> None:
-        stopped_agents.append(agent_id)
+        events.append(f"stop:{agent_id}")
 
     monkeypatch.setattr(
         scheduler_api,
@@ -102,7 +111,40 @@ def test_agents_bulk_export_patch_delete_and_runtime_diff(client, api_app, monke
         item["agent_id"] == "default" and item["deleted"] is False
         for item in deleted_data["results"]
     )
-    assert stopped_agents == ["alpha", "beta"]
+    assert events == [
+        "stop:alpha",
+        "delete:alpha",
+        "stop:beta",
+        "delete:beta",
+        "delete:default",
+    ]
+
+
+def test_single_delete_stops_scheduler_before_workspace_delete(client, api_app, monkeypatch):
+    events: list[str] = []
+    manager = api_app["agent_manager"]
+    original_delete = manager.delete_agent
+
+    def tracked_delete(agent_id: str):
+        events.append(f"delete:{agent_id}")
+        return original_delete(agent_id)
+
+    monkeypatch.setattr(manager, "delete_agent", tracked_delete)
+
+    async def fake_stop_agent_schedulers(agent_id: str) -> None:
+        events.append(f"stop:{agent_id}")
+
+    monkeypatch.setattr(
+        scheduler_api,
+        "stop_agent_schedulers",
+        fake_stop_agent_schedulers,
+    )
+
+    assert client.post("/api/v1/agents", json={"agent_id": "alpha"}).status_code == 201
+    response = client.delete("/api/v1/agents/alpha")
+
+    assert response.status_code == 204
+    assert events == ["stop:alpha", "delete:alpha"]
 
 
 def test_bulk_runtime_patch_rejects_invalid_mode(client):
