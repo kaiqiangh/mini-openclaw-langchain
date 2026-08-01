@@ -24,6 +24,17 @@ _DARWIN_RUNTIME_READ_PATHS = (
     "/private/tmp",
 )
 
+_LINUX_RUNTIME_READ_PATHS = (
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/usr/local",
+    "/etc",
+)
+
 
 @dataclass(frozen=True)
 class SandboxSelection:
@@ -75,16 +86,27 @@ def _linux_bwrap_command(
         "bwrap",
         "--die-with-parent",
         "--new-session",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--bind",
-        root,
-        root,
-        "--chdir",
-        root,
+        "--unshare-all",
     ]
+    for path in _LINUX_RUNTIME_READ_PATHS:
+        cmd.extend(["--ro-bind-try", path, path])
+    cmd.extend(
+        [
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--dir",
+            "/workspace",
+            "--bind",
+            root,
+            "/workspace",
+            "--chdir",
+            "/workspace",
+        ]
+    )
     if allow_network:
         cmd.append("--share-net")
     cmd.extend(argv)

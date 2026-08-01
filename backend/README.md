@@ -368,6 +368,7 @@ resolved default profile, fallback profiles, warnings, and errors.
 - Terminal command policy modes (`auto`, `allowlist`, `denylist`) + workspace-scoped process sandbox + allowlisted child environment.
   Explicit `allowed_command_prefixes` entries keep legacy allowlist behavior, even when the list is empty.
 - The canonical runtime disables terminal networking and shell syntax; `terminal-flex` is the explicit opt-in profile for both.
+- Linux bubblewrap execution assembles an isolated `/workspace` root with explicit read-only runtime mounts, fresh `/proc`, `/dev`, and `/tmp`, and network namespace isolation by default.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
