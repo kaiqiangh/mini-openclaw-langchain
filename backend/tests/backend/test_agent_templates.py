@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from config import runtime_from_payload, runtime_to_payload
+from config import load_runtime_config, runtime_from_payload, runtime_to_payload
 
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "agent_templates"
@@ -39,6 +39,14 @@ def test_shipped_templates_are_valid_runtime_patches():
 
         assert isinstance(normalized, dict)
         assert normalized
+
+
+def test_canonical_runtime_config_uses_safe_terminal_defaults():
+    runtime = load_runtime_config(TEMPLATE_DIR.parent / "config.json")
+    terminal = runtime.tool_execution.terminal
+
+    assert terminal.allow_network is False
+    assert terminal.allow_shell_syntax is False
 
 
 def test_templates_api_lists_checked_in_catalog(client, api_app):
@@ -132,5 +140,7 @@ def test_terminal_flex_template_uses_unsandboxed_denylist_profile():
     terminal_payload = runtime_payload["tool_execution"]["terminal"]
     assert terminal_payload["command_policy_mode"] == "denylist"
     assert terminal_payload["require_sandbox"] is False
+    assert terminal_payload["allow_network"] is True
+    assert terminal_payload["allow_shell_syntax"] is True
     assert terminal_payload["allowed_command_prefixes"] == []
     assert terminal_payload["denied_command_prefixes"]

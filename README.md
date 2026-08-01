@@ -243,7 +243,7 @@ Mini-OpenClaw applies a defense-in-depth approach:
 - **File APIs:** Workspace-root scoped with path traversal guards.
 - **Tool policy gates:** Autonomous scheduler triggers (`heartbeat`, `cron`) use explicit allowlists.
 - **Network controls:** `fetch_url` blocks private/loopback/link-local addresses by default.
-- **Terminal sandboxing:** Sandboxed terminal reads are scoped to the agent workspace and approved runtime paths; the child receives an allowlisted runtime environment.
+- **Terminal sandboxing:** Sandboxed terminal reads are scoped to the agent workspace and approved runtime paths; the child receives an allowlisted runtime environment. The canonical config disables terminal networking and shell syntax; `terminal-flex` opts into both explicitly.
 - **Middleware:** CORS + trusted hosts + rate limiting enabled by default.
 - **Docker prod profile:** Nginx is the only public service; backend and frontend stay on the internal Compose network.
 
@@ -328,7 +328,7 @@ Exit codes: `0` success · `1` invalid args · `2` missing binary · `3` health 
 | Multi-agent workspaces  | ✅ Ready | Per-agent sessions, memory, knowledge, usage, scheduler state           |
 | Chat + streaming        | ✅ Ready | SSE streaming, debug events, tool/retrieval traces                      |
 | Session compression     | ✅ Ready | Context summarization and history truncation via `/compress`            |
-| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, env scrubbing       |
+| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, allowlisted terminal environment |
 | Tool safety eval harness| ✅ Ready | YAML-defined adversarial cases, safety scorecard, CI-integrated         |
 | Scheduler API           | ✅ Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs                |
 | Scheduler observability | ✅ Ready | Windowed duration/latency aggregates + timeseries (`1h` → `30d`)        |

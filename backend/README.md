@@ -367,6 +367,7 @@ resolved default profile, fallback profiles, warnings, and errors.
 - URL fetch restrictions (scheme, host policy, content bounds, redirect cap).
 - Terminal command policy modes (`auto`, `allowlist`, `denylist`) + workspace-scoped process sandbox + allowlisted child environment.
   Explicit `allowed_command_prefixes` entries keep legacy allowlist behavior, even when the list is empty.
+- The canonical runtime disables terminal networking and shell syntax; `terminal-flex` is the explicit opt-in profile for both.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
