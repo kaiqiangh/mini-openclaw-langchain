@@ -121,6 +121,36 @@ def test_cron_run_uses_tool_aware_prompt(client, api_app):
     assert "fetch_url" in captured["message"]
 
 
+def test_due_cron_jobs_run_with_bounded_concurrency(api_app):
+    scheduler = api_app["cron_scheduler"]
+    active = 0
+    max_active = 0
+
+    async def fake_run_once(*, message: str, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal active, max_active
+        _ = message, kwargs
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"text": "ok"}
+
+    scheduler.agent_manager.run_once = fake_run_once  # type: ignore[method-assign]
+    for index in range(2):
+        job = scheduler.create_and_store_job(
+            name=f"concurrent-{index}",
+            schedule_type="every",
+            schedule="60",
+            prompt="ping",
+        )
+        job.next_run_ts = 0
+        scheduler.upsert_job(job)
+
+    asyncio.run(scheduler.tick_once())
+
+    assert max_active == 2
+
+
 def test_scheduler_metrics_endpoints(client):
     created = client.post(
         "/api/v1/agents/default/scheduler/cron/jobs",

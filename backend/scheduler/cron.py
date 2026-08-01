@@ -21,6 +21,7 @@ ScheduleType = Literal["at", "every", "cron"]
 
 _LOCK_REGISTRY_GUARD = threading.Lock()
 _FILE_LOCKS: dict[str, threading.RLock] = {}
+_MAX_CONCURRENT_JOBS = 4
 CRON_EXECUTION_SUFFIX = """
 [Scheduled Execution Rules]
 - Execute the user job prompt directly.
@@ -459,17 +460,22 @@ class CronScheduler:
                 return
 
             now_ts = time.time()
-            changed = False
-            for job in jobs:
-                if not job.enabled:
-                    continue
-                if job.next_run_ts > now_ts:
-                    continue
-                await self._run_job(job, now_ts, manual_run=False)
-                changed = True
+            due_jobs = [
+                job
+                for job in jobs
+                if job.enabled and job.next_run_ts <= now_ts
+            ]
+            if not due_jobs:
+                return
 
-            if changed:
-                self._save_jobs(jobs)
+            semaphore = asyncio.Semaphore(_MAX_CONCURRENT_JOBS)
+
+            async def run_due_job(job: CronJob) -> None:
+                async with semaphore:
+                    await self._run_job(job, now_ts, manual_run=False)
+
+            await asyncio.gather(*(run_due_job(job) for job in due_jobs))
+            self._save_jobs(jobs)
 
     async def run(self) -> None:
         while not self._stop_event.is_set():
