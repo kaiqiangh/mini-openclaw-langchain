@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.async_io import iter_jsonl_reversed
+from utils.jsonl_retention import trim_jsonl
 
 
 @dataclass
@@ -24,6 +25,9 @@ class UsageQuery:
 
 
 class UsageStore:
+    MAX_RETENTION_RECORDS = 10000
+    MAX_RETENTION_BYTES = 32 * 1024 * 1024
+    MAX_QUERY_RECORDS = 10000
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
         self.usage_dir = base_dir / "storage" / "usage"
@@ -37,6 +41,11 @@ class UsageStore:
         with self._lock:
             with self.records_file.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            trim_jsonl(
+                self.records_file,
+                max_records=self.MAX_RETENTION_RECORDS,
+                max_bytes=self.MAX_RETENTION_BYTES,
+            )
 
     def _iter_records(self) -> Iterator[dict[str, Any]]:
         return iter_jsonl_reversed(self.records_file)
@@ -222,7 +231,7 @@ class UsageStore:
         )
         session_filter = query.session_id.strip() if query.session_id else None
 
-        limit = max(1, int(query.limit))
+        limit = min(self.MAX_QUERY_RECORDS, max(1, int(query.limit)))
         candidates: list[tuple[int, int, dict[str, Any]]] = []
         for reverse_index, raw in enumerate(self._iter_records()):
             row = self._normalize_record(raw)

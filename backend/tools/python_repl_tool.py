@@ -144,22 +144,24 @@ def _execute_python_snippet(code: str, conn: Any) -> None:
 class PythonReplTool:
     timeout_seconds: int = 30
     output_char_limit: int = 5000
-    use_sandbox: bool = False
+    use_sandbox: bool = True
 
     name: str = "python_repl"
     description: str = "Execute Python snippets in constrained REPL scope"
     permission_level: PermissionLevel = PermissionLevel.L1_WRITE
 
     def __post_init__(self):
-        import os
-        mode = os.environ.get("REPL_SANDBOX_MODE", "in_process").lower()
-        self.use_sandbox = mode in ("docker", "auto")
+        if self.use_sandbox:
+            mode = os.environ.get("REPL_SANDBOX_MODE", "docker").strip().lower()
+            self.use_sandbox = mode != "in_process"
         self._executor = None
 
     def _get_executor(self):
         if self._executor is None:
             from .sandbox_executor import SandboxExecutor, SandboxConfig
-            self._executor = SandboxExecutor(SandboxConfig.from_env())
+            config = SandboxConfig.from_env()
+            config.timeout_seconds = max(1, self.timeout_seconds)
+            self._executor = SandboxExecutor(config)
         return self._executor
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
@@ -208,9 +210,18 @@ class PythonReplTool:
                 recv_conn.close()
 
         if not payload.get("ok"):
+            error_code = str(payload.get("code", "E_EXEC"))
+            if error_code == "E_SANDBOX_UNAVAILABLE":
+                return ToolResult.failure(
+                    tool_name=self.name,
+                    code=error_code,
+                    message="Python sandbox is unavailable; enable a supported sandbox backend",
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    retryable=True,
+                )
             return ToolResult.failure(
                 tool_name=self.name,
-                code="E_EXEC",
+                code=error_code,
                 message="Python execution failed",
                 duration_ms=int((time.monotonic() - started) * 1000),
                 details={"exception": str(payload.get("error", "unknown"))},

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
-from config import save_runtime_config_to_path
+from config import save_runtime_config_overlay_to_path
 from graph.agent import AgentManager
 from scheduler.cron import CronJob, CronScheduler
 from scheduler.heartbeat import HeartbeatScheduler
@@ -514,7 +514,11 @@ async def update_heartbeat_config(
     if request.session_id is not None:
         heartbeat.session_id = request.session_id.strip() or heartbeat.session_id
 
-    save_runtime_config_to_path(config_path, runtime_config)
+    save_runtime_config_overlay_to_path(
+        config_path,
+        runtime_config,
+        (_BASE_DIR or config_path.parent) / "config.json",
+    )
 
     refreshed = require_existing_runtime(manager, agent_id)
     heartbeat_scheduler = _heartbeat_scheduler(
@@ -565,7 +569,7 @@ async def get_scheduler_metrics(
 
     cron_scheduler = _cron_scheduler(agent_id)
     heartbeat_scheduler = _heartbeat_scheduler(agent_id)
-    scan_limit = 100_000
+    scan_limit = 5_000
     cron_runs = cron_scheduler.query_runs(limit=scan_limit, since_ms=since_ms)
     cron_failures = cron_scheduler.query_failures(limit=scan_limit, since_ms=since_ms)
     heartbeat_runs = heartbeat_scheduler.query_runs(limit=scan_limit, since_ms=since_ms)

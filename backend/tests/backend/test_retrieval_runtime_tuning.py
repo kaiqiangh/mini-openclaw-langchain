@@ -4,6 +4,7 @@ import json
 import sqlite3
 from pathlib import Path
 
+import tools.search_knowledge_tool as search_knowledge_module
 from config import RetrievalDomainConfig
 from graph.memory_indexer import MemoryIndexer
 from tools.search_knowledge_tool import SearchKnowledgeTool
@@ -68,6 +69,11 @@ def test_search_knowledge_tool_honors_runtime_tuning(tmp_path: Path):
     )
     result = tool.run({"query": "alpha"}, context=None)  # type: ignore[arg-type]
     assert result.ok is True
+    assert result.data["results"] == []
+    assert tool._build_thread is not None
+    tool._build_thread.join(timeout=5)
+    result = tool.run({"query": "alpha"}, context=None)  # type: ignore[arg-type]
+    assert result.ok is True
     assert len(result.data["results"]) == 1
 
     json_index = tmp_path / "storage" / "knowledge_index" / "index.json"
@@ -84,3 +90,38 @@ def test_search_knowledge_tool_honors_runtime_tuning(tmp_path: Path):
         assert row is not None
         assert int(row[0]) == 64
         assert int(row[1]) == 8
+
+
+def test_search_knowledge_build_bounds_bytes_and_chunks(tmp_path: Path, monkeypatch):
+    (tmp_path / "knowledge").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    first = tmp_path / "knowledge" / "first.md"
+    second = tmp_path / "knowledge" / "second.md"
+    first.write_bytes(b"a" * 6)
+    second.write_bytes(b"b" * 6)
+
+    class FakeEmbeddingClient:
+        def __init__(self, secrets):
+            _ = secrets
+
+        def embed_texts(self, texts):
+            return [[] for _ in texts]
+
+    monkeypatch.setattr(search_knowledge_module, "EmbeddingClient", FakeEmbeddingClient)
+    monkeypatch.setattr(search_knowledge_module, "MAX_KNOWLEDGE_FILE_BYTES", 6)
+    monkeypatch.setattr(search_knowledge_module, "MAX_KNOWLEDGE_TOTAL_BYTES", 10)
+    monkeypatch.setattr(search_knowledge_module, "MAX_KNOWLEDGE_CHUNKS", 3)
+
+    tool = SearchKnowledgeTool(root_dir=tmp_path, config_base_dir=tmp_path)
+    payload = tool._build_index(
+        [first, second], "digest", chunk_size=4, chunk_overlap=0
+    )
+
+    rows = payload["rows"]
+    assert len(rows) == 3
+    assert [len(row["text"]) for row in rows] == [4, 2, 4]
+    assert [row["source"] for row in rows] == [
+        "knowledge/first.md",
+        "knowledge/first.md",
+        "knowledge/second.md",
+    ]

@@ -7,6 +7,7 @@ import { Badge, Button, EmptyState } from "@/components/ui/primitives";
 import { activityTone } from "@/lib/badge-tones";
 import { DelegateBadge } from "@/components/delegates/DelegateBadge";
 import { DelegateResultCard } from "@/components/delegates/DelegateResultCard";
+import { cancelDelegate } from "@/lib/api";
 
 import { ChatInput } from "./ChatInput";
 import { ChatMessage } from "./ChatMessage";
@@ -25,10 +26,13 @@ export function ChatPanel() {
     delegates,
     continueAfterMaxSteps,
     cancelAfterMaxSteps,
+    currentAgentId,
+    currentSessionId,
   } = useAppStore();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(true);
   const [atLiveEdge, setAtLiveEdge] = useState(true);
+  const [cancellingDelegateId, setCancellingDelegateId] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -145,7 +149,25 @@ export function ChatPanel() {
                   <DelegateBadge status={d.status} role={d.role} />
                   <span className="truncate text-xs text-[var(--muted-soft)]">{d.task}</span>
                   {d.status === "running" && (
-                    <span className="ml-auto animate-pulse text-[var(--accent)] text-xs">●</span>
+                    <>
+                      <span className="ml-auto animate-pulse text-[var(--accent)] text-xs">●</span>
+                      {currentSessionId ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="px-2"
+                          loading={cancellingDelegateId === d.delegate_id}
+                          onClick={() => {
+                            setCancellingDelegateId(d.delegate_id);
+                            void cancelDelegate(currentAgentId, currentSessionId, d.delegate_id)
+                              .catch(() => undefined)
+                              .finally(() => setCancellingDelegateId(null));
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      ) : null}
+                    </>
                   )}
                 </div>
               ))}

@@ -30,11 +30,11 @@ cases:
     trigger_type: cron
     expect: blocked
 
-  - name: "python_repl allowed in chat (L1 <= L2)"
+  - name: "python_repl blocked in chat without explicit enable"
     tool: python_repl
     args: { code: "print(1)" }
     trigger_type: chat
-    expect: allowed
+    expect: blocked
 
   - name: "python_repl blocked in heartbeat"
     tool: python_repl

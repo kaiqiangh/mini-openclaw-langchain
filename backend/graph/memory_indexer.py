@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +33,36 @@ class MemoryIndexer:
         self.index_dir = base_dir / "storage" / "memory_index"
         self.index_file = self.index_dir / "index.json"
         self._last_digest: str | None = None
+        self._status_lock = threading.Lock()
+        self._build_thread: threading.Thread | None = None
+        self._status: dict[str, object] = {
+            "state": "idle",
+            "last_error": "",
+            "last_success_ms": 0,
+            "last_good_digest": "",
+        }
+
+    def status(self) -> dict[str, object]:
+        with self._status_lock:
+            return dict(self._status)
+
+    def _set_status(self, **updates: object) -> None:
+        with self._status_lock:
+            self._status.update(updates)
+
+    def schedule_rebuild(self, settings: RetrievalDomainConfig | None = None) -> dict[str, object]:
+        with self._status_lock:
+            if self._build_thread is not None and self._build_thread.is_alive():
+                return dict(self._status)
+            self._status.update(state="building", last_error="")
+            self._build_thread = threading.Thread(
+                target=self.rebuild_index,
+                kwargs={"settings": settings},
+                name="memory-index-build",
+                daemon=True,
+            )
+            self._build_thread.start()
+            return dict(self._status)
 
     @staticmethod
     def _sanitize_settings(settings: RetrievalDomainConfig) -> RetrievalDomainConfig:
@@ -113,9 +145,22 @@ class MemoryIndexer:
         return hashlib.sha256(encoded).hexdigest()
 
     def rebuild_index(self, settings: RetrievalDomainConfig | None = None) -> None:
+        self._set_status(state="building", last_error="")
+        try:
+            self._rebuild_index(settings=settings)
+        except Exception as exc:
+            self._set_status(state="failed", last_error="index build failed")
+            raise exc
+        self._set_status(
+            state="ready",
+            last_success_ms=int(time.time() * 1000),
+            last_good_digest=self._last_digest or "",
+        )
+
+    def _rebuild_index(self, settings: RetrievalDomainConfig | None = None) -> None:
         effective = self._resolve_settings(settings)
         text = (
-            self.memory_file.read_text(encoding="utf-8")
+            self.memory_file.read_bytes()[:5 * 1024 * 1024].decode("utf-8", errors="replace")
             if self.memory_file.exists()
             else ""
         )
@@ -124,11 +169,25 @@ class MemoryIndexer:
             chunk_size=effective.chunk_size,
             chunk_overlap=effective.chunk_overlap,
         )
-        chunks = self._chunk(
-            text, size=effective.chunk_size, overlap=effective.chunk_overlap
-        )
-        embeddings, provider, model, embedding_error = self._embed_chunks(chunks)
+        chunks = self._chunk(text, size=effective.chunk_size, overlap=effective.chunk_overlap)[:5000]
         storage = self._resolve_storage_settings()
+        if storage.engine == "sqlite":
+            try:
+                existing = self._sqlite_store(storage).get_meta("memory")
+                if existing is not None and str(existing.get("digest", "")) == digest:
+                    self._last_digest = digest
+                    return
+            except Exception:
+                pass
+        elif self.index_file.exists():
+            try:
+                existing_payload = json.loads(self.index_file.read_text(encoding="utf-8"))
+                if existing_payload.get("digest") == digest:
+                    self._last_digest = digest
+                    return
+            except (OSError, json.JSONDecodeError):
+                pass
+        embeddings, provider, model, embedding_error = self._embed_chunks(chunks)
 
         if storage.engine == "sqlite":
             try:
@@ -189,7 +248,7 @@ class MemoryIndexer:
             return None
 
         text = (
-            self.memory_file.read_text(encoding="utf-8")
+            self.memory_file.read_bytes()[:5 * 1024 * 1024].decode("utf-8", errors="replace")
             if self.memory_file.exists()
             else ""
         )
@@ -198,6 +257,9 @@ class MemoryIndexer:
         )
         meta = store.get_meta("memory")
         if meta is None or str(meta.get("digest", "")) != digest:
+            if meta is not None:
+                self.schedule_rebuild(settings=settings)
+                return store
             self.rebuild_index(settings=settings)
             meta = store.get_meta("memory")
             if meta is None or str(meta.get("digest", "")) != digest:
@@ -216,7 +278,7 @@ class MemoryIndexer:
         if store.get_meta("memory") is not None:
             return
         try:
-            self.rebuild_index(settings=effective)
+            self.schedule_rebuild(settings=effective)
         except Exception:
             return
 
@@ -235,10 +297,15 @@ class MemoryIndexer:
         )
 
         if self.index_file.exists():
-            payload = json.loads(self.index_file.read_text(encoding="utf-8"))
-            if payload.get("digest") == digest:
-                self._last_digest = digest
+            try:
+                payload = json.loads(self.index_file.read_text(encoding="utf-8"))
+                if payload.get("digest") == digest:
+                    self._last_digest = digest
+                    return payload
+                self.schedule_rebuild(settings=settings)
                 return payload
+            except (OSError, json.JSONDecodeError):
+                pass
 
         self.rebuild_index(settings=settings)
         if self.index_file.exists():

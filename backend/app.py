@@ -31,6 +31,7 @@ from api import (
     files,
     hooks,
     replay,
+    retrieval,
     scheduler_api,
     sessions,
     setup,
@@ -53,6 +54,7 @@ BASE_DIR = Path(__file__).resolve().parent
 agent_manager = AgentManager()
 heartbeat_scheduler: HeartbeatScheduler | None = None
 cron_scheduler: CronScheduler | None = None
+_RUNTIME_INITIALIZED = False
 local_coordinator: LocalCoordinator = build_local_coordinator(BASE_DIR)
 _TRUTHY = {"1", "true", "yes", "on"}
 _PROXY_HOP_HEADERS = {
@@ -350,14 +352,35 @@ async def _proxy_to_frontend(request: Request) -> Response:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global heartbeat_scheduler, cron_scheduler
+    global heartbeat_scheduler, cron_scheduler, _RUNTIME_INITIALIZED
+    # Bootstrap must remain reachable before APP_ADMIN_TOKEN exists.  Keep the
+    # process deliberately small until the operator has persisted credentials.
+    setup.set_base_dir(BASE_DIR)
+    setup.set_runtime_initializer(_initialize_runtime)
     config_api.apply_persisted_tracing_state(BASE_DIR)
+    missing_secrets = validate_required_secrets(load_config(BASE_DIR))
+    try:
+        if not missing_secrets:
+            _initialize_runtime()
+        yield
+    finally:
+        if _RUNTIME_INITIALIZED:
+            await scheduler_api.stop_all_schedulers()
+            await agent_manager.runtime_checkpointer.close()
+        heartbeat_scheduler = None
+        cron_scheduler = None
+        _RUNTIME_INITIALIZED = False
+        setup.set_runtime_initializer(None)
+
+
+def _initialize_runtime() -> None:
+    global heartbeat_scheduler, cron_scheduler, _RUNTIME_INITIALIZED
+    if _RUNTIME_INITIALIZED:
+        return
     loaded = load_config(BASE_DIR)
     missing_secrets = validate_required_secrets(loaded)
     if missing_secrets:
-        joined = ", ".join(missing_secrets)
-        raise RuntimeError(f"Missing required secrets: {joined}")
-
+        raise RuntimeError("Required runtime secrets are not configured")
     agent_manager.initialize(BASE_DIR)
 
     delegate_registry = DelegateRegistry(base_dir=BASE_DIR)
@@ -372,16 +395,16 @@ async def lifespan(_: FastAPI):
     tokens.set_dependencies(BASE_DIR, agent_manager)
     compress.set_agent_manager(agent_manager)
     config_api.set_dependencies(BASE_DIR, agent_manager)
+    retrieval.set_agent_manager(agent_manager)
     usage.set_agent_manager(agent_manager)
     agents.set_agent_manager(agent_manager)
     traces.set_agent_manager(agent_manager)
     audit.set_agent_manager(agent_manager)
     hooks.set_agent_manager(agent_manager)
-    setup.set_base_dir(BASE_DIR)
     replay.set_agent_manager(agent_manager)
     approval.set_dependencies(ApprovalStore(BASE_DIR))
 
-    default_runtime.memory_indexer.rebuild_index(
+    default_runtime.memory_indexer.schedule_rebuild(
         settings=default_runtime.runtime_config.retrieval.memory
     )
 
@@ -410,14 +433,7 @@ async def lifespan(_: FastAPI):
         if not agent_id:
             continue
         scheduler_api.start_agent_schedulers(agent_id)
-
-    try:
-        yield
-    finally:
-        await scheduler_api.stop_all_schedulers()
-        await agent_manager.runtime_checkpointer.close()
-        heartbeat_scheduler = None
-        cron_scheduler = None
+    _RUNTIME_INITIALIZED = True
 
 
 app = FastAPI(title="Mini-OpenClaw API", version="0.1.0", lifespan=lifespan)
@@ -518,6 +534,7 @@ app.include_router(traces.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(setup.router, prefix="/api/v1")
 app.include_router(replay.router, prefix="/api/v1")
+app.include_router(retrieval.router, prefix="/api/v1")
 app.include_router(approval.router, prefix="/api/v1")
 app.include_router(scheduler_api.router, prefix="/api/v1")
 app.include_router(hooks.router, prefix="/api/v1")

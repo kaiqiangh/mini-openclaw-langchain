@@ -1,4 +1,4 @@
-"""Docker-based sandbox executor with explicit in-process execution mode."""
+"""Docker-based sandbox executor with explicit fail-closed legacy mode."""
 from __future__ import annotations
 
 import json
@@ -17,7 +17,7 @@ SANDBOX_IMAGE = "python-repl-sandbox:latest"
 
 @dataclass
 class SandboxConfig:
-    mode: str = "in_process"  # "in_process" | "docker" | "auto"
+    mode: str = "docker"  # "in_process" is explicit local-only compatibility mode
     image: str = SANDBOX_IMAGE
     memory: str = "256m"
     cpus: str = "1"
@@ -27,7 +27,7 @@ class SandboxConfig:
     def from_env(cls) -> SandboxConfig:
         import os
 
-        mode = os.environ.get("REPL_SANDBOX_MODE", "in_process").strip().lower()
+        mode = os.environ.get("REPL_SANDBOX_MODE", "docker").strip().lower()
         image = os.environ.get("REPL_SANDBOX_IMAGE", SANDBOX_IMAGE)
         return cls(mode=mode, image=image)
 
@@ -40,7 +40,7 @@ def _docker_available(image: str) -> bool:
         result = subprocess.run(
             ["docker", "image", "inspect", image],
             capture_output=True,
-            timeout=5,
+            timeout=1,
         )
         return result.returncode == 0
     except Exception:
@@ -121,7 +121,7 @@ class SandboxExecutor:
 
     @property
     def use_docker(self) -> bool:
-        if self.config.mode == "in_process":
+        if self.config.mode not in {"docker", "auto"}:
             return False
         if self.config.mode == "docker":
             return True
@@ -131,9 +131,23 @@ class SandboxExecutor:
         return self._docker_usable
 
     def run(self, code: str) -> dict[str, Any]:
+        if self.config.mode not in {"docker", "auto", "in_process"}:
+            return {
+                "ok": False,
+                "code": "E_SANDBOX_UNAVAILABLE",
+                "error": f"Unsupported Python sandbox mode: {self.config.mode}",
+            }
+        if self.config.mode in {"docker", "auto"}:
+            if self._docker_usable is None:
+                self._docker_usable = _docker_available(self.config.image)
+            if not self._docker_usable:
+                return {
+                    "ok": False,
+                    "code": "E_SANDBOX_UNAVAILABLE",
+                    "error": "Python sandbox is unavailable",
+                }
         if self.use_docker:
             logger.debug("Executing via Docker sandbox")
             return _run_in_docker(code, self.config)
-        else:
-            logger.debug("Executing via in-process sandbox")
-            return _run_in_process(code, self.config.timeout_seconds)
+        logger.debug("Executing via explicit in-process compatibility sandbox")
+        return _run_in_process(code, self.config.timeout_seconds)

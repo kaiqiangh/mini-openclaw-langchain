@@ -153,7 +153,7 @@ def _build_tool_map(root: Path) -> tuple[dict[str, _InvokableTool], list[MiniToo
             terminal_chars=5000, fetch_url_chars=5000, read_file_chars=10000
         ),
     )
-    runtime.chat_enabled_tools = ["terminal"]
+    runtime.chat_enabled_tools = ["terminal", "python_repl", "apply_patch"]
     runtime.tool_execution.terminal.sandbox_mode = "unsafe_none"
     runtime.tool_execution.terminal.require_sandbox = False
     runtime.tool_execution.terminal.allowed_command_prefixes = [

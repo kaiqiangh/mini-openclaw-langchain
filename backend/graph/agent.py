@@ -244,10 +244,10 @@ class AgentManager:
         if created_workspace:
             self._seed_workspace_skills(root)
             ensure_skills_snapshot(root)
-        if self.base_dir is not None:
-            self._copy_text_if_missing(
-                self.base_dir / "config.json", root / "config.json", default_text="{}\n"
-            )
+        # Agent config is an override layer; global defaults remain authoritative.
+        agent_config_path = root / "config.json"
+        if not agent_config_path.exists():
+            agent_config_path.write_text("{}\n", encoding="utf-8")
         return root
 
     def _build_runtime(self, agent_id: str) -> AgentRuntime:
@@ -429,7 +429,7 @@ class AgentManager:
         if root.exists():
             raise ValueError(f"Agent already exists: {normalized}")
         runtime = self.get_runtime(normalized)
-        runtime.memory_indexer.rebuild_index(
+        runtime.memory_indexer.schedule_rebuild(
             settings=runtime.runtime_config.retrieval.memory
         )
         for row in self.list_agents():

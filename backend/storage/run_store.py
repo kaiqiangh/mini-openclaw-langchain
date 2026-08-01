@@ -8,10 +8,14 @@ from typing import Any
 
 from utils.redaction import redact_json_line
 from utils.async_io import iter_jsonl_reversed
+from utils.jsonl_retention import trim_jsonl
 
 
 class AuditStore:
     """Structured JSONL audit store with stable record categories."""
+
+    MAX_RETENTION_RECORDS = 5000
+    MAX_RETENTION_BYTES = 16 * 1024 * 1024
 
     def __init__(self, base_dir: Path) -> None:
         self.base_dir = base_dir
@@ -29,6 +33,11 @@ class AuditStore:
         with self._lock:
             with file_path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
+            trim_jsonl(
+                file_path,
+                max_records=self.MAX_RETENTION_RECORDS,
+                max_bytes=self.MAX_RETENTION_BYTES,
+            )
 
     def append_run(
         self,

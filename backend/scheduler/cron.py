@@ -16,6 +16,7 @@ from config import CronRuntimeConfig
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
 from utils.async_io import iter_jsonl_reversed
+from utils.jsonl_retention import trim_jsonl
 
 
 ScheduleType = Literal["at", "every", "cron"]
@@ -211,18 +212,22 @@ class CronScheduler:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with file_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            trim_jsonl(
+                file_path,
+                max_records=(
+                    max(1, int(self.config.failure_retention))
+                    if file_path == self.failures_file
+                    else 5000
+                ),
+                max_bytes=8 * 1024 * 1024,
+            )
 
     def _trim_failures(self) -> None:
         with self._file_lock:
             if not self.failures_file.exists():
                 return
-            rows = self.failures_file.read_text(encoding="utf-8").splitlines()
             limit = max(1, int(self.config.failure_retention))
-            if len(rows) <= limit:
-                return
-            self.failures_file.write_text(
-                "\n".join(rows[-limit:]) + "\n", encoding="utf-8"
-            )
+            trim_jsonl(self.failures_file, max_records=limit)
 
     def _compute_next_run(self, job: CronJob, now_ts: float) -> float | None:
         zone = self._zone()

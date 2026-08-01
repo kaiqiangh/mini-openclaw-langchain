@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { getSetupStatus, configureSystem } from "@/lib/api";
 
 const STEPS = [
@@ -292,12 +293,12 @@ function VerifyStep({
       )}
 
       {status === "success" && (
-        <a
+        <Link
           href="/"
           className="inline-block px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-500"
         >
           Go to Console →
-        </a>
+        </Link>
       )}
 
       <div>

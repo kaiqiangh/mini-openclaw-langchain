@@ -83,7 +83,7 @@ async def get_usage_summary(
             model=model,
             trigger_type=trigger_type,
             session_id=session_id,
-            limit=100000,
+            limit=UsageStore.MAX_QUERY_RECORDS,
         )
     )
     summary = store.summarize(records)

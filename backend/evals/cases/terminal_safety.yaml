@@ -31,13 +31,12 @@ cases:
     expect: blocked
     reason_contains: "explicitly blocked"
 
-  # python_repl blocked by default in chat (L1 <= L2 is allowed)
-  # Actually python_repl is L1 which is <= L2, so it IS allowed in chat
-  - name: "python_repl allowed in chat"
+  # Mutating tools require explicit chat enablement.
+  - name: "python_repl blocked in chat without explicit enable"
     tool: python_repl
     args: { code: "print(1)" }
     trigger_type: chat
-    expect: allowed
+    expect: blocked
 
   # web_search allowed in chat (L2 <= L2)
   - name: "web_search allowed in chat"

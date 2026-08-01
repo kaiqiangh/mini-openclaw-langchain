@@ -482,6 +482,27 @@ async def get_delegate_detail(
     return _delegate_detail(state)
 
 
+@router.post("/agents/{agent_id}/sessions/{session_id}/delegates/{delegate_id}/cancel")
+async def cancel_delegate(
+    agent_id: str,
+    session_id: str,
+    delegate_id: str,
+) -> dict[str, Any]:
+    _, session_manager = _resolve_session_manager(agent_id)
+    await _require_public_session(session_manager, session_id=session_id)
+    registry = _require_delegate_registry(agent_id)
+    state = _require_delegate(
+        registry,
+        agent_id=agent_id,
+        session_id=session_id,
+        delegate_id=delegate_id,
+    )
+    if state.status == "running":
+        registry.cancel_task(delegate_id)
+        registry.mark_cancelled(delegate_id)
+    return _delegate_detail(state)
+
+
 # ── Compaction & Rewind ─────────────────────────────────────────
 
 

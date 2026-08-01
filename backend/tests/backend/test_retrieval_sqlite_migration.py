@@ -4,7 +4,9 @@ import json
 import sqlite3
 from pathlib import Path
 
-from config import RetrievalDomainConfig
+import pytest
+
+from config import RetrievalDomainConfig, RetrievalStorageConfig
 from graph.memory_indexer import MemoryIndexer
 from tools.search_knowledge_tool import SearchKnowledgeTool
 
@@ -117,6 +119,11 @@ def test_search_knowledge_rebuilds_sqlite_from_source_instead_of_json_index(
 
     result = tool.run({"query": "alpha"}, context=None)  # type: ignore[arg-type]
     assert result.ok is True
+    assert result.data["results"] == []
+    assert tool._build_thread is not None
+    tool._build_thread.join(timeout=5)
+    result = tool.run({"query": "alpha"}, context=None)  # type: ignore[arg-type]
+    assert result.ok is True
     assert result.data["results"]
     assert any(
         "alpha" in str(row["text"]).lower() for row in result.data["results"]
@@ -128,3 +135,32 @@ def test_search_knowledge_rebuilds_sqlite_from_source_instead_of_json_index(
         ).fetchone()
     assert meta is not None
     assert str(meta[0]) == digest
+
+
+def test_first_sqlite_knowledge_build_is_scheduled(tmp_path: Path, monkeypatch):
+    (tmp_path / "knowledge").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "knowledge" / "guide.md").write_text("alpha", encoding="utf-8")
+    tool = SearchKnowledgeTool(root_dir=tmp_path, config_base_dir=tmp_path)
+    storage = RetrievalStorageConfig(engine="sqlite", db_path="storage/retrieval.db")
+    scheduled = []
+
+    monkeypatch.setattr(
+        tool,
+        "_schedule_rebuild",
+        lambda *args, **kwargs: scheduled.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        tool,
+        "_build_index",
+        lambda *args, **kwargs: pytest.fail("first build must not run inline"),
+    )
+
+    store = tool._ensure_sqlite_index(
+        files=[tmp_path / "knowledge" / "guide.md"],
+        chunk_size=64,
+        chunk_overlap=8,
+        storage=storage,
+    )
+
+    assert store is not None
+    assert scheduled

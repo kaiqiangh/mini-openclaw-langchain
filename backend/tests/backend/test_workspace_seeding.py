@@ -55,7 +55,7 @@ def test_workspace_seed_does_not_overwrite_existing_files(tmp_path: Path):
     ) == "custom-skill"
 
 
-def test_workspace_seed_copies_default_config_once(tmp_path: Path):
+def test_workspace_seed_creates_empty_config_overlay(tmp_path: Path):
     base_dir = tmp_path
     workspaces_dir = base_dir / "workspaces"
     template_dir = base_dir / "workspace-template"
@@ -73,7 +73,7 @@ def test_workspace_seed_copies_default_config_once(tmp_path: Path):
 
     alpha_root = manager._ensure_workspace("alpha")
     assert (alpha_root / "config.json").exists()
-    assert '"max_steps": 20' in (alpha_root / "config.json").read_text(encoding="utf-8")
+    assert (alpha_root / "config.json").read_text(encoding="utf-8").strip() == "{}"
 
     # Existing agent config should not be overwritten by later backend default changes.
     (alpha_root / "config.json").write_text(

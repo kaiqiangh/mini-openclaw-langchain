@@ -149,7 +149,7 @@ Compose loads the root `.env` directly into the backend and frontend containers.
 ```bash
 cd backend
 uv venv .venv
-uv pip install --python .venv/bin/python -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements.lock
 cp .env.example .env   # set APP_ADMIN_TOKEN + your LLM provider key
 uv run --python .venv/bin/python uvicorn app:app --host 127.0.0.1 --port 8000
 ```
@@ -177,6 +177,7 @@ For Docker runs, copy `.env.example` to `.env`.
 | `APP_TRUSTED_HOSTS`                                             | Optional | Trusted host allowlist for backend requests; include `backend-dev` for Docker dev |
 | `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                                                          |
 
+> **Development checks:** install `requirements-dev.lock` instead of `requirements.lock`.
 > **PDF extraction support:** `uv pip install --python .venv/bin/python -r requirements-pdf.txt`
 
 ---
