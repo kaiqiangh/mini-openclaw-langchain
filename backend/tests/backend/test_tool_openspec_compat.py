@@ -193,7 +193,8 @@ def test_langchain_wrapper_binding_regression(tmp_path, monkeypatch):
         name = getattr(tool, "name")
 
         def fake_run(args, context, _name=name):  # type: ignore[no-untyped-def]
-            _ = args, context
+            assert all(value is not None for value in args.values())
+            _ = context
             return ToolResult.success(tool_name=_name, data={"ok": True}, duration_ms=1)
 
         monkeypatch.setattr(tool, "run", fake_run)
