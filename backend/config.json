@@ -163,8 +163,8 @@
         "chmod -R 777",
         "chown -R"
       ],
-      "allow_network": true,
-      "allow_shell_syntax": true,
+      "allow_network": false,
+      "allow_shell_syntax": false,
       "max_args": 128,
       "max_arg_length": 4096
     }

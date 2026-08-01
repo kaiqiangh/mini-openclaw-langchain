@@ -41,9 +41,11 @@ from llm_routing import (
     inspect_profile_availability,
     should_fallback_for_error,
 )
+from tools import get_tool_runner
 from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
+from tools.runner import ToolRunner
 from usage.pricing import calculate_cost_breakdown, infer_provider
 from hooks.engine import HookEngine
 from hooks.types import HookEvent
@@ -64,6 +66,7 @@ class DefaultGraphRuntime(GraphRuntime):
         self.skill_selector = skill_selector
         self.checkpointer = checkpointer
         self.hook_engine = hook_engine
+        self._tool_runners: dict[int, ToolRunner] = {}
         self._graphs: dict[object | None, Any] = {None: self._compile_graph(None)}
 
     def _resolve_hook_engine(self, agent_id: str) -> "HookEngine | None":
@@ -158,6 +161,11 @@ class DefaultGraphRuntime(GraphRuntime):
         runtime_config: Any,
         run_id: str,
     ) -> ToolExecutionService:
+        tool_runner = self._tool_runner_for_request(
+            request=request,
+            runtime_state=runtime_state,
+            runtime_config=runtime_config,
+        )
         hook_engine = self._resolve_hook_engine(request.agent_id)
         delegate_tools = self._build_delegate_tools(
             request=request,
@@ -175,40 +183,58 @@ class DefaultGraphRuntime(GraphRuntime):
             run_id=run_id,
             session_id=request.session_id,
             runtime_audit_store=runtime_state.audit_store,
+            tool_runner=tool_runner,
             delegate_tools=delegate_tools if delegate_tools else None,
             hook_engine=hook_engine,
             explicit_enabled_tools=request.explicit_enabled_tools,
             explicit_blocked_tools=request.explicit_blocked_tools,
         )
 
+    def _tool_runner_for_request(
+        self, *, request: RuntimeRequest, runtime_state: Any, runtime_config: Any
+    ) -> ToolRunner:
+        request_key = id(request)
+        tool_runner = self._tool_runners.get(request_key)
+        if tool_runner is None:
+            tool_runner = get_tool_runner(
+                runtime_state.root_dir,
+                runtime_state.audit_store,
+                repeat_identical_failure_limit=runtime_config.tool_retry_guard.repeat_identical_failure_limit,
+            )
+            self._tool_runners[request_key] = tool_runner
+        return tool_runner
+
     async def invoke(self, request: RuntimeRequest) -> RuntimeResult:
         session_repository = self.services.require_session_repository()
         prepared_request = await session_repository.prepare_runtime_request(request)
-        graph = await self._graph_for_request(prepared_request)
-        final_state = await graph.ainvoke(
-            self._initial_state(prepared_request),
-            config=self._graph_config(prepared_request),
-        )
-        if not isinstance(final_state, dict):
-            raise RuntimeError("Graph returned an invalid final state")
-        error = final_state.get("error")
-        result = RuntimeResult(
-            text=str(final_state.get("final_text", "")),
-            messages=list(final_state.get("model_messages", [])),
-            selected_skills=[
-                item.name for item in final_state.get("selected_skill_items", [])
-            ],
-            usage=dict(final_state.get("usage_payload", {})),
-            structured_response=final_state.get("structured_response"),
-            token_source=str(final_state.get("token_source", "fallback") or "fallback"),
-            run_id=str(final_state.get("run_id", "")),
-            error=error if isinstance(error, RuntimeErrorInfo) else None,
-        )
-        if result.error is None:
-            await session_repository.persist_invoke_result(prepared_request, result)
-        else:
-            await session_repository.fail_stream(prepared_request)
-        return result
+        try:
+            graph = await self._graph_for_request(prepared_request)
+            final_state = await graph.ainvoke(
+                self._initial_state(prepared_request),
+                config=self._graph_config(prepared_request),
+            )
+            if not isinstance(final_state, dict):
+                raise RuntimeError("Graph returned an invalid final state")
+            error = final_state.get("error")
+            result = RuntimeResult(
+                text=str(final_state.get("final_text", "")),
+                messages=list(final_state.get("model_messages", [])),
+                selected_skills=[
+                    item.name for item in final_state.get("selected_skill_items", [])
+                ],
+                usage=dict(final_state.get("usage_payload", {})),
+                structured_response=final_state.get("structured_response"),
+                token_source=str(final_state.get("token_source", "fallback") or "fallback"),
+                run_id=str(final_state.get("run_id", "")),
+                error=error if isinstance(error, RuntimeErrorInfo) else None,
+            )
+            if result.error is None:
+                await session_repository.persist_invoke_result(prepared_request, result)
+            else:
+                await session_repository.fail_stream(prepared_request)
+            return result
+        finally:
+            self._tool_runners.pop(id(prepared_request), None)
 
     async def astream(self, request: RuntimeRequest):
         session_repository = self.services.require_session_repository()
@@ -229,6 +255,8 @@ class DefaultGraphRuntime(GraphRuntime):
             raise
         else:
             await session_repository.finalize_stream(prepared_request)
+        finally:
+            self._tool_runners.pop(id(prepared_request), None)
 
     async def aget_state(self, request: RuntimeRequest) -> dict[str, Any]:
         graph = await self._graph_for_request(request)

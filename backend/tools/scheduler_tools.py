@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from config import load_runtime_config
+from utils.async_io import iter_jsonl_reversed
 
 from .base import ToolContext
 from .contracts import ToolResult
@@ -27,25 +28,11 @@ def _read_json(path: Path, default: Any) -> Any:
 def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    try:
-        lines = [
-            line
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-    except Exception:
-        return []
-
     rows: list[dict[str, Any]] = []
-    for line in reversed(lines):
-        try:
-            parsed = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(parsed, dict):
-            rows.append(parsed)
-            if len(rows) >= limit:
-                break
+    for parsed in iter_jsonl_reversed(path):
+        rows.append(parsed)
+        if len(rows) >= limit:
+            break
     return rows
 
 

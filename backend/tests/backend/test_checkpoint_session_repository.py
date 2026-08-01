@@ -16,6 +16,7 @@ from graph.runtime_types import (
 )
 from graph.skill_selector import SelectedSkill
 from graph.session_manager import LegacySessionStateError
+from graph.checkpoint_session_repository import ConcurrentSessionMutationError
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -202,6 +203,122 @@ def test_prepare_runtime_request_uses_checkpoint_history_for_resume(tmp_path: Pa
     assert prepared.resume_same_turn is True
     assert prepared.history == []
     assert [row["content"] for row in state["messages"]] == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_append_messages_preserves_all_messages(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    repository = manager.get_session_repository("default")
+
+    await asyncio.gather(
+        *[
+            repository.append_message(
+                agent_id="default",
+                session_id="concurrent-session",
+                role="user",
+                content=f"message-{index}",
+            )
+            for index in range(20)
+        ]
+    )
+
+    snapshot = await repository.load_snapshot(
+        agent_id="default",
+        session_id="concurrent-session",
+        include_live=False,
+    )
+    contents = [str(row.get("content", "")) for row in snapshot.messages]
+    assert len(contents) == 20
+    assert set(contents) == {f"message-{index}" for index in range(20)}
+
+
+@pytest.mark.asyncio
+async def test_compression_rejects_stale_session_snapshot(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    repository = manager.get_session_repository("default")
+
+    for content in ("one", "two", "three", "four"):
+        await repository.append_message(
+            agent_id="default",
+            session_id="compress-session",
+            role="user",
+            content=content,
+        )
+    snapshot = await repository.load_snapshot(
+        agent_id="default",
+        session_id="compress-session",
+        include_live=False,
+    )
+    await repository.append_message(
+        agent_id="default",
+        session_id="compress-session",
+        role="user",
+        content="concurrent",
+    )
+
+    with pytest.raises(ConcurrentSessionMutationError):
+        await repository.compress_history(
+            agent_id="default",
+            session_id="compress-session",
+            summary="stale summary",
+            n=4,
+            expected_messages=snapshot.messages,
+            expected_compressed_context=snapshot.compressed_context,
+        )
+
+    current = await repository.load_snapshot(
+        agent_id="default",
+        session_id="compress-session",
+        include_live=False,
+    )
+    assert [item["content"] for item in current.messages] == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "concurrent",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compression_rejects_active_live_response(tmp_path: Path):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    repository = manager.get_session_repository("default")
+
+    for content in ("one", "two", "three", "four"):
+        await repository.append_message(
+            agent_id="default",
+            session_id="live-session",
+            role="user",
+            content=content,
+        )
+    snapshot = await repository.load_snapshot(
+        agent_id="default",
+        session_id="live-session",
+        include_live=True,
+    )
+    await repository.update_state(
+        agent_id="default",
+        session_id="live-session",
+        values={"live_response": {"run_id": "run-1", "content": "typing"}},
+    )
+
+    with pytest.raises(ConcurrentSessionMutationError, match="streaming"):
+        await repository.compress_history(
+            agent_id="default",
+            session_id="live-session",
+            summary="summary",
+            n=4,
+            expected_messages=snapshot.messages,
+            expected_compressed_context=snapshot.compressed_context,
+            expected_live_response=snapshot.live_response,
+        )
 
 
 def test_finalize_stream_prefers_done_content_over_stale_stream_text(tmp_path: Path):

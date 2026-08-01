@@ -7,7 +7,13 @@ import {
   getAgentTemplate,
   getSchedulerMetrics,
   getSchedulerMetricsTimeseries,
+  getSessionHistory,
+  getDelegateDetail,
   listAgentTemplates,
+  listDelegates,
+  archiveSession,
+  restoreSession,
+  deleteSession,
   getRagMode,
   getTracingConfig,
   setRagMode,
@@ -70,6 +76,29 @@ describe("streamChat", () => {
   });
 });
 
+describe("session URL encoding", () => {
+  it("encodes logical session IDs in every path segment", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ data: { messages: [] } }),
+      json: async () => ({ delegates: [] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sessionId = "__cron__:cron-1";
+    await archiveSession(sessionId);
+    await restoreSession(sessionId);
+    await deleteSession(sessionId);
+    await getSessionHistory(sessionId);
+    await listDelegates("default", sessionId);
+
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).toContain("__cron__%3Acron-1");
+      expect(String(url)).not.toContain("__cron__:cron-1");
+    }
+  });
+});
+
 describe("agent-scoped rag mode requests", () => {
   it("uses agent path segments for rag mode endpoints", async () => {
     const fetchMock = vi
@@ -93,6 +122,28 @@ describe("agent-scoped rag mode requests", () => {
     expect(secondUrl).toContain("/api/v1/agents/alpha/config/rag-mode");
     expect(firstUrl).not.toContain("agent_id=");
     expect(secondUrl).not.toContain("agent_id=");
+  });
+});
+
+describe("delegate URL encoding", () => {
+  it("encodes every delegate path segment", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ delegates: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await listDelegates("agent/id", "session:1");
+    await getDelegateDetail("agent/id", "session:1", "delegate/1");
+
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls[0]).toContain(
+      "/agents/agent%2Fid/sessions/session%3A1/delegates",
+    );
+    expect(urls[1]).toContain(
+      "/agents/agent%2Fid/sessions/session%3A1/delegates/delegate%2F1",
+    );
+    expect(urls.every((url) => !url.includes("agent/id"))).toBe(true);
   });
 });
 

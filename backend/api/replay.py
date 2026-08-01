@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import difflib
-import json
 import time
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Query
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.session_manager import InvalidSessionIdError
+from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(tags=["replay"])
 
@@ -32,10 +34,7 @@ def _require_agent_manager() -> AgentManager:
 async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
     """Get details of a specific run including tool calls."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     run = runtime.audit_store.get_run(run_id)
     if run is None:
@@ -43,14 +42,10 @@ async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
 
     tool_calls_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     tool_calls: list[dict[str, Any]] = []
-    if tool_calls_file.exists():
-        for line in tool_calls_file.read_text(encoding="utf-8").splitlines():
-            try:
-                data = json.loads(line)
-                if data.get("run_id") == run_id:
-                    tool_calls.append(data)
-            except json.JSONDecodeError:
-                continue
+    for data in iter_jsonl_reversed(tool_calls_file):
+        if data.get("run_id") == run_id:
+            tool_calls.append(data)
+    tool_calls.reverse()
 
     return {"data": {"run": run, "tool_calls": tool_calls}}
 
@@ -59,10 +54,7 @@ async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
 async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     """Re-execute a past run and return the new output."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     original_run = runtime.audit_store.get_run(run_id)
     if original_run is None:
@@ -75,6 +67,8 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     repository = manager.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(agent_id=agent_id, session_id=session_id)
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_state", message=str(exc)) from exc
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
@@ -85,7 +79,12 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     original_message = str(user_messages[-1].get("content", ""))
 
     replay_session_id = f"replay:{run_id}:{uuid.uuid4().hex[:8]}"
-    await runtime.session_manager.create_session(replay_session_id, title=f"Replay of {run_id}")
+    try:
+        await runtime.session_manager.create_session(
+            replay_session_id, title=f"Replay of {run_id}"
+        )
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
 
     try:
         result = await manager.run_once(
@@ -144,10 +143,7 @@ async def compare_runs(
 ) -> dict[str, Any]:
     """Compare outputs of two runs side-by-side."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     data_a = runtime.audit_store.get_run(run_a)
     data_b = runtime.audit_store.get_run(run_b)
@@ -160,17 +156,14 @@ async def compare_runs(
     tool_calls_file = runtime.root_dir / "storage" / "audit" / "tool_calls.jsonl"
     tool_calls_a: list[dict[str, Any]] = []
     tool_calls_b: list[dict[str, Any]] = []
-    if tool_calls_file.exists():
-        for line in tool_calls_file.read_text(encoding="utf-8").splitlines():
-            try:
-                data = json.loads(line)
-                rid = data.get("run_id", "")
-                if rid == run_a:
-                    tool_calls_a.append(data)
-                elif rid == run_b:
-                    tool_calls_b.append(data)
-            except json.JSONDecodeError:
-                continue
+    for data in iter_jsonl_reversed(tool_calls_file):
+        rid = data.get("run_id", "")
+        if rid == run_a:
+            tool_calls_a.append(data)
+        elif rid == run_b:
+            tool_calls_b.append(data)
+    tool_calls_a.reverse()
+    tool_calls_b.reverse()
 
     # Extract assistant outputs from session histories
     repository = manager.get_session_repository(agent_id)
@@ -220,10 +213,7 @@ async def list_replays(
 ) -> dict[str, Any]:
     """List replay sessions and their source runs."""
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
+    runtime = require_existing_runtime(manager, agent_id)
 
     session_manager = runtime.session_manager
     all_sessions = await session_manager.list_sessions()

@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from tools.path_guard import InvalidPathError, resolve_workspace_path
@@ -109,7 +110,7 @@ async def read_file(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        runtime = agent_manager.get_runtime(agent_id)
+        runtime = require_existing_runtime(agent_manager, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -135,7 +136,7 @@ async def save_file(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        runtime = agent_manager.get_runtime(agent_id)
+        runtime = require_existing_runtime(agent_manager, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -169,7 +170,7 @@ async def list_agent_skills(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        runtime = agent_manager.get_runtime(agent_id)
+        runtime = require_existing_runtime(agent_manager, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -194,7 +195,7 @@ async def list_workspace_files(
 ) -> dict[str, Any]:
     _, agent_manager = _require_deps()
     try:
-        runtime = agent_manager.get_runtime(agent_id)
+        runtime = require_existing_runtime(agent_manager, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)

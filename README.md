@@ -51,7 +51,7 @@ Hybrid semantic + lexical retrieval powered by SQLite FTS5 prefiltering. Automat
 Security-conscious defaults across all tools:
 
 - **`fetch_url`**: allowed schemes (`http`/`https`), private/loopback blocking, redirect and content-size caps.
-- **`terminal`**: sanitized environment with secret-like vars stripped plus sandbox-aware command policy modes.
+- **`terminal`**: allowlisted runtime environment plus sandbox-aware command policy modes.
 - **`web_search`**: policy-gated autonomous triggers for cron/heartbeat contexts plus repeated-search churn guards inside a single run.
 
 ### 🧰 Rich Tool Surface
@@ -239,12 +239,12 @@ The production-like profile needs one public origin so browser auth cookie boots
 
 Mini-OpenClaw applies a defense-in-depth approach:
 
-- **Auth:** All `/api/v1/*` routes require `APP_ADMIN_TOKEN` — via `Authorization: Bearer` header (API clients) or an `HttpOnly` cookie (browser clients). Health and readiness endpoints are exempt.
+- **Auth:** `/api/v1/*` routes require `APP_ADMIN_TOKEN` after initial setup — via `Authorization: Bearer` header (API clients) or an `HttpOnly` cookie (browser clients). Health, readiness, and setup status are public; setup configuration is public only until the first admin token exists.
 - **File APIs:** Workspace-root scoped with path traversal guards.
 - **Tool policy gates:** Autonomous scheduler triggers (`heartbeat`, `cron`) use explicit allowlists.
 - **Network controls:** `fetch_url` blocks private/loopback/link-local addresses by default.
-- **Terminal sandboxing:** Environment is scrubbed of secret-like variables before execution.
-- **Middleware:** CORS + trusted hosts + rate limiting enabled by default.
+- **Terminal sandboxing:** Sandboxed terminal reads are scoped to the agent workspace and approved runtime paths; the child receives an allowlisted runtime environment. The canonical config disables terminal networking and shell syntax; `terminal-flex` opts into both explicitly.
+- **Middleware:** CORS + trusted hosts + rate limiting enabled by default; the Docker production profile trusts the client IP supplied by its internal Nginx proxy.
 - **Docker prod profile:** Nginx is the only public service; backend and frontend stay on the internal Compose network.
 
 ---
@@ -292,6 +292,8 @@ QuickStart asks for:
 - `rag_mode`
 - tool preset: `safe`, `balanced`, or `builder`
 
+The `safe` preset removes mutating tools (`terminal` and `apply_patch`) from enabled chat, heartbeat, cron, and delegation scopes.
+
 Advanced mode can override:
 
 - `agent_runtime.max_steps`
@@ -300,6 +302,8 @@ Advanced mode can override:
 - `cron.enabled`
 - terminal sandbox and policy mode
 - explicit chat / heartbeat / cron tool lists
+
+When `safe` is selected, it remains authoritative after these overrides and removes `terminal` and `apply_patch` from enabled scopes.
 
 ### Runtime config
 
@@ -328,7 +332,7 @@ Exit codes: `0` success · `1` invalid args · `2` missing binary · `3` health 
 | Multi-agent workspaces  | ✅ Ready | Per-agent sessions, memory, knowledge, usage, scheduler state           |
 | Chat + streaming        | ✅ Ready | SSE streaming, debug events, tool/retrieval traces                      |
 | Session compression     | ✅ Ready | Context summarization and history truncation via `/compress`            |
-| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, env scrubbing       |
+| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, allowlisted terminal environment |
 | Tool safety eval harness| ✅ Ready | YAML-defined adversarial cases, safety scorecard, CI-integrated         |
 | Scheduler API           | ✅ Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs                |
 | Scheduler observability | ✅ Ready | Windowed duration/latency aggregates + timeseries (`1h` → `30d`)        |
@@ -369,6 +373,7 @@ PUT              /api/v1/agents/{agent_id}/tools/selection
 
 Conversation execution, session lifecycle, transcript history, compression, and title generation.
 Session history responses also surface assistant debug metadata such as tool calls and tracked skill usage for operator-facing inspection.
+Session IDs are logical opaque values; clients must URL-encode them when placing them in a path. Reserved characters are encoded in the corresponding workspace filename, while existing logical IDs remain unchanged at the API boundary.
 
 ```text
 POST             /api/v1/agents/{agent_id}/chat
@@ -454,7 +459,7 @@ GET              /api/v1/agents/{agent_id}/runs/replays
 
 ### Setup
 
-First-time configuration endpoints (exempt from auth).
+First-time configuration endpoints; setup status is public, while configuration is public only until the first admin token exists.
 
 ```text
 GET              /api/v1/setup/status

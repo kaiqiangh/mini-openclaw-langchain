@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import HeartbeatRuntimeConfig
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
+from utils.async_io import iter_jsonl_reversed
 
 
 @dataclass
@@ -103,20 +104,8 @@ class HeartbeatScheduler:
     ) -> list[dict[str, Any]]:
         max_rows = max(1, int(limit))
         with self._file_lock:
-            if not self.audit_file.exists():
-                return []
-            lines = [
-                line
-                for line in self.audit_file.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        rows: list[dict[str, Any]] = []
-        for line in reversed(lines):
-            try:
-                value = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(value, dict):
+            rows: list[dict[str, Any]] = []
+            for value in iter_jsonl_reversed(self.audit_file):
                 if since_ms is not None:
                     observed_ts = int(
                         value.get("finished_at_ms")
@@ -129,7 +118,7 @@ class HeartbeatScheduler:
                 rows.append(value)
                 if len(rows) >= max_rows:
                     break
-        return rows
+            return rows
 
     async def _tick_once(self) -> None:
         started_ts = time.time()

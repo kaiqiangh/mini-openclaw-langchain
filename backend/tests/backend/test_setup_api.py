@@ -1,5 +1,7 @@
 """Tests for setup API."""
+import asyncio
 import os
+import stat
 import tempfile
 from pathlib import Path
 
@@ -54,6 +56,18 @@ def test_configure_system_deepseek(client):
     env_content = (tmp_path / ".env").read_text()
     assert "APP_ADMIN_TOKEN=test-token-1234" in env_content
     assert "DEEPSEEK_API_KEY=sk-test-key" in env_content
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
+
+    (tmp_path / ".env").chmod(0o644)
+    rejected = c.post("/api/v1/setup/configure", json={
+        "admin_token": "test-token-1234",
+        "llm_provider": "deepseek",
+        "llm_api_key": "sk-test-key-2",
+    })
+    assert rejected.status_code == 401
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o644
 
 
 def test_configure_system_openai(client):
@@ -68,6 +82,55 @@ def test_configure_system_openai(client):
 
     env_content = (tmp_path / ".env").read_text()
     assert "OPENAI_API_KEY=sk-openai-key" in env_content
+
+
+def test_configure_rechecks_bootstrap_state_before_writing(client):
+    c, tmp_path = client
+    first = c.post(
+        "/api/v1/setup/configure",
+        json={
+            "admin_token": "test-token-1234",
+            "llm_provider": "deepseek",
+            "llm_api_key": "sk-first-key",
+        },
+    )
+    assert first.status_code == 200
+
+    late_bootstrap = c.post(
+        "/api/v1/setup/configure",
+        json={
+            "admin_token": "late-token-1234",
+            "llm_provider": "deepseek",
+            "llm_api_key": "sk-late-key",
+        },
+    )
+    assert late_bootstrap.status_code == 401
+    assert "APP_ADMIN_TOKEN=test-token-1234" in (tmp_path / ".env").read_text()
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/setup/configure",
+            "headers": [],
+            "state": {},
+        }
+    )
+    request.state.admin_authenticated = True
+    updated = asyncio.run(
+        setup.configure_system(
+            request,
+            setup.ConfigureRequest(
+                admin_token="updated-token-1234",
+                llm_provider="deepseek",
+                llm_api_key="sk-updated-key",
+            ),
+        )
+    )
+    assert updated["data"]["configured"] is True
+    assert "APP_ADMIN_TOKEN=updated-token-1234" in (tmp_path / ".env").read_text()
+    if os.name != "nt":
+        assert stat.S_IMODE((tmp_path / ".env").stat().st_mode) == 0o600
 
 
 def test_configure_rejects_short_token(client):
@@ -88,3 +151,20 @@ def test_configure_rejects_unknown_provider(client):
         "llm_api_key": "sk-test",
     })
     assert r.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["admin_token", "llm_api_key", "llm_base_url"])
+def test_configure_rejects_env_line_injection(client, field):
+    c, tmp_path = client
+    payload = {
+        "admin_token": "test-token-1234",
+        "llm_provider": "deepseek",
+        "llm_api_key": "sk-test-key",
+        "llm_base_url": "https://api.deepseek.com",
+    }
+    payload[field] = "safe\nINJECTED=value"
+
+    response = c.post("/api/v1/setup/configure", json=payload)
+
+    assert response.status_code == 422
+    assert not (tmp_path / ".env").exists()

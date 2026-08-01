@@ -6,15 +6,17 @@ from tools.base import ToolContext
 from tools.terminal_tool import TerminalTool
 
 
-def test_terminal_tool_scrubs_secret_environment(monkeypatch, tmp_path: Path):
+def test_terminal_tool_allowlists_child_environment(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("OPENAI_API_KEY", "super-secret")
-    monkeypatch.setenv("SAFE_FLAG", "visible")
+    monkeypatch.setenv("DATABASE_URL", "postgres://user:secret@example.test/db")
+    monkeypatch.setenv("TERM", "visible")
     script_path = tmp_path / "show_env.py"
     script_path.write_text(
         (
             "import os\n"
             "print((os.getenv('OPENAI_API_KEY') or '') + '|' + "
-            "(os.getenv('SAFE_FLAG') or ''))\n"
+            "(os.getenv('DATABASE_URL') or '') + '|' + "
+            "(os.getenv('TERM') or ''))\n"
         ),
         encoding="utf-8",
     )
@@ -36,7 +38,8 @@ def test_terminal_tool_scrubs_secret_environment(monkeypatch, tmp_path: Path):
     assert result.ok is True
     combined = str(result.data.get("combined", ""))
     assert "super-secret" not in combined
-    assert "|visible" in combined
+    assert "postgres://user:secret@example.test/db" not in combined
+    assert "||visible" in combined
 
 
 def test_terminal_blocks_non_allowlisted_command(tmp_path: Path):

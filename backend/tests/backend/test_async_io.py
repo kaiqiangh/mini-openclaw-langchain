@@ -6,6 +6,7 @@ import pytest
 from utils.async_io import (
     read_jsonl,
     read_jsonl_reversed,
+    iter_jsonl_reversed,
     append_jsonl,
     atomic_write,
     file_exists,
@@ -50,6 +51,13 @@ async def test_read_jsonl_reversed(tmp_path: Path):
     assert len(result) == 3
     assert result[0] == {"order": 3}
     assert result[2] == {"order": 1}
+
+
+def test_iter_jsonl_reversed_skips_invalid_lines_without_full_list(tmp_path: Path):
+    path = tmp_path / "test.jsonl"
+    path.write_text('{"order": 1}\nnot json\n{"order": 2}\n', encoding="utf-8")
+
+    assert list(iter_jsonl_reversed(path)) == [{"order": 2}, {"order": 1}]
 
 
 @pytest.mark.asyncio

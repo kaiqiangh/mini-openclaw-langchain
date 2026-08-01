@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from config import (
     load_config,
@@ -126,7 +127,7 @@ async def get_rag_mode(
         config = load_config(base_dir)
         return {"data": {"enabled": config.runtime.rag_mode, "agent_id": "default"}}
     try:
-        runtime = _AGENT_MANAGER.get_runtime(agent_id)
+        runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -151,11 +152,12 @@ async def set_rag_mode(
         save_runtime_config(base_dir, config.runtime)
         return {"data": {"enabled": request.enabled, "agent_id": "default"}}
     try:
-        agent_config_path = _AGENT_MANAGER.get_agent_config_path(agent_id)
+        runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
+        agent_config_path = runtime.root_dir / "config.json"
         runtime = load_runtime_config(agent_config_path)
         runtime.rag_mode = request.enabled
         save_runtime_config_to_path(agent_config_path, runtime)
-        refreshed = _AGENT_MANAGER.get_runtime(agent_id)
+        refreshed = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -182,7 +184,7 @@ async def get_runtime_config(
             }
         }
     try:
-        runtime = _AGENT_MANAGER.get_runtime(agent_id)
+        runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
@@ -220,9 +222,10 @@ async def set_runtime_config(
         }
 
     try:
-        config_path = _AGENT_MANAGER.get_agent_config_path(agent_id)
+        current_runtime = require_existing_runtime(_AGENT_MANAGER, agent_id)
+        config_path = current_runtime.root_dir / "config.json"
         save_runtime_config_to_path(config_path, parsed_runtime)
-        refreshed = _AGENT_MANAGER.get_runtime(agent_id)
+        refreshed = require_existing_runtime(_AGENT_MANAGER, agent_id)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)

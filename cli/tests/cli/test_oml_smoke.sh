@@ -30,6 +30,7 @@ create_fixture() {
   mkdir -p \
     "$tmpdir/cli/oml" \
     "$tmpdir/backend/agent_templates" \
+    "$tmpdir/backend/utils" \
     "$tmpdir/backend/workspaces" \
     "$tmpdir/frontend"
   cp "$ROOT_DIR/oml" "$tmpdir/oml"
@@ -37,6 +38,9 @@ create_fixture() {
   cp "$ROOT_DIR/cli/oml/onboard_helper.py" "$tmpdir/cli/oml/onboard_helper.py"
   cp "$ROOT_DIR/backend/config.py" "$tmpdir/backend/config.py"
   cp "$ROOT_DIR/backend/config.json" "$tmpdir/backend/config.json"
+  cp "$ROOT_DIR/backend/utils/__init__.py" "$tmpdir/backend/utils/__init__.py"
+  cp "$ROOT_DIR/backend/utils/dict_ops.py" "$tmpdir/backend/utils/dict_ops.py"
+  cp "$ROOT_DIR/backend/utils/redaction.py" "$tmpdir/backend/utils/redaction.py"
   cp "$ROOT_DIR/backend/app.py" "$tmpdir/backend/app.py"
   cp "$ROOT_DIR/frontend/package.json" "$tmpdir/frontend/package.json"
   cp "$ROOT_DIR"/backend/agent_templates/*.json "$tmpdir/backend/agent_templates/"
@@ -143,12 +147,24 @@ if [ "$before_invalid_llm" != "$after_invalid_llm" ]; then
   fail "invalid llm route should not modify existing config"
 fi
 
-$OML onboard --non-interactive --force --agent alpha --llm-default deepseek.chat --fallback none --rag-mode off --tool-preset safe --chat-tools none >/dev/null
+$OML onboard --non-interactive --force --agent alpha --llm-default deepseek.chat --fallback none --rag-mode off --tool-preset safe --chat-tools terminal --heartbeat-tools apply_patch --cron-tools terminal >/dev/null
 
 assert_file_contains "$alpha_config" '"rag_mode": false'
-if grep -q '"apply_patch"' "$alpha_config"; then
-  fail "safe reset should remove apply_patch from agent config"
-fi
+python3 - "$alpha_config" <<'PY'
+import json
+import sys
+
+config = json.loads(open(sys.argv[1], encoding="utf-8").read())
+unsafe = {"apply_patch", "terminal"}
+lists = [
+    config.get("chat_enabled_tools", []),
+    config.get("autonomous_tools", {}).get("heartbeat_enabled_tools", []),
+    config.get("autonomous_tools", {}).get("cron_enabled_tools", []),
+]
+lists.extend(config.get("delegation", {}).get("allowed_tool_scopes", {}).values())
+if any(unsafe.intersection(tools) for tools in lists):
+    raise SystemExit("safe reset retained a mutating tool in an enabled scope")
+PY
 
 set +e
 $OML onboard --non-interactive --agent "bad id" >/tmp/oml-onboard-invalid-agent.out 2>&1

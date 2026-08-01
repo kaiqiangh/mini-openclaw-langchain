@@ -617,7 +617,7 @@ export async function archiveSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { archived: boolean; session_id: string } }>(
-    `${agentBase(agentId)}/sessions/${sessionId}/archive`,
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/archive`,
     { method: "POST" },
   );
 }
@@ -627,7 +627,7 @@ export async function restoreSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { restored: boolean; session_id: string } }>(
-    `${agentBase(agentId)}/sessions/${sessionId}/restore`,
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/restore`,
     { method: "POST" },
   );
 }
@@ -638,7 +638,7 @@ export async function deleteSession(
   agentId = "default",
 ): Promise<void> {
   await requestJson<{ data: { deleted: boolean; session_id: string } }>(
-    `${agentBase(agentId)}/sessions/${sessionId}?archived=${archived ? "true" : "false"}`,
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}?archived=${archived ? "true" : "false"}`,
     { method: "DELETE" },
   );
 }
@@ -649,7 +649,7 @@ export async function getSessionHistory(
   agentId = "default",
 ): Promise<ChatHistoryResponse> {
   const payload = await requestJson<{ data: ChatHistoryResponse }>(
-    `${agentBase(agentId)}/sessions/${sessionId}/history?archived=${archived ? "true" : "false"}`,
+    `${agentBase(agentId)}/sessions/${encodeURIComponent(sessionId)}/history?archived=${archived ? "true" : "false"}`,
   );
   return payload.data;
 }
@@ -1127,7 +1127,7 @@ export interface DelegateDetail extends DelegateSummary {
 
 export async function listDelegates(agentId: string, sessionId: string): Promise<{ delegates: DelegateSummary[] }> {
   const resp = await fetchWithAdminSession(
-    `${API_BASE}/api/v1/agents/${agentId}/sessions/${sessionId}/delegates`,
+    `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates`,
   );
   if (!resp.ok) throw new Error(`GET delegates: ${resp.status}`);
   return resp.json();
@@ -1135,7 +1135,7 @@ export async function listDelegates(agentId: string, sessionId: string): Promise
 
 export async function getDelegateDetail(agentId: string, sessionId: string, delegateId: string): Promise<DelegateDetail> {
   const resp = await fetchWithAdminSession(
-    `${API_BASE}/api/v1/agents/${agentId}/sessions/${sessionId}/delegates/${delegateId}`,
+    `${API_BASE}/api/v1/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/delegates/${encodeURIComponent(delegateId)}`,
   );
   if (!resp.ok) throw new Error(`GET delegate detail: ${resp.status}`);
   return resp.json();

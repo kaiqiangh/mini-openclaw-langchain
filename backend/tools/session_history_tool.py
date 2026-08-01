@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -12,13 +11,13 @@ from .base import ToolContext
 from .contracts import ToolResult
 from .policy import PermissionLevel
 from .workspace_resolver import resolve_agent_root, resolve_project_root
+from graph.session_manager import InvalidSessionIdError, validate_session_id
 
 if TYPE_CHECKING:
     from graph.agent import AgentManager
     from graph.checkpoint_session_repository import CheckpointSessionSnapshot
 
 
-_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _T = TypeVar("_T")
 
 
@@ -94,7 +93,8 @@ class SessionHistoryTool:
         archived: bool,
     ) -> dict[str, Any]:
         manager = self._agent_manager()
-        runtime = manager.get_runtime(agent_id)
+        runtime_getter = getattr(manager, "get_existing_runtime", manager.get_runtime)
+        runtime = runtime_getter(agent_id)
         payload = _run_async(
             runtime.session_manager.load_existing_session(
                 session_id,
@@ -106,12 +106,15 @@ class SessionHistoryTool:
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context
         started = time.monotonic()
-        session_id = str(args.get("session_id", "")).strip()
-        if not _SESSION_ID_PATTERN.fullmatch(session_id):
+        raw_session_id = args.get("session_id")
+        session_id = raw_session_id if isinstance(raw_session_id, str) else ""
+        try:
+            validate_session_id(session_id)
+        except InvalidSessionIdError:
             return ToolResult.failure(
                 tool_name=self.name,
                 code="E_INVALID_ARGS",
-                message="session_id must match [A-Za-z0-9_.-]{1,128}",
+                message="session_id must match [A-Za-z0-9_.:-]{1,128}",
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 

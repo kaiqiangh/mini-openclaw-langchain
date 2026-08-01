@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from graph.session_manager import encode_session_path_component, validate_session_id
+
 
 @dataclass
 class DelegateState:
@@ -56,6 +58,7 @@ class DelegateRegistry:
 
         Returns dict with *delegate_id*, *session_id* (sub-session), and *role*.
         """
+        validate_session_id(parent_session_id)
         delegate_id = f"del_{uuid.uuid4().hex[:8]}"
         sub_session_id = f"sub_{uuid.uuid4().hex[:8]}"
         result_dir = (
@@ -63,7 +66,7 @@ class DelegateRegistry:
             / "workspaces"
             / agent_id
             / "sessions"
-            / parent_session_id
+            / encode_session_path_component(parent_session_id)
             / "delegates"
             / delegate_id
         )

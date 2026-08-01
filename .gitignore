@@ -206,9 +206,12 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-docs/
+docs/*
 !docs/cli/
 !docs/cli/oml.md
+# Engineering-skill configuration
+!docs/agents/
+!docs/agents/*.md
 plan/
 .DS_Store
 .codex/

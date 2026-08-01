@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import heapq
 import math
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from utils.async_io import iter_jsonl_reversed
 
 
 @dataclass
@@ -34,20 +38,8 @@ class UsageStore:
             with self.records_file.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    def _iter_records(self) -> list[dict[str, Any]]:
-        if not self.records_file.exists():
-            return []
-        rows: list[dict[str, Any]] = []
-        for line in self.records_file.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
-            if isinstance(row, dict):
-                rows.append(row)
-        return rows
+    def _iter_records(self) -> Iterator[dict[str, Any]]:
+        return iter_jsonl_reversed(self.records_file)
 
     @staticmethod
     def _coerce_int(value: Any) -> int:
@@ -230,8 +222,9 @@ class UsageStore:
         )
         session_filter = query.session_id.strip() if query.session_id else None
 
-        filtered: list[dict[str, Any]] = []
-        for raw in self._iter_records():
+        limit = max(1, int(query.limit))
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        for reverse_index, raw in enumerate(self._iter_records()):
             row = self._normalize_record(raw)
             if int(row.get("timestamp_ms", 0)) < min_ts:
                 continue
@@ -248,10 +241,15 @@ class UsageStore:
                 continue
             if session_filter and session_id != session_filter:
                 continue
-            filtered.append(row)
+            timestamp_ms = int(row.get("timestamp_ms", 0))
+            candidate = (timestamp_ms, reverse_index, row)
+            if len(candidates) < limit:
+                heapq.heappush(candidates, candidate)
+            elif candidate[:2] > candidates[0][:2]:
+                heapq.heapreplace(candidates, candidate)
 
-        filtered.sort(key=lambda item: int(item.get("timestamp_ms", 0)), reverse=True)
-        return filtered[: max(1, int(query.limit))]
+        candidates.sort(key=lambda item: (-item[0], -item[1]))
+        return [row for _, _, row in candidates]
 
     def summarize(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         normalized_records = [self._normalize_record(item) for item in records]

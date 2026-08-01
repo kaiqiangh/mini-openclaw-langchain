@@ -7,6 +7,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -14,12 +15,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from config import CronRuntimeConfig
 from graph.agent import AgentManager
 from graph.session_manager import SessionManager
+from utils.async_io import iter_jsonl_reversed
 
 
 ScheduleType = Literal["at", "every", "cron"]
 
 _LOCK_REGISTRY_GUARD = threading.Lock()
 _FILE_LOCKS: dict[str, threading.RLock] = {}
+_MAX_CONCURRENT_JOBS = 4
 CRON_EXECUTION_SUFFIX = """
 [Scheduled Execution Rules]
 - Execute the user job prompt directly.
@@ -86,11 +89,12 @@ def _parse_iso_datetime(value: str, zone: ZoneInfo) -> datetime:
     return parsed.astimezone(zone)
 
 
-def _parse_cron_field(field: str, lower: int, upper: int) -> set[int]:
+@lru_cache(maxsize=256)
+def _parse_cron_field(field: str, lower: int, upper: int) -> frozenset[int]:
     values: set[int] = set()
     source = field.strip()
     if source == "*":
-        return set(range(lower, upper + 1))
+        return frozenset(range(lower, upper + 1))
 
     for part in source.split(","):
         token = part.strip()
@@ -109,7 +113,7 @@ def _parse_cron_field(field: str, lower: int, upper: int) -> set[int]:
 
     if not values:
         raise ValueError(f"Invalid cron field: {field}")
-    return values
+    return frozenset(values)
 
 
 def _cron_matches(expr: str, dt: datetime) -> bool:
@@ -307,34 +311,21 @@ class CronScheduler:
     ) -> list[dict[str, Any]]:
         max_rows = max(1, int(limit))
         with self._file_lock:
-            if not file_path.exists():
-                return []
-            lines = [
-                line
-                for line in file_path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
-        rows: list[dict[str, Any]] = []
-        for line in reversed(lines):
-            try:
-                value = json.loads(line)
-            except Exception:
-                continue
-            if not isinstance(value, dict):
-                continue
-            if since_ms is not None:
-                observed_ts = int(
-                    value.get("finished_at_ms")
-                    or value.get("timestamp_ms")
-                    or value.get("started_at_ms")
-                    or 0
-                )
-                if observed_ts and observed_ts < since_ms:
-                    continue
-            rows.append(value)
-            if len(rows) >= max_rows:
-                break
-        return rows
+            rows: list[dict[str, Any]] = []
+            for value in iter_jsonl_reversed(file_path):
+                if since_ms is not None:
+                    observed_ts = int(
+                        value.get("finished_at_ms")
+                        or value.get("timestamp_ms")
+                        or value.get("started_at_ms")
+                        or 0
+                    )
+                    if observed_ts and observed_ts < since_ms:
+                        continue
+                rows.append(value)
+                if len(rows) >= max_rows:
+                    break
+            return rows
 
     def query_runs(
         self, *, limit: int = 100, since_ms: int | None = None
@@ -471,17 +462,22 @@ class CronScheduler:
                 return
 
             now_ts = time.time()
-            changed = False
-            for job in jobs:
-                if not job.enabled:
-                    continue
-                if job.next_run_ts > now_ts:
-                    continue
-                await self._run_job(job, now_ts, manual_run=False)
-                changed = True
+            due_jobs = [
+                job
+                for job in jobs
+                if job.enabled and job.next_run_ts <= now_ts
+            ]
+            if not due_jobs:
+                return
 
-            if changed:
-                self._save_jobs(jobs)
+            semaphore = asyncio.Semaphore(_MAX_CONCURRENT_JOBS)
+
+            async def run_due_job(job: CronJob) -> None:
+                async with semaphore:
+                    await self._run_job(job, now_ts, manual_run=False)
+
+            await asyncio.gather(*(run_due_job(job) for job in due_jobs))
+            self._save_jobs(jobs)
 
     async def run(self) -> None:
         while not self._stop_event.is_set():

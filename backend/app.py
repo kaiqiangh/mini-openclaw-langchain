@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import ipaddress
 import logging
 import os
 import time
@@ -65,6 +66,8 @@ _PROXY_HOP_HEADERS = {
     "upgrade",
 }
 logger = logging.getLogger(__name__)
+_REQUEST_ID_MAX_LENGTH = 128
+_REQUEST_ID_EXTRA_CHARS = frozenset("._:-")
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -106,6 +109,18 @@ def _request_id(request: Request) -> str:
     return value or "unknown"
 
 
+def _validated_request_id(value: str) -> str:
+    candidate = value.strip()
+    if (
+        0 < len(candidate) <= _REQUEST_ID_MAX_LENGTH
+        and candidate.isascii()
+        and candidate[0].isalnum()
+        and all(char.isalnum() or char in _REQUEST_ID_EXTRA_CHARS for char in candidate)
+    ):
+        return candidate
+    return str(uuid.uuid4())
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp, coordinator: LocalCoordinator) -> None:
         super().__init__(app)
@@ -129,6 +144,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 return limit, window_sec
         return None
 
+    @staticmethod
+    def _client_address(request: Request) -> str:
+        direct = request.client.host if request.client else "unknown"
+        if not _env_bool("APP_TRUST_PROXY_HEADERS"):
+            return direct
+
+        candidates = [request.headers.get("X-Real-IP", "")]
+        candidates.extend(
+            reversed(
+                [
+                    value.strip()
+                    for value in request.headers.get("X-Forwarded-For", "").split(",")
+                ]
+            )
+        )
+        for candidate in candidates:
+            try:
+                return str(ipaddress.ip_address(candidate.strip()))
+            except ValueError:
+                continue
+        return direct
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         # Skip rate limiting for non-API routes and health/ready
         path = request.url.path
@@ -137,7 +174,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path in {"/api/v1/health", "/api/v1/ready"}:
             return await call_next(request)
 
-        client = request.client.host if request.client else "unknown"
+        client = self._client_address(request)
 
         # Global rate limit
         global_key = f"{client}:__global__"
@@ -196,8 +233,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        incoming = request.headers.get("X-Request-Id", "").strip()
-        request_id = incoming or str(uuid.uuid4())
+        request_id = _validated_request_id(request.headers.get("X-Request-Id", ""))
         request.state.request_id = request_id
         response = await call_next(request)
         response.headers.setdefault("X-Request-Id", request_id)
@@ -205,7 +241,11 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
-    _EXEMPT_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/setup/status", "/api/v1/setup/configure"}
+    _EXEMPT_PATHS = {
+        "/api/v1/health",
+        "/api/v1/ready",
+        "/api/v1/setup/status",
+    }
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         path = request.url.path
@@ -215,6 +255,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         configured = (os.getenv("APP_ADMIN_TOKEN", "") or "").strip()
+        if path == "/api/v1/setup/configure" and not configured:
+            return await call_next(request)
         if not configured:
             return JSONResponse(
                 status_code=503,
@@ -249,6 +291,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                 ),
             )
 
+        request.state.admin_authenticated = True
         return await call_next(request)
 
 
@@ -372,6 +415,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await scheduler_api.stop_all_schedulers()
+        await agent_manager.runtime_checkpointer.close()
         heartbeat_scheduler = None
         cron_scheduler = None
 
@@ -481,7 +525,6 @@ app.include_router(hooks.router, prefix="/api/v1")
 
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
-    _ = load_config(BASE_DIR)
     return {"status": "ok"}
 
 

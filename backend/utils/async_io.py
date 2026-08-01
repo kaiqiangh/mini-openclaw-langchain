@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import mmap
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +40,31 @@ async def read_jsonl_reversed(path: Path) -> list[dict[str, Any]]:
     all_lines = await read_jsonl(path)
     all_lines.reverse()
     return all_lines
+
+
+def iter_jsonl_reversed(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield valid JSON objects newest-first without materializing the file."""
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            if size == 0:
+                return
+            with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapped:
+                end = size
+                while end > 0:
+                    start = mapped.rfind(b"\n", 0, end - 1) + 1
+                    raw = mapped[start:end].strip()
+                    end = start
+                    if not raw:
+                        continue
+                    try:
+                        value = json.loads(raw.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if isinstance(value, dict):
+                        yield value
+    except FileNotFoundError:
+        return
 
 
 async def append_jsonl(path: Path, record: dict[str, Any]) -> None:

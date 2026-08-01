@@ -67,27 +67,25 @@ async def resolve_approval(
     decision: ApprovalDecision,
 ) -> dict[str, Any]:
     store = _require_store()
-    existing = store.get_request(agent_id, request_id)
-    if existing is None:
-        raise ApiError(
-            status_code=404,
-            code="not_found",
-            message=f"Approval request not found: {request_id}",
-        )
-    if existing.status != ApprovalStatus.PENDING:
+    new_status = ApprovalStatus.APPROVED if decision.action == "approve" else ApprovalStatus.DENIED
+    if not store.resolve_request(
+        agent_id,
+        request_id,
+        new_status,
+        reason=decision.reason,
+    ):
+        existing = store.get_request(agent_id, request_id)
+        if existing is None:
+            raise ApiError(
+                status_code=404,
+                code="not_found",
+                message=f"Approval request not found: {request_id}",
+            )
         raise ApiError(
             status_code=409,
             code="already_resolved",
             message=f"Approval request already resolved: {existing.status.value}",
         )
-
-    new_status = ApprovalStatus.APPROVED if decision.action == "approve" else ApprovalStatus.DENIED
-    store.resolve_request(
-        agent_id,
-        request_id,
-        new_status,
-        reason=decision.reason,
-    )
 
     if request_id in _pending_waiters:
         _pending_results[request_id] = new_status

@@ -284,6 +284,7 @@ Effective route resolution uses this order:
 
 ### Chat / Sessions / Agents
 
+- Create agents explicitly with `POST /api/v1/agents`; request-scoped routes return `404` for unknown agent IDs.
 - `POST /api/v1/agents/{agent_id}/chat`
 - `GET|POST /api/v1/agents/{agent_id}/sessions`
 - `GET /api/v1/agents/{agent_id}/sessions/{session_id}/messages`
@@ -337,6 +338,8 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET /api/v1/agents/{agent_id}/approvals` — list pending approval requests
 - `POST /api/v1/agents/{agent_id}/approvals/{request_id}` — approve or deny (body: `{ action: "approve"|"deny", reason?: string }`)
 
+Approval waiters are process-local; keep the backend single-process while using the JSONL approval store.
+
 ### Run Comparison & Replay
 
 - `GET /api/v1/agents/{agent_id}/runs/{run_id}` — run details + tool calls
@@ -344,10 +347,10 @@ resolved default profile, fallback profiles, warnings, and errors.
 - `GET /api/v1/agents/{agent_id}/runs/compare?run_a=...&run_b=...` — side-by-side diff of two run outputs
 - `GET /api/v1/agents/{agent_id}/runs/replays` — list replay sessions
 
-### Setup (Auth-Exempt)
+### Setup (Initial Bootstrap)
 
 - `GET /api/v1/setup/status` — check if system needs initial configuration
-- `POST /api/v1/setup/configure` — write admin token + LLM provider config
+- `POST /api/v1/setup/configure` — write admin token + LLM provider config with owner-only `.env` permissions; public only before an admin token exists, then requires the existing token
 
 ### Scheduler
 
@@ -365,11 +368,15 @@ resolved default profile, fallback profiles, warnings, and errors.
 
 - Workspace path escape prevention in file tools/endpoints.
 - URL fetch restrictions (scheme, host policy, content bounds, redirect cap).
-- Terminal command policy modes (`auto`, `allowlist`, `denylist`) + process sandbox backend + environment secret scrubbing.
+- Terminal command policy modes (`auto`, `allowlist`, `denylist`) + workspace-scoped process sandbox + allowlisted child environment.
   Explicit `allowed_command_prefixes` entries keep legacy allowlist behavior, even when the list is empty.
+- The canonical runtime disables terminal networking and shell syntax; `terminal-flex` is the explicit opt-in profile for both.
+- Linux bubblewrap execution assembles an isolated `/workspace` root with explicit read-only runtime mounts, fresh `/proc`, `/dev`, and `/tmp`, and network namespace isolation by default.
 - Autonomous tool calls blocked unless explicitly allowlisted.
 - API middleware:
   - admin bearer token gate (`APP_ADMIN_TOKEN`)
+  - health, readiness, and setup status are public; setup configuration is public only before the first admin token exists
+  - rate limits use direct peer addresses by default and trust `X-Real-IP` / `X-Forwarded-For` only when `APP_TRUST_PROXY_HEADERS=true`
 
 ## Local Runtime and Proxy Modes
 
@@ -430,7 +437,7 @@ Isolated Python execution via Docker containers. Configure with `REPL_SANDBOX_MO
 | ----------- | ------------------------------------------------------------ |
 | `in_process`| Default. Multiprocessing with resource limits.               |
 | `docker`    | Always use Docker container isolation.                        |
-| `auto`      | Use Docker if available, fall back to in-process.             |
+| `auto`      | Use Docker if available; fall back to in-process only when Docker or the image is unavailable before execution. |
 
 Docker flags: `--memory=256m --cpus=1 --network=none --read-only --cap-drop ALL`
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ class ApprovalStore:
         self.base_dir = base_dir
         self._store_dir = base_dir / "storage" / "approvals"
         self._store_dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
 
     def _path(self, agent_id: str) -> Path:
         return self._store_dir / f"{agent_id}.jsonl"
@@ -64,28 +66,31 @@ class ApprovalStore:
             created_at=now,
         )
         path = self._path(agent_id)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "request_id": request_id,
-                "agent_id": agent_id,
-                "session_id": session_id,
-                "run_id": run_id,
-                "tool_name": tool_name,
-                "tool_args": tool_args,
-                "trigger_type": trigger_type,
-                "status": ApprovalStatus.PENDING.value,
-                "created_at": now,
-                "ttl_seconds": ttl_seconds,
-            }) + "\n")
+        with self._lock:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "request_id": request_id,
+                    "agent_id": agent_id,
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "tool_name": tool_name,
+                    "tool_args": tool_args,
+                    "trigger_type": trigger_type,
+                    "status": ApprovalStatus.PENDING.value,
+                    "created_at": now,
+                    "ttl_seconds": ttl_seconds,
+                }) + "\n")
         return request
 
     def get_request(self, agent_id: str, request_id: str) -> ApprovalRequest | None:
         path = self._path(agent_id)
-        if not path.exists():
-            return None
+        with self._lock:
+            if not path.exists():
+                return None
+            lines = path.read_text(encoding="utf-8").splitlines()
         latest_status: dict[str, str] = {}
         all_data: dict[str, dict[str, Any]] = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
@@ -130,25 +135,31 @@ class ApprovalStore:
         reason: str | None = None,
     ) -> bool:
         path = self._path(agent_id)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "request_id": request_id,
-                "agent_id": agent_id,
-                "status": status.value,
-                "resolved_at": time.time(),
-                "reason": reason,
-                "event": "resolution",
-            }) + "\n")
-        return True
+        with self._lock:
+            existing = self.get_request(agent_id, request_id)
+            if existing is None or existing.status != ApprovalStatus.PENDING:
+                return False
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "request_id": request_id,
+                    "agent_id": agent_id,
+                    "status": status.value,
+                    "resolved_at": time.time(),
+                    "reason": reason,
+                    "event": "resolution",
+                }) + "\n")
+            return True
 
     def list_pending(self, agent_id: str, limit: int = 50) -> list[ApprovalRequest]:
         path = self._path(agent_id)
-        if not path.exists():
-            return []
+        with self._lock:
+            if not path.exists():
+                return []
+            lines = path.read_text(encoding="utf-8").splitlines()
         # Two-pass: first collect all resolutions, then collect pending
         resolved: set[str] = set()
         all_creates: dict[str, dict[str, Any]] = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in lines:
             line = line.strip()
             if not line:
                 continue

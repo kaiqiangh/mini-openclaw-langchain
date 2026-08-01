@@ -17,6 +17,16 @@ def test_chat_rejects_nonexistent_session(client):
     )
 
 
+@pytest.mark.parametrize("session_id", ["../escape", "nested/session", "bad\nvalue"])
+def test_chat_rejects_invalid_session_id_without_path_access(client, session_id: str):
+    response = client.post(
+        "/api/v1/agents/default/chat",
+        json={"message": "hello", "session_id": session_id, "stream": False},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_request"
+
+
 def test_chat_accepts_existing_session(client):
     """Chat endpoint must work with a properly created session."""
     # First create a session

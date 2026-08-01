@@ -1,17 +1,18 @@
 """FastAPI router for hook management and audit visibility."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from hooks.engine import HookEngine
 from hooks.types import HookConfig, HookEvent
+from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(prefix="/hooks", tags=["hooks"])
 
@@ -36,6 +37,7 @@ def _require_agent_manager() -> AgentManager:
 def _get_engine(agent_id: str) -> HookEngine:
     manager = _require_agent_manager()
     try:
+        require_existing_runtime(manager, agent_id)
         return manager.get_hook_engine(agent_id)
     except ValueError as exc:
         raise ApiError(
@@ -49,16 +51,8 @@ def _read_jsonl(path: Path, limit: int) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for line in reversed(path.read_text(encoding="utf-8").splitlines()):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            rows.append(payload)
+    for payload in iter_jsonl_reversed(path):
+        rows.append(payload)
         if len(rows) >= limit:
             break
     return rows
@@ -142,14 +136,7 @@ async def list_hook_audit(
     limit: int = Query(default=50, ge=1, le=500),
 ) -> dict[str, Any]:
     manager = _require_agent_manager()
-    try:
-        runtime = manager.get_runtime(agent_id)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400,
-            code="invalid_request",
-            message=str(exc),
-        ) from exc
+    runtime = require_existing_runtime(manager, agent_id)
     rows = _read_jsonl(runtime.audit_store.steps_file, limit=limit * 8)
     normalized_rows: list[HookAuditRow] = []
     for row in rows:

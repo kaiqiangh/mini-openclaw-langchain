@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import platform
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
@@ -8,6 +9,32 @@ from shutil import which
 
 class SandboxUnavailableError(RuntimeError):
     pass
+
+
+_DARWIN_RUNTIME_READ_PATHS = (
+    "/bin",
+    "/usr/bin",
+    "/usr/lib",
+    "/usr/libexec",
+    "/usr/local",
+    "/opt/homebrew",
+    "/System/Library",
+    "/Library",
+    "/dev",
+    "/tmp",
+    "/private/tmp",
+)
+
+_LINUX_RUNTIME_READ_PATHS = (
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/usr/local",
+    "/etc",
+)
 
 
 @dataclass(frozen=True)
@@ -33,18 +60,43 @@ class SandboxSelection:
 
 
 def _darwin_profile(root_dir: Path, allow_network: bool) -> str:
-    root = str(root_dir.resolve()).replace("\\", "\\\\").replace('"', '\\"')
+    root = str(root_dir.resolve())
     network_rule = "(allow network*)" if allow_network else "(deny network*)"
-    # Keep defaults restricted, allow command execution, and constrain writes to the workspace.
+    runtime_paths = (*_DARWIN_RUNTIME_READ_PATHS, *_darwin_python_runtime_paths())
+    read_rules = "".join(
+        f'(allow file-read-data (subpath "{_escape_profile_path(path)}"))'
+        for path in (root, *runtime_paths)
+    )
+    # Metadata traversal is needed to resolve approved paths, but file contents stay scoped.
     return (
         '(version 1)(deny default)(import "system.sb")'
         f"{network_rule}"
         "(allow process*)"
-        "(allow file-read*)"
-        f'(allow file-write* (subpath "{root}"))'
+        '(allow file-read-metadata (subpath "/"))'
+        f"{read_rules}"
+        f'(allow file-write* (subpath "{_escape_profile_path(root)}"))'
         '(allow file-write* (subpath "/tmp"))'
         '(allow file-write* (subpath "/private/tmp"))'
     )
+
+
+def _escape_profile_path(path: str) -> str:
+    return path.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _darwin_python_runtime_paths() -> tuple[str, ...]:
+    candidates = (
+        Path(sys.prefix),
+        Path(sys.base_prefix),
+        Path(sys.executable).resolve().parent.parent,
+    )
+    paths: list[str] = []
+    for candidate in candidates:
+        resolved = str(candidate.resolve())
+        if resolved == "/" or resolved in paths:
+            continue
+        paths.append(resolved)
+    return tuple(paths)
 
 
 def _linux_bwrap_command(
@@ -55,16 +107,27 @@ def _linux_bwrap_command(
         "bwrap",
         "--die-with-parent",
         "--new-session",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--bind",
-        root,
-        root,
-        "--chdir",
-        root,
+        "--unshare-all",
     ]
+    for path in _LINUX_RUNTIME_READ_PATHS:
+        cmd.extend(["--ro-bind-try", path, path])
+    cmd.extend(
+        [
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+            "--dir",
+            "/workspace",
+            "--bind",
+            root,
+            "/workspace",
+            "--chdir",
+            "/workspace",
+        ]
+    )
     if allow_network:
         cmd.append("--share-net")
     cmd.extend(argv)
@@ -145,4 +208,3 @@ def resolve_sandbox(
         root_dir=root_dir,
         allow_network=allow_network,
     )
-

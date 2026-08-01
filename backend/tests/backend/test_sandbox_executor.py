@@ -52,6 +52,24 @@ class TestSandboxExecutor:
         with patch("tools.sandbox_executor._docker_available", return_value=False):
             assert executor.use_docker is False
 
+    def test_docker_runtime_failure_fails_closed(self, monkeypatch):
+        config = SandboxConfig(mode="docker")
+        executor = SandboxExecutor(config)
+        docker_failure = {"ok": False, "error": "Docker execution error: daemon stopped"}
+
+        monkeypatch.setattr(
+            "tools.sandbox_executor._run_in_docker",
+            lambda code, config: docker_failure,
+        )
+        monkeypatch.setattr(
+            "tools.sandbox_executor._run_in_process",
+            lambda code, timeout_seconds: {"ok": True, "output": "unsafe fallback"},
+        )
+
+        result = executor.run("print(1)")
+
+        assert result == docker_failure
+
     def test_in_process_execution(self):
         config = SandboxConfig(mode="in_process")
         executor = SandboxExecutor(config)

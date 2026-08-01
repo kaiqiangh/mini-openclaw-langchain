@@ -9,6 +9,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel, Field
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from config import (
     runtime_from_payload,
@@ -103,16 +104,7 @@ def _templates_dir(manager: AgentManager) -> Path:
 
 
 def _require_known_runtime(manager: AgentManager, agent_id: str):
-    normalized = _normalize_agent_id(agent_id)
-    known = _existing_agents(manager)
-    if normalized not in known:
-        raise ApiError(status_code=404, code="not_found", message="Agent not found")
-    try:
-        return manager.get_runtime(normalized)
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    return require_existing_runtime(manager, agent_id)
 
 
 def _agent_tools_payload(manager: AgentManager, agent_id: str) -> dict[str, Any]:
@@ -243,17 +235,29 @@ async def create_agent(req: CreateAgentRequest, response: Response) -> dict[str,
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(agent_id: str) -> Response:
     manager = _require_agent_manager()
+    normalized = _normalize_agent_id(agent_id)
+    if normalized == "default":
+        try:
+            manager.delete_agent(normalized)
+        except ValueError as exc:
+            raise ApiError(
+                status_code=400, code="invalid_request", message=str(exc)
+            ) from exc
+    known = _existing_agents(manager)
+    if normalized not in known:
+        raise ApiError(status_code=404, code="not_found", message="Agent not found")
+
+    from api import scheduler_api
+
+    await scheduler_api.stop_agent_schedulers(normalized)
     try:
-        deleted = manager.delete_agent(agent_id)
+        deleted = manager.delete_agent(normalized)
     except ValueError as exc:
         raise ApiError(
             status_code=400, code="invalid_request", message=str(exc)
         ) from exc
     if not deleted:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
-    from api import scheduler_api
-
-    await scheduler_api.stop_agent_schedulers(agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -262,6 +266,7 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
     manager = _require_agent_manager()
     from api import scheduler_api
 
+    known = _existing_agents(manager)
     results: list[dict[str, Any]] = []
     deleted_count = 0
     for raw in request.agent_ids:
@@ -271,6 +276,18 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
                 {"agent_id": raw, "deleted": False, "error": "invalid_agent_id"}
             )
             continue
+        if agent_id == "default":
+            try:
+                manager.delete_agent(agent_id)
+            except ValueError as exc:
+                results.append(
+                    {"agent_id": agent_id, "deleted": False, "error": str(exc)}
+                )
+            continue
+        if agent_id not in known:
+            results.append({"agent_id": agent_id, "deleted": False, "error": "not_found"})
+            continue
+        await scheduler_api.stop_agent_schedulers(agent_id)
         try:
             deleted = manager.delete_agent(agent_id)
         except ValueError as exc:
@@ -281,8 +298,8 @@ async def bulk_delete_agents(request: AgentIdsRequest) -> dict[str, Any]:
         if not deleted:
             results.append({"agent_id": agent_id, "deleted": False, "error": "not_found"})
             continue
-        await scheduler_api.stop_agent_schedulers(agent_id)
         deleted_count += 1
+        known.pop(agent_id, None)
         results.append({"agent_id": agent_id, "deleted": True})
     return {
         "data": {
@@ -316,7 +333,7 @@ async def bulk_export_agents(request: BulkExportRequest) -> dict[str, Any]:
         if metadata is None:
             errors.append({"agent_id": agent_id, "error": "not_found"})
             continue
-        runtime = manager.get_runtime(agent_id)
+        runtime = require_existing_runtime(manager, agent_id)
         exported.append(
             {
                 "agent_id": agent_id,
@@ -359,7 +376,7 @@ async def bulk_runtime_patch(request: BulkRuntimePatchRequest) -> dict[str, Any]
             results.append({"agent_id": agent_id, "updated": False, "error": "not_found"})
             continue
         try:
-            current_runtime = manager.get_runtime(agent_id)
+            current_runtime = require_existing_runtime(manager, agent_id)
             current_payload = runtime_to_payload(current_runtime.runtime_config)
             next_payload = (
                 _deep_merge(current_payload, request.patch)
@@ -367,9 +384,9 @@ async def bulk_runtime_patch(request: BulkRuntimePatchRequest) -> dict[str, Any]
                 else request.patch
             )
             parsed = runtime_from_payload(next_payload)
-            config_path = manager.get_agent_config_path(agent_id)
+            config_path = current_runtime.root_dir / "config.json"
             save_runtime_config_to_path(config_path, parsed)
-            refreshed = manager.get_runtime(agent_id)
+            refreshed = require_existing_runtime(manager, agent_id)
             updated_count += 1
             results.append(
                 {
@@ -427,12 +444,16 @@ async def get_agent_runtime_diff(
     if agent_id not in known:
         raise ApiError(status_code=404, code="not_found", message="Agent not found")
 
-    candidate_payload = runtime_to_payload(manager.get_runtime(agent_id).runtime_config)
+    candidate_payload = runtime_to_payload(
+        require_existing_runtime(manager, agent_id).runtime_config
+    )
     normalized_baseline = baseline.strip() or "default"
     baseline_payload: dict[str, Any]
 
     if normalized_baseline == "default":
-        baseline_payload = runtime_to_payload(manager.get_runtime("default").runtime_config)
+        baseline_payload = runtime_to_payload(
+            require_existing_runtime(manager, "default").runtime_config
+        )
     elif normalized_baseline.startswith("agent:"):
         other_agent = normalized_baseline.split(":", 1)[1].strip()
         if not other_agent or other_agent not in known:
@@ -441,7 +462,9 @@ async def get_agent_runtime_diff(
                 code="not_found",
                 message="Baseline agent not found",
             )
-        baseline_payload = runtime_to_payload(manager.get_runtime(other_agent).runtime_config)
+        baseline_payload = runtime_to_payload(
+            require_existing_runtime(manager, other_agent).runtime_config
+        )
     elif normalized_baseline.startswith("template:"):
         template_name = normalized_baseline.split(":", 1)[1].strip()
         if not template_name:
@@ -524,6 +547,6 @@ async def update_agent_tool_selection(
     else:
         runtime.runtime_config.autonomous_tools.cron_enabled_tools = normalized_enabled
 
-    config_path = manager.get_agent_config_path(runtime.agent_id)
+    config_path = runtime.root_dir / "config.json"
     save_runtime_config_to_path(config_path, runtime.runtime_config)
     return {"data": _agent_tools_payload(manager, runtime.agent_id)}

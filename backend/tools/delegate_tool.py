@@ -11,6 +11,7 @@ from config import DelegationConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from graph.session_manager import InvalidSessionIdError, validate_session_id
 from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
@@ -194,8 +195,14 @@ def build_delegate_tool(
     base_dir: Any,
     context: ToolContext,
 ) -> StructuredTool:
+    def _existing_runtime(agent_id: str) -> Any:
+        runtime_getter = getattr(
+            agent_manager, "get_existing_runtime", agent_manager.get_runtime
+        )
+        return runtime_getter(agent_id)
+
     def _delegation_config() -> DelegationConfig:
-        runtime = agent_manager.get_runtime(context.agent_id)
+        runtime = _existing_runtime(context.agent_id)
         return runtime.runtime_config.delegation
 
     async def _append_parent_delegate_event(
@@ -226,7 +233,7 @@ def build_delegate_tool(
     ) -> None:
         """Execute sub-agent in background. Called via asyncio.create_task."""
         try:
-            runtime = agent_manager.get_runtime(context.agent_id)
+            runtime = _existing_runtime(context.agent_id)
 
             # Create sub-agent session
             await runtime.session_manager.create_session(
@@ -468,7 +475,17 @@ def build_delegate_tool(
                 ),
                 None,
             )
-        session_id = context.session_id or "unknown"
+        try:
+            session_id = validate_session_id(context.session_id or "unknown")
+        except InvalidSessionIdError:
+            return (
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_INVALID_ARGS",
+                    message="delegate requires a valid session_id",
+                ),
+                None,
+            )
 
         if not registry.check_max_per_session(
             agent_id, session_id, delegation_config.max_per_session,

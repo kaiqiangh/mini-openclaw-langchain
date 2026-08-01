@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from utils.redaction import redact_json_line
+from utils.async_io import iter_jsonl_reversed
 
 
 class AuditStore:
@@ -129,14 +130,7 @@ class AuditStore:
         """Look up a run by ID from runs.jsonl."""
         if not self.runs_file.exists():
             return None
-        for line in reversed(self.runs_file.read_text(encoding="utf-8").splitlines()):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        for data in iter_jsonl_reversed(self.runs_file):
             if data.get("run_id") == run_id:
                 return data
         return None

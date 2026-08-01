@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from storage.usage_store import UsageQuery, UsageStore
@@ -25,12 +26,7 @@ def _require_store(agent_id: str) -> UsageStore:
             code="not_initialized",
             message="Usage store is not initialized",
         )
-    try:
-        return _agent_manager.get_runtime(agent_id).usage_store
-    except ValueError as exc:
-        raise ApiError(
-            status_code=400, code="invalid_request", message=str(exc)
-        ) from exc
+    return require_existing_runtime(_agent_manager, agent_id).usage_store
 
 
 @router.get("/agents/{agent_id}/usage/records")

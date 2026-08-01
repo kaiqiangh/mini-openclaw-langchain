@@ -103,3 +103,17 @@ When relevant, update:
 - `README.md` for operator-facing setup or runtime changes
 - `CONTRIBUTING.md` for contributor workflow changes
 - `backend/agent_templates/README.md` for template catalog or authoring-rule changes
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs for this repo live as GitHub issues; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five default canonical triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs/agents/domain.md`.

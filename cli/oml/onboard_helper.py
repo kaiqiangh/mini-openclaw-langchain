@@ -38,6 +38,7 @@ DEFAULT_TOOL_NAMES: tuple[str, ...] = (
     "terminal",
     "web_search",
 )
+MUTATING_TOOLS = {"apply_patch", "terminal"}
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -221,8 +222,16 @@ def _apply_tool_preset(
     terminal_cfg = payload.setdefault("tool_execution", {}).setdefault("terminal", {})
 
     if preset == "safe":
-        chat_enabled = [name for name in chat_enabled if name not in {"terminal", "apply_patch"}]
-        cron_tools = [name for name in cron_tools if name not in {"terminal", "apply_patch"}]
+        chat_enabled = [name for name in chat_enabled if name not in MUTATING_TOOLS]
+        heartbeat_tools = [name for name in heartbeat_tools if name not in MUTATING_TOOLS]
+        cron_tools = [name for name in cron_tools if name not in MUTATING_TOOLS]
+        delegation = payload.get("delegation")
+        scopes = delegation.get("allowed_tool_scopes") if isinstance(delegation, dict) else None
+        if isinstance(scopes, dict):
+            for role, tools in scopes.items():
+                if isinstance(tools, list):
+                    safe_tools = [name for name in tools if name not in MUTATING_TOOLS]
+                    scopes[role] = safe_tools or ["read_files"]
         if "python_repl" not in chat_blocked:
             chat_blocked.append("python_repl")
     elif preset == "builder":
@@ -313,6 +322,13 @@ def _build_apply_payload(args: argparse.Namespace, base_dir: Path) -> tuple[dict
         )
     elif args.cron_tools_mode == "clear":
         payload.setdefault("autonomous_tools", {})["cron_enabled_tools"] = []
+
+    if args.tool_preset == "safe":
+        _apply_tool_preset(
+            payload,
+            preset="safe",
+            explicit_policy_mode=args.terminal_policy_mode,
+        )
 
     if args.max_steps is not None:
         payload.setdefault("agent_runtime", {})["max_steps"] = args.max_steps
