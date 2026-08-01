@@ -150,9 +150,21 @@ fi
 $OML onboard --non-interactive --force --agent alpha --llm-default deepseek.chat --fallback none --rag-mode off --tool-preset safe --chat-tools none >/dev/null
 
 assert_file_contains "$alpha_config" '"rag_mode": false'
-if grep -q '"apply_patch"' "$alpha_config"; then
-  fail "safe reset should remove apply_patch from agent config"
-fi
+python3 - "$alpha_config" <<'PY'
+import json
+import sys
+
+config = json.loads(open(sys.argv[1], encoding="utf-8").read())
+unsafe = {"apply_patch", "terminal"}
+lists = [
+    config.get("chat_enabled_tools", []),
+    config.get("autonomous_tools", {}).get("heartbeat_enabled_tools", []),
+    config.get("autonomous_tools", {}).get("cron_enabled_tools", []),
+]
+lists.extend(config.get("delegation", {}).get("allowed_tool_scopes", {}).values())
+if any(unsafe.intersection(tools) for tools in lists):
+    raise SystemExit("safe reset retained a mutating tool in an enabled scope")
+PY
 
 set +e
 $OML onboard --non-interactive --agent "bad id" >/tmp/oml-onboard-invalid-agent.out 2>&1
