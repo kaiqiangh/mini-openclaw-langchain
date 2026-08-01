@@ -2,6 +2,9 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
+from graph.session_manager import InvalidSessionIdError
 from tools.delegate_registry import DelegateRegistry
 
 
@@ -20,6 +23,34 @@ def test_register_and_get_status(tmp_path: Path):
     assert status.status == "running"
     assert status.parent_session_id == "sess_parent"
     assert status.role == "researcher"
+
+
+def test_register_encodes_colon_bearing_parent_session_path(tmp_path: Path):
+    registry = DelegateRegistry(base_dir=tmp_path)
+    reg = registry.register(
+        "alpha", "__cron__:cron-1", "Research APIs", "researcher", ["web_search"], [], 30
+    )
+
+    assert (
+        tmp_path
+        / "workspaces"
+        / "alpha"
+        / "sessions"
+        / "__cron__%3Acron-1"
+        / "delegates"
+        / reg["delegate_id"]
+        / "config.json"
+    ).exists()
+    restored = DelegateRegistry(base_dir=tmp_path).get_status(reg["delegate_id"])
+    assert restored is not None
+    assert restored.parent_session_id == "__cron__:cron-1"
+
+
+def test_register_rejects_invalid_parent_session_path(tmp_path: Path):
+    registry = DelegateRegistry(base_dir=tmp_path)
+
+    with pytest.raises(InvalidSessionIdError):
+        registry.register("alpha", "../escape", "Task", "researcher", ["web_search"], [], 30)
 
 
 def test_list_for_session(tmp_path: Path):

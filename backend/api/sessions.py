@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from api.errors import ApiError
 from graph.agent import AgentManager
-from graph.session_manager import LegacySessionStateError, SessionManager
+from graph.session_manager import (
+    InvalidSessionIdError,
+    LegacySessionStateError,
+    SessionManager,
+)
 from tools.delegate_registry import DelegateRegistry, DelegateState
 
 router = APIRouter(tags=["sessions"])
@@ -97,6 +101,8 @@ async def _load_session_payload(
 ) -> dict[str, Any]:
     try:
         return await session_manager.load_existing_session(session_id, archived=archived)
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     except LegacySessionStateError as exc:

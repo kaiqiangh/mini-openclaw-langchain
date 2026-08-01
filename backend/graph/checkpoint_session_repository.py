@@ -873,8 +873,8 @@ class CheckpointSessionRepository:
         remain = messages[archive_count:]
 
         if archive_count > 0:
-            archive_path = (
-                session_manager.archive_dir / f"{session_id}_{int(time.time())}.json"
+            archive_path = session_manager.session_archive_path(
+                session_id, int(time.time())
             )
             session_manager._write_json_file(archive_path, to_archive)  # noqa: SLF001
 

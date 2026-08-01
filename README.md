@@ -369,6 +369,7 @@ PUT              /api/v1/agents/{agent_id}/tools/selection
 
 Conversation execution, session lifecycle, transcript history, compression, and title generation.
 Session history responses also surface assistant debug metadata such as tool calls and tracked skill usage for operator-facing inspection.
+Session IDs are logical opaque values; clients must URL-encode them when placing them in a path. Reserved characters are encoded in the corresponding workspace filename, while existing logical IDs remain unchanged at the API boundary.
 
 ```text
 POST             /api/v1/agents/{agent_id}/chat

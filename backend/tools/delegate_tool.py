@@ -11,6 +11,7 @@ from config import DelegationConfig
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from graph.session_manager import InvalidSessionIdError, validate_session_id
 from tools.base import ToolContext
 from tools.contracts import ToolResult
 from tools.delegate_config import ALL_KNOWN_TOOLS, DELEGATE_DEFAULTS
@@ -468,7 +469,17 @@ def build_delegate_tool(
                 ),
                 None,
             )
-        session_id = context.session_id or "unknown"
+        try:
+            session_id = validate_session_id(context.session_id or "unknown")
+        except InvalidSessionIdError:
+            return (
+                _failure_payload(
+                    tool_name="delegate",
+                    code="E_INVALID_ARGS",
+                    message="delegate requires a valid session_id",
+                ),
+                None,
+            )
 
         if not registry.check_max_per_session(
             agent_id, session_id, delegation_config.max_per_session,

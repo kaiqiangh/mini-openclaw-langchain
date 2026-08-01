@@ -2,9 +2,52 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
+
+
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
+
+
+class InvalidSessionIdError(ValueError):
+    """Raised when a logical session ID cannot be used safely."""
+
+
+def validate_session_id(session_id: str) -> str:
+    """Validate and return a logical session ID without changing its value."""
+    if (
+        not isinstance(session_id, str)
+        or session_id != session_id.strip()
+        or session_id in {".", ".."}
+        or not _SESSION_ID_PATTERN.fullmatch(session_id)
+    ):
+        raise InvalidSessionIdError(
+            "session_id must match [A-Za-z0-9_.:-]{1,128}"
+        )
+    return session_id
+
+
+def encode_session_path_component(session_id: str) -> str:
+    """Encode a validated session ID for use as one filesystem component."""
+    return quote(validate_session_id(session_id), safe="._-")
+
+
+def _safe_session_path(root: Path, filename: str) -> Path:
+    resolved_root = root.resolve()
+    candidate = (resolved_root / filename).resolve()
+    if not candidate.is_relative_to(resolved_root):
+        raise InvalidSessionIdError("session_id resolves outside session storage")
+    return candidate
+
+
+def _session_id_from_path(path: Path) -> str | None:
+    try:
+        return validate_session_id(unquote(path.stem))
+    except InvalidSessionIdError:
+        return None
 
 
 class LegacySessionStateError(RuntimeError):
@@ -31,10 +74,19 @@ def count_session_files(
     if not root.exists():
         return 0
     count = 0
+    resolved_root = root.resolve()
     for path in root.glob("*.json"):
-        if not path.is_file():
+        try:
+            resolved = path.resolve()
+        except OSError:
             continue
-        payload = read_session_listing_payload(path)
+        if (
+            resolved.parent != resolved_root
+            or not resolved.is_file()
+            or _session_id_from_path(path) is None
+        ):
+            continue
+        payload = read_session_listing_payload(resolved)
         if payload is None:
             continue
         if (bool(payload.get("internal")) or bool(payload.get("hidden"))) and not include_hidden:
@@ -55,17 +107,38 @@ class SessionManager:
         self.archived_sessions_dir.mkdir(parents=True, exist_ok=True)
 
     def _session_path(self, session_id: str, *, archived: bool = False) -> Path:
-        if archived:
-            return self.archived_sessions_dir / f"{session_id}.json"
-        return self.sessions_dir / f"{session_id}.json"
+        validated = validate_session_id(session_id)
+        root = self.archived_sessions_dir if archived else self.sessions_dir
+        encoded = _safe_session_path(
+            root, f"{encode_session_path_component(validated)}.json"
+        )
+        legacy = _safe_session_path(root, f"{validated}.json")
+        if encoded.exists() or not legacy.exists():
+            return encoded
+        return legacy
+
+    def session_archive_path(self, session_id: str, timestamp: int) -> Path:
+        """Return a safe path for archived message batches."""
+        filename = f"{encode_session_path_component(session_id)}_{int(timestamp)}.json"
+        return _safe_session_path(self.archive_dir, filename)
 
     def _iter_session_paths(self, *, archived: bool = False) -> list[Path]:
         root = self.archived_sessions_dir if archived else self.sessions_dir
-        return sorted(
-            [path for path in root.glob("*.json") if path.is_file()],
-            key=lambda item: item.stat().st_mtime,
-            reverse=True,
-        )
+        resolved_root = root.resolve()
+        paths: list[Path] = []
+        for path in root.glob("*.json"):
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if (
+                resolved.parent != resolved_root
+                or not resolved.is_file()
+                or _session_id_from_path(path) is None
+            ):
+                continue
+            paths.append(resolved)
+        return sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)
 
     @staticmethod
     def _now() -> float:
@@ -194,7 +267,9 @@ class SessionManager:
         items: list[dict[str, Any]] = []
         if include_active:
             for path in self._iter_session_paths(archived=False):
-                session_id = path.stem
+                session_id = _session_id_from_path(path)
+                if session_id is None:
+                    continue
                 payload = self._read_session_payload(
                     path, session_id=session_id, archived=False
                 )
@@ -213,7 +288,9 @@ class SessionManager:
                 )
         if include_archived:
             for path in self._iter_session_paths(archived=True):
-                session_id = path.stem
+                session_id = _session_id_from_path(path)
+                if session_id is None:
+                    continue
                 payload = self._read_session_payload(
                     path, session_id=session_id, archived=True
                 )

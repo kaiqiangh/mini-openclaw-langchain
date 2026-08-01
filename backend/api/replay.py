@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query
 
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.session_manager import InvalidSessionIdError
 
 router = APIRouter(tags=["replay"])
 
@@ -75,6 +76,8 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     repository = manager.get_session_repository(agent_id)
     try:
         snapshot = await repository.load_snapshot(agent_id=agent_id, session_id=session_id)
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_state", message=str(exc)) from exc
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
@@ -85,7 +88,12 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     original_message = str(user_messages[-1].get("content", ""))
 
     replay_session_id = f"replay:{run_id}:{uuid.uuid4().hex[:8]}"
-    await runtime.session_manager.create_session(replay_session_id, title=f"Replay of {run_id}")
+    try:
+        await runtime.session_manager.create_session(
+            replay_session_id, title=f"Replay of {run_id}"
+        )
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
 
     try:
         result = await manager.run_once(

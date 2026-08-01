@@ -7,7 +7,12 @@ import {
   getAgentTemplate,
   getSchedulerMetrics,
   getSchedulerMetricsTimeseries,
+  getSessionHistory,
   listAgentTemplates,
+  listDelegates,
+  archiveSession,
+  restoreSession,
+  deleteSession,
   getRagMode,
   getTracingConfig,
   setRagMode,
@@ -67,6 +72,29 @@ describe("streamChat", () => {
     await expect(
       streamChat("hello", "session-1", () => undefined),
     ).rejects.toThrow("bad gateway");
+  });
+});
+
+describe("session URL encoding", () => {
+  it("encodes logical session IDs in every path segment", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      text: async () => JSON.stringify({ data: { messages: [] } }),
+      json: async () => ({ delegates: [] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const sessionId = "__cron__:cron-1";
+    await archiveSession(sessionId);
+    await restoreSession(sessionId);
+    await deleteSession(sessionId);
+    await getSessionHistory(sessionId);
+    await listDelegates("default", sessionId);
+
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).toContain("__cron__%3Acron-1");
+      expect(String(url)).not.toContain("__cron__:cron-1");
+    }
   });
 });
 

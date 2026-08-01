@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from api.errors import ApiError
 from graph.agent import AgentManager
-from graph.session_manager import LegacySessionStateError
+from graph.session_manager import InvalidSessionIdError, LegacySessionStateError
 from tools.path_guard import InvalidPathError, resolve_workspace_path
 
 router = APIRouter(tags=["tokens"])
@@ -75,6 +75,8 @@ async def session_tokens(
             include_live=False,
             create_if_missing=True,
         )
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
     except LegacySessionStateError as exc:
         raise _legacy_state_api_error(exc) from exc
     messages = snapshot.messages

@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from api.errors import ApiError
 from graph.agent import AgentManager
-from graph.session_manager import LegacySessionStateError
+from graph.session_manager import InvalidSessionIdError, LegacySessionStateError
 
 router = APIRouter(tags=["compress"])
 
@@ -55,6 +55,8 @@ async def compress_session(
             session_id=session_id,
             include_live=False,
         )
+    except InvalidSessionIdError as exc:
+        raise ApiError(status_code=400, code="invalid_request", message=str(exc)) from exc
     except FileNotFoundError as exc:
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
     except LegacySessionStateError as exc:
