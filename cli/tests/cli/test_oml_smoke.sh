@@ -147,7 +147,7 @@ if [ "$before_invalid_llm" != "$after_invalid_llm" ]; then
   fail "invalid llm route should not modify existing config"
 fi
 
-$OML onboard --non-interactive --force --agent alpha --llm-default deepseek.chat --fallback none --rag-mode off --tool-preset safe --chat-tools none >/dev/null
+$OML onboard --non-interactive --force --agent alpha --llm-default deepseek.chat --fallback none --rag-mode off --tool-preset safe --chat-tools terminal --heartbeat-tools apply_patch --cron-tools terminal >/dev/null
 
 assert_file_contains "$alpha_config" '"rag_mode": false'
 python3 - "$alpha_config" <<'PY'

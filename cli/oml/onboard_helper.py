@@ -323,6 +323,13 @@ def _build_apply_payload(args: argparse.Namespace, base_dir: Path) -> tuple[dict
     elif args.cron_tools_mode == "clear":
         payload.setdefault("autonomous_tools", {})["cron_enabled_tools"] = []
 
+    if args.tool_preset == "safe":
+        _apply_tool_preset(
+            payload,
+            preset="safe",
+            explicit_policy_mode=args.terminal_policy_mode,
+        )
+
     if args.max_steps is not None:
         payload.setdefault("agent_runtime", {})["max_steps"] = args.max_steps
     if args.timeout_seconds is not None:
