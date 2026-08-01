@@ -30,6 +30,7 @@ create_fixture() {
   mkdir -p \
     "$tmpdir/cli/oml" \
     "$tmpdir/backend/agent_templates" \
+    "$tmpdir/backend/utils" \
     "$tmpdir/backend/workspaces" \
     "$tmpdir/frontend"
   cp "$ROOT_DIR/oml" "$tmpdir/oml"
@@ -37,6 +38,9 @@ create_fixture() {
   cp "$ROOT_DIR/cli/oml/onboard_helper.py" "$tmpdir/cli/oml/onboard_helper.py"
   cp "$ROOT_DIR/backend/config.py" "$tmpdir/backend/config.py"
   cp "$ROOT_DIR/backend/config.json" "$tmpdir/backend/config.json"
+  cp "$ROOT_DIR/backend/utils/__init__.py" "$tmpdir/backend/utils/__init__.py"
+  cp "$ROOT_DIR/backend/utils/dict_ops.py" "$tmpdir/backend/utils/dict_ops.py"
+  cp "$ROOT_DIR/backend/utils/redaction.py" "$tmpdir/backend/utils/redaction.py"
   cp "$ROOT_DIR/backend/app.py" "$tmpdir/backend/app.py"
   cp "$ROOT_DIR/frontend/package.json" "$tmpdir/frontend/package.json"
   cp "$ROOT_DIR"/backend/agent_templates/*.json "$tmpdir/backend/agent_templates/"
