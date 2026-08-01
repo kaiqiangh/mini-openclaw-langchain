@@ -205,7 +205,11 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 class AdminAuthMiddleware(BaseHTTPMiddleware):
-    _EXEMPT_PATHS = {"/api/v1/health", "/api/v1/ready", "/api/v1/setup/status", "/api/v1/setup/configure"}
+    _EXEMPT_PATHS = {
+        "/api/v1/health",
+        "/api/v1/ready",
+        "/api/v1/setup/status",
+    }
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
         path = request.url.path
@@ -215,6 +219,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         configured = (os.getenv("APP_ADMIN_TOKEN", "") or "").strip()
+        if path == "/api/v1/setup/configure" and not configured:
+            return await call_next(request)
         if not configured:
             return JSONResponse(
                 status_code=503,

@@ -18,6 +18,10 @@ def _build_app() -> FastAPI:
     async def secure() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.post("/api/v1/setup/configure")
+    async def configure() -> dict[str, str]:
+        return {"status": "ok"}
+
     return app
 
 
@@ -76,6 +80,28 @@ def test_auth_accepts_valid_token(monkeypatch):
     assert raw_response.status_code == 200
     assert alt_response.status_code == 200
     assert cookie_response.status_code == 200
+
+
+def test_setup_configure_is_public_only_before_admin_token_exists(monkeypatch):
+    monkeypatch.delenv("APP_ADMIN_TOKEN", raising=False)
+    with TestClient(_build_app()) as client:
+        response = client.post("/api/v1/setup/configure")
+    assert response.status_code == 200
+
+
+def test_setup_configure_requires_existing_admin_token_after_setup(monkeypatch):
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "secret-1")
+    with TestClient(_build_app()) as client:
+        missing = client.post("/api/v1/setup/configure")
+        wrong = client.post(
+            "/api/v1/setup/configure", headers={"Authorization": "Bearer wrong"}
+        )
+        valid = client.post(
+            "/api/v1/setup/configure", headers={"Authorization": "Bearer secret-1"}
+        )
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert valid.status_code == 200
 
 
 def test_unhandled_error_handler_hides_exception_details():
