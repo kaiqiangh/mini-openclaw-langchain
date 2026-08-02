@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import threading
@@ -16,6 +17,8 @@ from config import (
 )
 from graph.embedding_client import EmbeddingClient, cosine_similarity
 from graph.retrieval_store import RetrievalChunk, SQLiteRetrievalStore
+
+_MAX_MEMORY_TOP_K = 20
 
 
 @dataclass
@@ -70,7 +73,7 @@ class MemoryIndexer:
             top_k=max(1, int(settings.top_k)),
             semantic_weight=float(settings.semantic_weight),
             lexical_weight=float(settings.lexical_weight),
-            chunk_size=max(64, int(settings.chunk_size)),
+            chunk_size=min(20_000, max(64, int(settings.chunk_size))),
             chunk_overlap=max(0, int(settings.chunk_overlap)),
         )
 
@@ -322,7 +325,10 @@ class MemoryIndexer:
         settings: RetrievalDomainConfig | None = None,
     ) -> list[dict[str, object]]:
         effective = self._resolve_settings(settings)
-        effective_top_k = max(1, int(top_k if top_k is not None else effective.top_k))
+        effective_top_k = min(
+            _MAX_MEMORY_TOP_K,
+            max(1, int(top_k if top_k is not None else effective.top_k)),
+        )
         storage = self._resolve_storage_settings()
 
         query_terms = {item for item in query.lower().split() if item}
@@ -390,3 +396,17 @@ class MemoryIndexer:
             {"text": item.text, "score": item.score, "source": item.source}
             for item in scored[:effective_top_k]
         ]
+
+    async def aretrieve(
+        self,
+        query: str,
+        top_k: int | None = None,
+        *,
+        settings: RetrievalDomainConfig | None = None,
+    ) -> list[dict[str, object]]:
+        return await asyncio.to_thread(
+            self.retrieve,
+            query,
+            top_k,
+            settings=settings,
+        )

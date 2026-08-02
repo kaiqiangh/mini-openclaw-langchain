@@ -57,3 +57,21 @@ def test_prompt_builder_cache_digest_changes_when_source_changes(backend_base_di
         is_first_turn=True,
     )
     assert third.digest != first.digest
+
+
+def test_prompt_builder_cache_is_bounded(backend_base_dir):
+    builder = PromptBuilder(max_cache_entries=2)
+    runtime = RuntimeConfig(injection_mode=InjectionMode.EVERY_TURN)
+
+    for index in range(3):
+        (backend_base_dir / "workspace" / "USER.md").write_text(
+            f"user {index}", encoding="utf-8"
+        )
+        builder.build_system_prompt(
+            base_dir=backend_base_dir,
+            runtime=runtime,
+            rag_mode=False,
+            is_first_turn=True,
+        )
+
+    assert len(builder._cache) == 2

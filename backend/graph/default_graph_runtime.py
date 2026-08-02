@@ -879,10 +879,10 @@ class DefaultGraphRuntime(GraphRuntime):
             goto="retrieve_context",
         )
 
-    def _retrieve_context(self, state: RuntimeGraphState) -> dict[str, Any]:
+    async def _retrieve_context(self, state: RuntimeGraphState) -> dict[str, Any]:
         request = state["request"]
         runtime_state = self.services.get_runtime(request.agent_id)
-        retrieval_envelope = RetrievalOrchestrator.build_envelope(
+        retrieval_envelope = await RetrievalOrchestrator.abuild_envelope(
             runtime=runtime_state.runtime_config,
             memory_indexer=runtime_state.memory_indexer,
             message=request.message,

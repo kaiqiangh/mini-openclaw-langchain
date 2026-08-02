@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,8 +24,9 @@ class PromptPack:
 
 
 class PromptBuilder:
-    def __init__(self) -> None:
-        self._cache: dict[str, PromptPack] = {}
+    def __init__(self, max_cache_entries: int = 128) -> None:
+        self._max_cache_entries = max(1, int(max_cache_entries))
+        self._cache: OrderedDict[str, PromptPack] = OrderedDict()
 
     @staticmethod
     def truncate_component(text: str, max_chars: int = 20000) -> tuple[str, bool]:
@@ -114,24 +116,35 @@ class PromptBuilder:
         sections = self._build_sections(base_dir=base_dir, rag_mode=rag_mode)
 
         source_mtimes: dict[str, float] = {}
+        source_sizes: dict[str, int] = {}
         for _, rel_path, _ in sections:
             abs_path = base_dir / rel_path
-            source_mtimes[rel_path] = (
-                abs_path.stat().st_mtime if abs_path.exists() else -1.0
-            )
+            try:
+                stat = abs_path.stat()
+            except FileNotFoundError:
+                source_mtimes[rel_path] = -1.0
+                source_sizes[rel_path] = -1
+            else:
+                source_mtimes[rel_path] = stat.st_mtime
+                source_sizes[rel_path] = stat.st_size
 
         cache_key = self._digest(
             [
+                str(base_dir.resolve()),
                 str(rag_mode),
                 runtime.injection_mode.value,
                 str(runtime.bootstrap_max_chars),
                 str(runtime.bootstrap_total_max_chars),
-                *(f"{k}:{v}" for k, v in sorted(source_mtimes.items())),
+                *(
+                    f"{k}:{v}:{source_sizes[k]}"
+                    for k, v in sorted(source_mtimes.items())
+                ),
             ]
         )
 
-        cached = self._cache.get(cache_key)
+        cached = self._cache.pop(cache_key, None)
         if cached is not None:
+            self._cache[cache_key] = cached
             return cached
 
         rendered_parts: list[str] = []
@@ -159,4 +172,6 @@ class PromptBuilder:
             truncated_files=truncated_files,
         )
         self._cache[cache_key] = pack
+        while len(self._cache) > self._max_cache_entries:
+            self._cache.popitem(last=False)
         return pack
