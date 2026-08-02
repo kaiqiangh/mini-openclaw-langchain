@@ -1761,7 +1761,8 @@ def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_pat
             return len(messages)
 
         async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
-            _ = messages, kwargs
+            _ = messages
+            assert kwargs["summarize_fn"] is not None
             asyncio.get_running_loop()
             return CompactResult(
                 messages=[HumanMessage(content="canonical compacted state")],
@@ -1775,7 +1776,7 @@ def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_pat
     monkeypatch.setattr(
         manager.runtime_services,
         "get_runtime_llm",
-        lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
+        lambda runtime, profile: RunnableLambda(lambda payload: payload),
     )
     monkeypatch.setattr(
         manager.lcel_pipelines,

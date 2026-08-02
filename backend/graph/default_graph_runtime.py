@@ -1820,14 +1820,23 @@ class DefaultGraphRuntime(GraphRuntime):
             if not hook_result.allow:
                 return {"compaction_deferred": True}
 
-        # Create a summarize functor if we have an LLM available
+        # Resolve the active route candidate for structured summarization.
         summarize_fn = None
-        if hasattr(self, "pipelines") and hasattr(self.pipelines, "model"):
-            try:
-                from graph.lcel_compaction import build_summarize_pipeline
-                summarize_fn = build_summarize_pipeline(self.pipelines.model)
-            except Exception:
-                pass
+        summarizer_error_type: str | None = None
+        try:
+            route = state.get("route")
+            candidates = getattr(route, "candidates", [])
+            candidate_index = min(
+                int(state.get("candidate_index", 0)), len(candidates) - 1
+            )
+            candidate = candidates[candidate_index]
+            active_llm = self.services.get_runtime_llm(runtime, candidate.profile)
+            from graph.lcel_compaction import build_summarize_pipeline
+
+            summarize_fn = build_summarize_pipeline(active_llm)
+        except Exception as exc:
+            summarize_fn = None
+            summarizer_error_type = type(exc).__name__
 
         try:
             result = await pipeline.compact_round(
@@ -1846,6 +1855,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     "was_compacted": False,
                     "degradation": "compaction_failed",
                     "error_type": type(exc).__name__,
+                    "summarizer_error_type": summarizer_error_type,
                     "message_count_before": len(messages),
                     "message_count_after": len(messages),
                     "summary": None,
@@ -1878,6 +1888,7 @@ class DefaultGraphRuntime(GraphRuntime):
             "message_count_before": len(messages),
             "message_count_after": len(result.messages),
             "summary": result.summary.summary if result.summary else None,
+            "summarizer_error_type": summarizer_error_type,
         })
 
         return {

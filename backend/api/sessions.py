@@ -536,11 +536,22 @@ async def trigger_compact(
 
     messages = list(snapshot.messages) if snapshot.messages else []
     lc_messages = history_entries_to_messages(messages)
+    summarize_fn = None
+    try:
+        from graph.lcel_compaction import build_summarize_pipeline
+
+        candidate = agent.runtime_services.resolve_auxiliary_llm_candidate(runtime)
+        if candidate is not None:
+            llm = agent.runtime_services.get_runtime_llm(runtime, candidate.profile)
+            summarize_fn = build_summarize_pipeline(llm)
+    except Exception:
+        summarize_fn = None
 
     result = await pipeline.compact_round(
         lc_messages,
         run_id="manual",
         step=0,
+        summarize_fn=summarize_fn,
         agent_id=agent_id,
         session_id=session_id,
     )
