@@ -374,6 +374,7 @@ PUT              /api/v1/agents/{agent_id}/tools/selection
 
 Conversation execution, session lifecycle, transcript history, compression, and title generation.
 Session history responses also surface assistant debug metadata such as tool calls and tracked skill usage for operator-facing inspection.
+Context-pressure compaction runs asynchronously, persists an agent/session-owned checkpoint, and exposes `compaction_degradation` plus `last_checkpoint_id` on non-streaming chat responses when recovery is degraded or checkpointed.
 Session IDs are logical opaque values; clients must URL-encode them when placing them in a path. Reserved characters are encoded in the corresponding workspace filename, while existing logical IDs remain unchanged at the API boundary.
 
 ```text
@@ -385,6 +386,9 @@ PUT|DELETE       /api/v1/agents/{agent_id}/sessions/{session_id}
 POST             /api/v1/agents/{agent_id}/sessions/{session_id}/archive
 POST             /api/v1/agents/{agent_id}/sessions/{session_id}/restore
 POST             /api/v1/agents/{agent_id}/sessions/{session_id}/compress
+POST             /api/v1/agents/{agent_id}/sessions/{session_id}/compact
+GET              /api/v1/agents/{agent_id}/sessions/{session_id}/checkpoints
+POST             /api/v1/agents/{agent_id}/sessions/{session_id}/rewind
 POST             /api/v1/agents/{agent_id}/sessions/{session_id}/generate-title
 ```
 

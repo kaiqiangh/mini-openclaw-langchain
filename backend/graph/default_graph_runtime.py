@@ -1862,7 +1862,7 @@ class DefaultGraphRuntime(GraphRuntime):
 
         # Distill to memory
         degradation = result.degradation
-        if result.summary and result.was_compacted and workspace:
+        if result.summary and result.was_compacted and not result.degradation and workspace:
             memory_file = runtime.root_dir / "memory" / "MEMORY.md"
             try:
                 await pipeline.distill(result.summary, memory_file=memory_file)

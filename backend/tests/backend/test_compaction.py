@@ -59,7 +59,10 @@ class TestModelBudgetMap:
 class TestCheckpoint:
     @pytest.mark.asyncio
     async def test_checkpoint_saves(self, tmp_path: Path):
-        pipeline = CompactionPipeline(model_name="gpt-4o", checkpoint_dir=tmp_path)
+        pipeline = CompactionPipeline(
+            model_name="gpt-4o",
+            checkpoint_dir=tmp_path,
+        )
         messages = [
             SystemMessage(content="You are helpful"),
             HumanMessage(content="Hello"),
@@ -272,3 +275,24 @@ class TestE2E:
         assert result.summary.key_decisions == ["Decision A"]
         # Summary should be in remaining messages
         assert any("Fake summary" in str(m.content) for m in result.messages)
+
+    @pytest.mark.asyncio
+    async def test_empty_summary_is_explicit_drop_only(self, tmp_path: Path):
+        pipeline = CompactionPipeline(
+            model_name="gpt-4o",
+            checkpoint_dir=tmp_path,
+            budget_factor=0.01,
+        )
+        messages = [HumanMessage(content="x" * 100_000)]
+
+        async def empty_summarize(msgs):
+            return CompactionSummary(summary="")
+
+        result = await pipeline.compact_round(
+            messages,
+            run_id="empty-summary",
+            summarize_fn=empty_summarize,
+        )
+
+        assert result.degradation == "drop_only"
+        assert any("drop-only" in str(message.content) for message in result.messages)

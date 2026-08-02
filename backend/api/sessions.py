@@ -10,6 +10,7 @@ from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.compaction import compacted_history_entries
+from graph.checkpoint_session_repository import ConcurrentSessionMutationError
 from graph.session_manager import (
     InvalidSessionIdError,
     LegacySessionStateError,
@@ -567,18 +568,22 @@ async def trigger_compact(
     )
 
     if result.was_compacted:
-        await repository.update_state(
-            agent_id=agent_id,
-            session_id=session_id,
-            values={
-                "messages": compacted_history_entries(result.messages),
-                "model_messages": list(result.messages),
-                "input_messages": list(result.messages),
-                "compaction_applied": True,
-                "compaction_degradation": result.degradation,
-                "last_checkpoint_id": result.checkpoint_id,
-            },
-        )
+        try:
+            await repository.replace_compacted_state(
+                agent_id=agent_id,
+                session_id=session_id,
+                expected_messages=messages,
+                values={
+                    "messages": compacted_history_entries(result.messages),
+                    "model_messages": list(result.messages),
+                    "input_messages": list(result.messages),
+                    "compaction_applied": True,
+                    "compaction_degradation": result.degradation,
+                    "last_checkpoint_id": result.checkpoint_id,
+                },
+            )
+        except ConcurrentSessionMutationError as exc:
+            raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc
 
     return {
         "data": {

@@ -324,7 +324,7 @@ class CompactionPipeline:
         except Exception:
             summary_text = "[Conversation summarized (LLM unavailable, proceeding with drop-only)]"
             degradation = "drop_only"
-        if summary is None and not summary_text:
+        if not summary_text.strip():
             summary_text = "[Conversation summary unavailable, proceeding with drop-only]"
             degradation = "drop_only"
 
