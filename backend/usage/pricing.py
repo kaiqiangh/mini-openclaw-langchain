@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-CATALOG_VERSION = "2026-02-28"
+CATALOG_VERSION = "2026-08-02"
 
 
 @dataclass(frozen=True)
@@ -234,19 +234,19 @@ _PRICING_TABLE: dict[str, tuple[ModelPricing, ...]] = {
     "deepseek": (
         _p(
             "deepseek",
-            "deepseek-chat",
+            "deepseek-v4-flash",
+            0.14,
             0.28,
-            0.42,
-            cache_read_rate=0.028,
-            source="deepseek-pricing-2026-02-28",
+            cache_read_rate=0.0028,
+            source="deepseek-pricing-2026-08-02",
         ),
         _p(
             "deepseek",
             "deepseek-reasoner",
+            0.14,
             0.28,
-            0.42,
-            cache_read_rate=0.028,
-            source="deepseek-pricing-2026-02-28",
+            cache_read_rate=0.0028,
+            source="deepseek-pricing-2026-08-02",
         ),
     ),
     "azure_foundry": (),

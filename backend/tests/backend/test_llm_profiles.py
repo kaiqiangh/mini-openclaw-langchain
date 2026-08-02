@@ -38,9 +38,9 @@ def test_load_config_parses_llm_defaults_and_agent_overrides(tmp_path: Path):
             "llm_defaults": {
                 "default": "deepseek",
                 "fallbacks": ["openai"],
-                "tool_loop_model": "deepseek-chat",
+                "tool_loop_model": "deepseek-v4-flash",
                 "tool_loop_model_overrides": {
-                    "deepseek-reasoner": "deepseek-chat",
+                    "deepseek-reasoner": "deepseek-v4-flash",
                 },
                 "fallback_policy": {"on_timeout": "fallback"},
             },
@@ -61,9 +61,9 @@ def test_load_config_parses_llm_defaults_and_agent_overrides(tmp_path: Path):
     loaded = load_config(tmp_path)
     assert loaded.llm_defaults.default == "deepseek"
     assert loaded.llm_defaults.fallbacks == ["openai"]
-    assert loaded.llm_defaults.tool_loop_model == "deepseek-chat"
+    assert loaded.llm_defaults.tool_loop_model == "deepseek-v4-flash"
     assert loaded.llm_defaults.tool_loop_model_overrides == {
-        "deepseek-reasoner": "deepseek-chat"
+        "deepseek-reasoner": "deepseek-v4-flash"
     }
     assert loaded.llm_defaults.fallback_policy is not None
     assert loaded.llm_defaults.fallback_policy.on_timeout == "fallback"
@@ -95,8 +95,8 @@ def test_load_config_parses_provider_group_models_into_dotted_profile_ids(
                     "default_headers": {},
                     "timeout_seconds": 60,
                     "models": {
-                        "chat": "deepseek-chat",
-                        "reasoner": "deepseek-reasoner",
+                        "chat": "deepseek-v4-flash",
+                        "reasoner": "deepseek-v4-flash",
                     },
                 }
             },
@@ -110,8 +110,8 @@ def test_load_config_parses_provider_group_models_into_dotted_profile_ids(
     loaded = load_config(tmp_path)
     assert "deepseek.chat" in loaded.llm_profiles
     assert "deepseek.reasoner" in loaded.llm_profiles
-    assert loaded.llm_profiles["deepseek.chat"].model == "deepseek-chat"
-    assert loaded.llm_profiles["deepseek.reasoner"].model == "deepseek-reasoner"
+    assert loaded.llm_profiles["deepseek.chat"].model == "deepseek-v4-flash"
+    assert loaded.llm_profiles["deepseek.reasoner"].model == "deepseek-v4-flash"
     assert loaded.llm_defaults.default == "deepseek.chat"
     assert loaded.llm_defaults.fallbacks == ["deepseek.reasoner"]
 
@@ -125,9 +125,9 @@ def test_route_precedence_prefers_workspace_and_empty_fallbacks_disable_inherita
             "llm_defaults": {
                 "default": "deepseek",
                 "fallbacks": ["openai", "azure_foundry"],
-                "tool_loop_model": "deepseek-chat",
+                "tool_loop_model": "deepseek-v4-flash",
                 "tool_loop_model_overrides": {
-                    "deepseek-reasoner": "deepseek-chat",
+                    "deepseek-reasoner": "deepseek-v4-flash",
                 },
             },
             "agent_llm_overrides": {

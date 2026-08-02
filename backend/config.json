@@ -20,8 +20,8 @@
       "default_headers": {},
       "timeout_seconds": 60,
       "models": {
-        "chat": "deepseek-chat",
-        "reasoner": "deepseek-reasoner"
+        "chat": "deepseek-v4-flash",
+        "reasoner": "deepseek-v4-flash"
       }
     },
     "openai": {
@@ -84,7 +84,7 @@
       "fallbacks": ["openai.gpt_4_1_mini"],
       "tool_loop_model_overrides": {
         "gpt-5-mini": "gpt-4.1-mini",
-        "deepseek-reasoner": "deepseek-chat"
+        "deepseek-reasoner": "deepseek-v4-flash"
       },
       "fallback_policy": {
         "on_startup_missing_default": "warn",

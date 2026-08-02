@@ -137,7 +137,7 @@ function LlmStep({
   };
 
   const defaultModels: Record<string, string> = {
-    deepseek: "deepseek-chat",
+    deepseek: "deepseek-v4-flash",
     openai: "gpt-4o-mini",
   };
 
