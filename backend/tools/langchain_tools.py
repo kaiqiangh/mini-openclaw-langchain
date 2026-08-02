@@ -5,6 +5,7 @@ from dataclasses import asdict
 from typing import Any
 
 from langchain_core.tools import StructuredTool
+from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field, model_validator
 
 from .base import MiniTool, ToolContext
@@ -163,9 +164,13 @@ def _register_tool(
     if tool is None:
         return
 
-    def invoke(**kwargs: Any) -> str:
+    def invoke(config: RunnableConfig | None = None, **kwargs: Any) -> str:
         args = {key: value for key, value in kwargs.items() if value is not None}
-        result = runner.run_tool(tool, args=args, context=context)
+        metadata = config.get("metadata", {}) if isinstance(config, dict) else {}
+        tool_call_id = metadata.get("tool_call_id") if isinstance(metadata, dict) else None
+        result = runner.run_tool(
+            tool, args=args, context=context, tool_call_id=str(tool_call_id or "") or None
+        )
         return _result_to_json(result)
 
     structured.append(

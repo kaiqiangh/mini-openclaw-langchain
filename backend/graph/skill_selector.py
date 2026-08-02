@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.skills_scanner import scan_skills
+from tools.skills_scanner import read_skill_text, scan_skills
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}")
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
@@ -140,10 +141,9 @@ class SkillSelector:
             try:
                 relative_path = path.relative_to(base_dir).as_posix()
                 stat = path.stat()
-                entries.append(
-                    f"{relative_path}:{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ino}"
-                )
-            except FileNotFoundError:
+                digest = hashlib.sha256(read_skill_text(path).encode("utf-8")).hexdigest()
+                entries.append(f"{relative_path}:{stat.st_mtime_ns}:{stat.st_size}:{digest}")
+            except OSError:
                 continue
         return "|".join(entries)
 
@@ -158,9 +158,7 @@ class SkillSelector:
         descriptors: list[_SkillDescriptor] = []
         for meta in scan_skills(base_dir):
             skill_path = base_dir / meta.location.lstrip("./")
-            text = ""
-            if skill_path.exists():
-                text = skill_path.read_text(encoding="utf-8", errors="replace")
+            text = read_skill_text(skill_path)
             excerpt = self._build_excerpt(text) if text else ""
             full_text = " ".join(
                 part for part in [meta.name, meta.description, excerpt] if part.strip()
@@ -257,7 +255,7 @@ class SkillSelector:
             )
 
         matches.sort(key=lambda item: (-item.score, item.name.lower()))
-        return matches[: max(1, top_k)]
+        return matches[: min(10, max(1, int(top_k)))]
 
     @staticmethod
     def render_prompt_section(selected_skills: list[SelectedSkill]) -> str:

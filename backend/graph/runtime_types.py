@@ -48,6 +48,7 @@ class RuntimeRequest:
     resume_same_turn: bool = False
     explicit_enabled_tools: list[str] | None = None
     explicit_blocked_tools: list[str] | None = None
+    replay_source_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ class RuntimeResult:
     token_source: str = "fallback"
     run_id: str = ""
     compaction_degradation: CompactionDegradation | None = None
+    retrieval_degradation: str | None = None
     last_checkpoint_id: str | None = None
     error: RuntimeErrorInfo | None = None
 
@@ -183,6 +185,7 @@ class RuntimeGraphState(TypedDict, total=False):
     compressed_context: str
     retrieval_results: list[dict[str, Any]]
     rag_context: str | None
+    retrieval_degradation: str | None
     messages: list[dict[str, Any]]
     live_response: dict[str, Any] | None
     assistant_segments: list[dict[str, Any]]

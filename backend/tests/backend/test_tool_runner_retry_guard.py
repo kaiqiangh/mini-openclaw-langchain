@@ -41,6 +41,29 @@ class _SearchTool:
         )
 
 
+@dataclass
+class _AmbiguousRetryTool:
+    name: str = "ambiguous_retry"
+    description: str = "Returns an ambiguous retryable failure"
+    permission_level: PermissionLevel = PermissionLevel.L0_READ
+
+    def run(self, args, context):  # type: ignore[no-untyped-def]
+        _ = args, context
+        return ToolResult.failure(
+            tool_name=self.name,
+            code="E_TIMEOUT",
+            message="completion is unknown",
+            duration_ms=1,
+            retryable=True,
+        )
+
+
+@dataclass
+class _IdempotentRetryTool(_AmbiguousRetryTool):
+    name: str = "idempotent_retry"
+    retry_safe: bool = True
+
+
 def test_tool_runner_blocks_repeated_identical_failures(tmp_path: Path):
     runner = ToolRunner(
         policy_engine=ToolPolicyEngine(), audit_file=tmp_path / "audit.jsonl"
@@ -71,6 +94,44 @@ def test_tool_runner_blocks_repeated_identical_failures(tmp_path: Path):
         and third.error.code == "E_POLICY_DENIED"
     )
     assert "retry blocked" in third.error.message.lower()
+
+
+def test_tool_runner_suppresses_ambiguous_retryable_failure(tmp_path: Path):
+    runner = ToolRunner(policy_engine=ToolPolicyEngine())
+    context = ToolContext(
+        workspace_root=tmp_path,
+        trigger_type="chat",
+        run_id="run-ambiguous",
+        session_id="session-ambiguous",
+    )
+
+    result = runner.run_tool(
+        _AmbiguousRetryTool(), args={"operation": "write"}, context=context
+    )
+
+    assert result.error is not None
+    assert result.error.retryable is False
+    assert result.error.details == {
+        "outcome": "unresolved",
+        "retry_suppressed": True,
+    }
+
+
+def test_tool_runner_preserves_declared_idempotent_retry(tmp_path: Path):
+    runner = ToolRunner(policy_engine=ToolPolicyEngine())
+    context = ToolContext(
+        workspace_root=tmp_path,
+        trigger_type="chat",
+        run_id="run-idempotent",
+        session_id="session-idempotent",
+    )
+
+    result = runner.run_tool(
+        _IdempotentRetryTool(), args={"operation": "read"}, context=context
+    )
+
+    assert result.error is not None
+    assert result.error.retryable is True
 
 
 def test_tool_runner_does_not_block_different_arguments(tmp_path: Path):

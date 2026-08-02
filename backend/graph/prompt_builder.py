@@ -136,8 +136,8 @@ class PromptBuilder:
                 str(runtime.bootstrap_max_chars),
                 str(runtime.bootstrap_total_max_chars),
                 *(
-                    f"{k}:{v}:{source_sizes[k]}"
-                    for k, v in sorted(source_mtimes.items())
+                    f"{rel_path}:{source_mtimes.get(rel_path, -1.0)}:{source_sizes.get(rel_path, -1)}:{self._digest([content])}"
+                    for _, rel_path, content in sections
                 ),
             ]
         )

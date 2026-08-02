@@ -12,6 +12,7 @@ from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
 from graph.session_manager import InvalidSessionIdError
+from storage.usage_store import UsageQuery
 from utils.async_io import iter_jsonl_reversed
 
 router = APIRouter(tags=["replay"])
@@ -28,6 +29,54 @@ def _require_agent_manager() -> AgentManager:
     if _agent_manager is None:
         raise ApiError(status_code=500, code="not_initialized", message="Agent manager not initialized")
     return _agent_manager
+
+
+def _run_steps(runtime: Any, run_id: str) -> list[dict[str, Any]]:
+    path = runtime.root_dir / "storage" / "audit" / "steps.jsonl"
+    rows = [row for row in iter_jsonl_reversed(path) if row.get("run_id") == run_id]
+    rows.reverse()
+    return rows[:500]
+
+
+def _run_evidence(runtime: Any, run_id: str) -> dict[str, Any]:
+    steps = _run_steps(runtime, run_id)
+    event_counts: dict[str, int] = {}
+    retries: list[dict[str, Any]] = []
+    fallbacks: list[dict[str, Any]] = []
+    degradations: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    delegate_lifecycle: list[dict[str, Any]] = []
+    for row in steps:
+        event = str(row.get("event", "unknown"))
+        event_counts[event] = event_counts.get(event, 0) + 1
+        details = row.get("details") if isinstance(row.get("details"), dict) else {}
+        if event == "llm_retry_attempt":
+            retries.append(details)
+        if event == "llm_fallback_attempt" or event == "llm_fallback_selected":
+            fallbacks.append({"event": event, **details})
+        if details.get("degradation") or "degrad" in event:
+            degradations.append({"event": event, **details})
+        if event in {"llm_error", "llm_route_exhausted", "error", "persistence_error"}:
+            errors.append({"event": event, **details})
+        if event.startswith("delegate") or details.get("delegate_id"):
+            delegate_lifecycle.append({"event": event, **details})
+
+    usage: list[dict[str, Any]] = []
+    usage_store = getattr(runtime, "usage_store", None)
+    if usage_store is not None:
+        usage = usage_store.query_records(
+            UsageQuery(since_hours=24 * 365, limit=200)
+        )
+        usage = [row for row in usage if row.get("run_id") == run_id][:20]
+    return {
+        "event_counts": event_counts,
+        "retries": retries[:20],
+        "fallbacks": fallbacks[:20],
+        "degradations": degradations[:20],
+        "errors": errors[:20],
+        "delegate_lifecycle": delegate_lifecycle[:100],
+        "usage": usage,
+    }
 
 
 @router.get("/agents/{agent_id}/runs/{run_id}")
@@ -47,7 +96,14 @@ async def get_run_details(agent_id: str, run_id: str) -> dict[str, Any]:
             tool_calls.append(data)
     tool_calls.reverse()
 
-    return {"data": {"run": run, "tool_calls": tool_calls}}
+    return {
+        "data": {
+            "run": run,
+            "tool_calls": tool_calls,
+            "steps": _run_steps(runtime, run_id),
+            "evidence": _run_evidence(runtime, run_id),
+        }
+    }
 
 
 @router.post("/agents/{agent_id}/runs/{run_id}/replay")
@@ -76,7 +132,16 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
     if not user_messages:
         raise ApiError(status_code=400, code="invalid_state", message="No user messages in session")
 
-    original_message = str(user_messages[-1].get("content", ""))
+    run_details = original_run.get("details")
+    run_details = run_details if isinstance(run_details, dict) else {}
+    frozen_input = run_details.get("input_snapshot")
+    if isinstance(frozen_input, dict):
+        original_message = str(frozen_input.get("message", ""))
+        replay_history = frozen_input.get("history", [])
+        replay_history = replay_history if isinstance(replay_history, list) else []
+    else:
+        original_message = str(user_messages[-1].get("content", ""))
+        replay_history = []
 
     replay_session_id = f"replay:{run_id}:{uuid.uuid4().hex[:8]}"
     try:
@@ -90,9 +155,13 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
         result = await manager.run_once(
             message=original_message,
             session_id=replay_session_id,
+            history=[item for item in replay_history if isinstance(item, dict)],
             output_format="text",
-            trigger_type="chat",
+            trigger_type="replay",
             agent_id=agent_id,
+            explicit_enabled_tools=[],
+            explicit_blocked_tools=[],
+            replay_source_run_id=run_id,
         )
     except Exception as exc:
         raise ApiError(
@@ -101,6 +170,10 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
             message=f"Replay execution failed: {exc}",
         ) from exc
 
+    replay_run_id = result.get("run_id", "")
+    replay_run = runtime.audit_store.get_run(replay_run_id) or {}
+    replay_details = replay_run.get("details")
+    replay_details = replay_details if isinstance(replay_details, dict) else {}
     return {
         "data": {
             "original_run_id": run_id,
@@ -111,6 +184,26 @@ async def replay_run(agent_id: str, run_id: str) -> dict[str, Any]:
             "original_message": original_message,
             "replay_output": result.get("text", ""),
             "replay_usage": result.get("usage", {}),
+            "provenance": {
+                "source_run_id": run_id,
+                "replay_run_id": replay_run_id,
+                "input_digest": run_details.get("input_digest", ""),
+                "replay_input_digest": replay_details.get("input_digest", ""),
+                "source_runtime_config_digest": run_details.get(
+                    "runtime_config_digest", ""
+                ),
+                "replay_runtime_config_digest": replay_details.get(
+                    "runtime_config_digest", ""
+                ),
+                "source_skill_catalog_digest": run_details.get(
+                    "skill_catalog_digest", ""
+                ),
+                "replay_skill_catalog_digest": replay_details.get(
+                    "skill_catalog_digest", ""
+                ),
+                "tools_disabled": True,
+            },
+            "evidence": _run_evidence(runtime, replay_run_id),
             "replayed_at": time.time(),
         }
     }
@@ -193,10 +286,26 @@ async def compare_runs(
 
     diff_hunks = _compute_line_diff(output_a, output_b)
 
+    evidence_a = _run_evidence(runtime, run_a)
+    evidence_b = _run_evidence(runtime, run_b)
     return {
         "data": {
-            "run_a": {"run_id": run_a, "session_id": session_id_a, "output": output_a, "tool_calls": tool_calls_a},
-            "run_b": {"run_id": run_b, "session_id": session_id_b, "output": output_b, "tool_calls": tool_calls_b},
+            "run_a": {
+                "run_id": run_a,
+                "session_id": session_id_a,
+                "status": data_a.get("status", ""),
+                "output": output_a,
+                "tool_calls": tool_calls_a,
+                "evidence": evidence_a,
+            },
+            "run_b": {
+                "run_id": run_b,
+                "session_id": session_id_b,
+                "status": data_b.get("status", ""),
+                "output": output_b,
+                "tool_calls": tool_calls_b,
+                "evidence": evidence_b,
+            },
             "diff": {
                 "hunks": diff_hunks,
                 "total_additions": sum(1 for h in diff_hunks for l in h["lines"] if l.startswith("+") and not l.startswith("+++")),

@@ -556,23 +556,30 @@ class AgentManager:
         *,
         message: str,
         session_id: str,
+        history: list[dict[str, Any]] | None = None,
         output_format: str = "text",
         trigger_type: str = "chat",
         agent_id: str = "default",
         resume_same_turn: bool = False,
+        explicit_enabled_tools: list[str] | None = None,
+        explicit_blocked_tools: list[str] | None = None,
+        replay_source_run_id: str | None = None,
     ) -> dict[str, Any]:
         if self.base_dir is None or self.config is None:
             raise RuntimeError("AgentManager must be initialized before run_once().")
         result = await self._runtime_graph().invoke(
             RuntimeRequest(
                 message=message,
-                history=[],
+                history=list(history or []),
                 session_id=session_id,
                 is_first_turn=False,
                 output_format=output_format,
                 trigger_type=trigger_type,
                 agent_id=agent_id,
                 resume_same_turn=resume_same_turn,
+                explicit_enabled_tools=explicit_enabled_tools,
+                explicit_blocked_tools=explicit_blocked_tools,
+                replay_source_run_id=replay_source_run_id,
             )
         )
         if result.error is not None:
@@ -585,6 +592,7 @@ class AgentManager:
                 "usage": result.usage,
                 "run_id": result.run_id,
                 "compaction_degradation": result.compaction_degradation,
+                "retrieval_degradation": result.retrieval_degradation,
                 "last_checkpoint_id": result.last_checkpoint_id,
             }
         return {
@@ -594,6 +602,7 @@ class AgentManager:
             "usage": result.usage,
             "run_id": result.run_id,
             "compaction_degradation": result.compaction_degradation,
+            "retrieval_degradation": result.retrieval_degradation,
             "last_checkpoint_id": result.last_checkpoint_id,
         }
 

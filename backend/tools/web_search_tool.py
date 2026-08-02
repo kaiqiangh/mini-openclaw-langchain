@@ -101,6 +101,7 @@ class WebSearchTool:
     name: str = "web_search"
     description: str = "Search the web and return compact result snippets"
     permission_level: PermissionLevel = PermissionLevel.L2_NETWORK
+    retry_safe: bool = True
 
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult:
         _ = context

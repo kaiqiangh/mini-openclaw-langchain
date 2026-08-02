@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from graph.embedding_client import EmbeddingClient, cosine_similarity
 from graph.retrieval_store import RetrievalChunk, SQLiteRetrievalStore
 
 _MAX_MEMORY_TOP_K = 20
+_MAX_MEMORY_BYTES = 5 * 1024 * 1024
+_MAX_MEMORY_CHUNKS = 5000
 
 
 @dataclass
@@ -37,6 +40,7 @@ class MemoryIndexer:
         self.index_file = self.index_dir / "index.json"
         self._last_digest: str | None = None
         self._status_lock = threading.Lock()
+        self._rebuild_lock = threading.Lock()
         self._build_thread: threading.Thread | None = None
         self._status: dict[str, object] = {
             "state": "idle",
@@ -69,12 +73,20 @@ class MemoryIndexer:
 
     @staticmethod
     def _sanitize_settings(settings: RetrievalDomainConfig) -> RetrievalDomainConfig:
+        chunk_size = min(20_000, max(64, int(settings.chunk_size)))
         return RetrievalDomainConfig(
             top_k=max(1, int(settings.top_k)),
             semantic_weight=float(settings.semantic_weight),
             lexical_weight=float(settings.lexical_weight),
-            chunk_size=min(20_000, max(64, int(settings.chunk_size))),
-            chunk_overlap=max(0, int(settings.chunk_overlap)),
+            chunk_size=chunk_size,
+            chunk_overlap=min(chunk_size // 2, max(0, int(settings.chunk_overlap))),
+        )
+
+    def _read_memory_text(self) -> str:
+        if not self.memory_file.exists():
+            return ""
+        return self.memory_file.read_bytes()[:_MAX_MEMORY_BYTES].decode(
+            "utf-8", errors="replace"
         )
 
     def _resolve_settings(
@@ -135,6 +147,8 @@ class MemoryIndexer:
         step = max(1, size - overlap)
         for start in range(0, len(text), step):
             chunks.append(text[start : start + size])
+            if len(chunks) >= _MAX_MEMORY_CHUNKS:
+                break
         return chunks
 
     @staticmethod
@@ -148,31 +162,33 @@ class MemoryIndexer:
         return hashlib.sha256(encoded).hexdigest()
 
     def rebuild_index(self, settings: RetrievalDomainConfig | None = None) -> None:
-        self._set_status(state="building", last_error="")
-        try:
-            self._rebuild_index(settings=settings)
-        except Exception as exc:
-            self._set_status(state="failed", last_error="index build failed")
-            raise exc
-        self._set_status(
-            state="ready",
-            last_success_ms=int(time.time() * 1000),
-            last_good_digest=self._last_digest or "",
-        )
+        with self._rebuild_lock:
+            self._set_status(state="building", last_error="")
+            try:
+                self._rebuild_index(settings=settings)
+            except Exception as exc:
+                self._set_status(
+                    state="failed",
+                    last_error=f"{type(exc).__name__}: {str(exc)[:256]}",
+                )
+                return
+            self._set_status(
+                state="ready",
+                last_success_ms=int(time.time() * 1000),
+                last_good_digest=self._last_digest or "",
+            )
 
     def _rebuild_index(self, settings: RetrievalDomainConfig | None = None) -> None:
         effective = self._resolve_settings(settings)
-        text = (
-            self.memory_file.read_bytes()[:5 * 1024 * 1024].decode("utf-8", errors="replace")
-            if self.memory_file.exists()
-            else ""
-        )
+        text = self._read_memory_text()
         digest = self._memory_digest(
             text,
             chunk_size=effective.chunk_size,
             chunk_overlap=effective.chunk_overlap,
         )
-        chunks = self._chunk(text, size=effective.chunk_size, overlap=effective.chunk_overlap)[:5000]
+        chunks = self._chunk(
+            text, size=effective.chunk_size, overlap=effective.chunk_overlap
+        )
         storage = self._resolve_storage_settings()
         if storage.engine == "sqlite":
             try:
@@ -234,9 +250,11 @@ class MemoryIndexer:
             "embeddings": embeddings,
             "embedding_error": embedding_error,
         }
-        self.index_file.write_text(
+        temp_file = self.index_file.with_name(f"{self.index_file.name}.tmp")
+        temp_file.write_text(
             json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
         )
+        os.replace(temp_file, self.index_file)
         self._last_digest = digest
 
     def _ensure_sqlite_index(
@@ -250,11 +268,7 @@ class MemoryIndexer:
         except Exception:
             return None
 
-        text = (
-            self.memory_file.read_bytes()[:5 * 1024 * 1024].decode("utf-8", errors="replace")
-            if self.memory_file.exists()
-            else ""
-        )
+        text = self._read_memory_text()
         digest = self._memory_digest(
             text, chunk_size=settings.chunk_size, chunk_overlap=settings.chunk_overlap
         )
@@ -262,7 +276,7 @@ class MemoryIndexer:
         if meta is None or str(meta.get("digest", "")) != digest:
             if meta is not None:
                 self.schedule_rebuild(settings=settings)
-                return store
+                return None
             self.rebuild_index(settings=settings)
             meta = store.get_meta("memory")
             if meta is None or str(meta.get("digest", "")) != digest:
@@ -288,11 +302,7 @@ class MemoryIndexer:
     def _load_or_rebuild_index(
         self, settings: RetrievalDomainConfig
     ) -> dict[str, object]:
-        text = (
-            self.memory_file.read_text(encoding="utf-8")
-            if self.memory_file.exists()
-            else ""
-        )
+        text = self._read_memory_text()
         digest = self._memory_digest(
             text,
             chunk_size=settings.chunk_size,
@@ -306,7 +316,7 @@ class MemoryIndexer:
                     self._last_digest = digest
                     return payload
                 self.schedule_rebuild(settings=settings)
-                return payload
+                return {"chunks": [], "embeddings": []}
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -344,17 +354,27 @@ class MemoryIndexer:
         if storage.engine == "sqlite":
             store = self._ensure_sqlite_index(settings=effective, storage=storage)
             if store is not None:
-                rows = store.retrieve(
-                    domain="memory",
-                    query=query,
-                    top_k=effective_top_k,
-                    fts_prefilter_k=storage.fts_prefilter_k,
-                    semantic_weight=effective.semantic_weight,
-                    lexical_weight=effective.lexical_weight,
-                    query_embedding=query_embedding,
-                )
+                try:
+                    rows = store.retrieve(
+                        domain="memory",
+                        query=query,
+                        top_k=effective_top_k,
+                        fts_prefilter_k=storage.fts_prefilter_k,
+                        semantic_weight=effective.semantic_weight,
+                        lexical_weight=effective.lexical_weight,
+                        query_embedding=query_embedding,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._set_status(
+                        state="failed",
+                        last_error=f"{type(exc).__name__}: {str(exc)[:256]}",
+                    )
+                    return []
                 if rows:
                     return rows
+            status = self.status()
+            if status.get("state") in {"building", "failed"}:
+                return []
 
         payload = self._load_or_rebuild_index(effective)
         raw_chunks = payload.get("chunks")

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from pydantic import ValidationError
+from langchain_core.tools import StructuredTool
 
 from config import RuntimeConfig
 from graph.runtime_types import ToolExecutionEnvelope
@@ -253,7 +254,11 @@ class ToolExecutionService:
                     session_id=self.session_id,
                     run_id=self.run_id,
                     timestamp=_hook_timestamp(),
-                    payload={"tool_name": tool_name, "input": parsed_args},
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                    },
                 )
                 hook_result = self.hook_engine.dispatch_sync(hook_event)
                 self._append_hook_audit_event(
@@ -262,6 +267,7 @@ class ToolExecutionService:
                     status="allow" if hook_result.allow else "deny",
                     details={
                         "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
                         "input": parsed_args,
                         "reason": hook_result.reason,
                     },
@@ -297,7 +303,13 @@ class ToolExecutionService:
                     continue
 
             try:
-                raw_output = await tool.ainvoke(parsed_args)
+                if isinstance(tool, StructuredTool):
+                    raw_output = await tool.ainvoke(
+                        parsed_args,
+                        config={"metadata": {"tool_call_id": tool_call_id}},
+                    )
+                else:
+                    raw_output = await tool.ainvoke(parsed_args)
             except ValidationError as exc:
                 message = f"Invalid arguments for tool '{tool_name}': {exc}"
                 raw_output = _failure_payload(
@@ -338,7 +350,11 @@ class ToolExecutionService:
                     session_id=self.session_id,
                     run_id=self.run_id,
                     timestamp=_hook_timestamp(),
-                    payload={"tool_name": tool_name, "result": str(raw_output)},
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "result": str(raw_output),
+                    },
                 )
                 self.hook_engine.dispatch_async(hook_event)
                 self._append_hook_audit_event(
@@ -347,6 +363,7 @@ class ToolExecutionService:
                     status="dispatched",
                     details={
                         "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
                         "result_preview": str(raw_output)[:300],
                     },
                 )

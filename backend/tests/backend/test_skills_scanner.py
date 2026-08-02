@@ -109,3 +109,19 @@ def test_scan_skills_skips_symlinks_and_escapes_snapshot_metadata(backend_base_d
     snapshot = (backend_base_dir / "SKILLS_SNAPSHOT.md").read_text(encoding="utf-8")
     assert "<script>" not in snapshot
     assert "&lt;script&gt;" in snapshot
+
+
+def test_scan_skills_excludes_missing_frontmatter_and_bounds_reads(backend_base_dir):
+    invalid = backend_base_dir / "skills" / "invalid"
+    invalid.mkdir(parents=True)
+    (invalid / "SKILL.md").write_text("not a skill", encoding="utf-8")
+    large = backend_base_dir / "skills" / "large"
+    large.mkdir(parents=True)
+    (large / "SKILL.md").write_text(
+        "---\nname: large\ndescription: bounded\n---\n" + "x" * 100_000,
+        encoding="utf-8",
+    )
+
+    skills = scan_skills(backend_base_dir)
+
+    assert [item.name for item in skills] == ["large"]

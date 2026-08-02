@@ -10,7 +10,7 @@ from storage.run_store import AuditStore
 from .base import MiniTool, ToolContext
 from .contracts import ToolResult
 from .policy import ToolPolicyEngine
-from utils.redaction import redact_json_line
+from utils.redaction import redact_json_line, redact_text
 
 _SEARCH_STOPWORDS = {
     "a",
@@ -176,12 +176,27 @@ class ToolRunner:
         with self.audit_file.open("a", encoding="utf-8") as fh:
             fh.write(redact_json_line(payload) + "\n")
 
+    @staticmethod
+    def _normalize_retry_result(tool: MiniTool, result: ToolResult) -> ToolResult:
+        if result.ok or result.error is None or not result.error.retryable:
+            return result
+        if bool(getattr(tool, "retry_safe", False)):
+            return result
+        result.error.retryable = False
+        result.error.details = {
+            **result.error.details,
+            "outcome": "unresolved",
+            "retry_suppressed": True,
+        }
+        return result
+
     def run_tool(
         self,
         tool: MiniTool,
         *,
         args: dict[str, Any],
         context: ToolContext,
+        tool_call_id: str | None = None,
         explicit_enabled_tools: list[str] | None = None,
         explicit_blocked_tools: list[str] | None = None,
     ) -> ToolResult:
@@ -207,6 +222,7 @@ class ToolRunner:
             {
                 "event": "tool_start",
                 "tool": tool.name,
+                "tool_call_id": tool_call_id or "",
                 "run_id": context.run_id,
                 "session_id": context.session_id,
                 "trigger_type": context.trigger_type,
@@ -229,6 +245,7 @@ class ToolRunner:
                 {
                     "event": "tool_end",
                     "tool": tool.name,
+                    "tool_call_id": tool_call_id or "",
                     "run_id": context.run_id,
                     "session_id": context.session_id,
                     "trigger_type": context.trigger_type,
@@ -249,6 +266,7 @@ class ToolRunner:
                     status="denied",
                     duration_ms=duration_ms,
                     details={"reason": decision.reason},
+                    tool_call_id=tool_call_id,
                 )
             return ToolResult.failure(
                 tool_name=tool.name,
@@ -265,6 +283,7 @@ class ToolRunner:
                 {
                     "event": "tool_end",
                     "tool": tool.name,
+                    "tool_call_id": tool_call_id or "",
                     "run_id": context.run_id,
                     "session_id": context.session_id,
                     "trigger_type": context.trigger_type,
@@ -285,6 +304,7 @@ class ToolRunner:
                     status="denied",
                     duration_ms=duration_ms,
                     details={"reason": repeat_reason},
+                    tool_call_id=tool_call_id,
                 )
             return ToolResult.failure(
                 tool_name=tool.name,
@@ -307,6 +327,7 @@ class ToolRunner:
                 {
                     "event": "tool_end",
                     "tool": tool.name,
+                    "tool_call_id": tool_call_id or "",
                     "run_id": context.run_id,
                     "session_id": context.session_id,
                     "trigger_type": context.trigger_type,
@@ -327,6 +348,7 @@ class ToolRunner:
                     status="denied",
                     duration_ms=duration_ms,
                     details={"reason": reason},
+                    tool_call_id=tool_call_id,
                 )
             return ToolResult.failure(
                 tool_name=tool.name,
@@ -337,7 +359,7 @@ class ToolRunner:
             )
 
         try:
-            result = tool.run(args, context)
+            result = self._normalize_retry_result(tool, tool.run(args, context))
             if result.ok:
                 self._repeat_failure_counts.pop(failure_key, None)
                 self._record_search_call(tool.name, args, context)
@@ -347,12 +369,19 @@ class ToolRunner:
                 {
                     "event": "tool_end",
                     "tool": tool.name,
+                    "tool_call_id": tool_call_id or "",
                     "run_id": context.run_id,
                     "session_id": context.session_id,
                     "trigger_type": context.trigger_type,
                     "duration_ms": result.meta.duration_ms,
                     "ok": result.ok,
                     "policy_decision": "allowed",
+                    "retryable": bool(result.error and result.error.retryable),
+                    "outcome": (
+                        result.error.details.get("outcome")
+                        if result.error
+                        else "completed"
+                    ),
                     "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
@@ -365,7 +394,16 @@ class ToolRunner:
                     tool_name=tool.name,
                     status="ok" if result.ok else "error",
                     duration_ms=result.meta.duration_ms,
-                    details={"truncated": result.meta.truncated},
+                    details={
+                        "truncated": result.meta.truncated,
+                        "retryable": bool(result.error and result.error.retryable),
+                        "outcome": (
+                            result.error.details.get("outcome")
+                            if result.error
+                            else "completed"
+                        ),
+                    },
+                    tool_call_id=tool_call_id,
                 )
             return result
         except Exception as exc:  # noqa: BLE001
@@ -374,13 +412,14 @@ class ToolRunner:
                 {
                     "event": "tool_end",
                     "tool": tool.name,
+                    "tool_call_id": tool_call_id or "",
                     "run_id": context.run_id,
                     "session_id": context.session_id,
                     "trigger_type": context.trigger_type,
                     "duration_ms": duration_ms,
                     "ok": False,
                     "policy_decision": "allowed",
-                    "error": str(exc),
+                    "error": redact_text(str(exc))[:1000],
                     "tool_metadata": tool_metadata,
                     "timestamp_ms": int(time.time() * 1000),
                 }
@@ -393,7 +432,8 @@ class ToolRunner:
                     tool_name=tool.name,
                     status="error",
                     duration_ms=duration_ms,
-                    details={"exception": str(exc)},
+                    details={"exception": redact_text(str(exc))[:1000]},
+                    tool_call_id=tool_call_id,
                 )
             self._repeat_failure_counts[failure_key] = prior_failures + 1
             return ToolResult.failure(

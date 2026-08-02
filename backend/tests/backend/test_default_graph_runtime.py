@@ -866,7 +866,7 @@ def test_model_step_clears_pending_delegate_injection_on_retry(
     monkeypatch.setattr(
         manager.lcel_pipelines,
         "model_chain",
-        lambda **kwargs: _RetryingChain([RuntimeError("temporary failure")]),
+        lambda **kwargs: _RetryingChain([TimeoutError("temporary failure")]),
     )
 
     result = asyncio.run(
@@ -2121,7 +2121,7 @@ def test_graph_runtime_retries_then_succeeds(monkeypatch, tmp_path: Path):
         lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
     )
     outcomes: list[Exception | list[AIMessageChunk]] = [
-        RuntimeError("temporary failure"),
+        TimeoutError("temporary failure"),
         [AIMessageChunk(content="retry success")],
     ]
     monkeypatch.setattr(

@@ -508,6 +508,8 @@ class CheckpointSessionRepository:
             graph_name=request.graph_name,
         )
         messages = self._normalize_messages(state.get("messages", []))
+        if not messages and request.history:
+            messages = self._normalize_messages(request.history)
         is_first_turn = len(messages) == 0
         normalized_message = request.message.strip()
 
@@ -739,6 +741,7 @@ class CheckpointSessionRepository:
             state.current_tool_calls.append(
                 {
                     "tool": data.get("tool", "tool"),
+                    "tool_call_id": data.get("tool_call_id", ""),
                     "input": data.get("input", {}),
                 }
             )
@@ -746,7 +749,16 @@ class CheckpointSessionRepository:
             return
 
         if event.type == "tool_end" and state.current_tool_calls:
-            state.current_tool_calls[-1]["output"] = data.get("output", "")
+            tool_call_id = str(data.get("tool_call_id", "")).strip()
+            target = next(
+                (
+                    item
+                    for item in reversed(state.current_tool_calls)
+                    if tool_call_id and item.get("tool_call_id") == tool_call_id
+                ),
+                state.current_tool_calls[-1],
+            )
+            target["output"] = data.get("output", "")
             await self._persist_live_snapshot(request, state, force=True)
             return
 

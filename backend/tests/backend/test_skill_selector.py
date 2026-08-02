@@ -170,3 +170,22 @@ def test_skill_selector_skips_symlinked_skill_files(tmp_path: Path):
 
     selector = SkillSelector()
     assert selector.select(base_dir=tmp_path, message="BSC meme tokens", history=[]) == []
+
+
+def test_skill_selector_clamps_requested_result_count(tmp_path: Path):
+    for index in range(12):
+        _write_skill(
+            tmp_path,
+            f"skill-{index}",
+            "BSC meme token discovery",
+            "Use for BSC meme tokens.",
+        )
+
+    selected = SkillSelector().select(
+        base_dir=tmp_path,
+        message="BSC meme tokens",
+        history=[],
+        top_k=1000,
+    )
+
+    assert len(selected) == 10

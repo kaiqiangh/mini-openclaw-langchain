@@ -75,3 +75,25 @@ def test_prompt_builder_cache_is_bounded(backend_base_dir):
         )
 
     assert len(builder._cache) == 2
+
+
+def test_prompt_builder_cache_uses_content_identity(backend_base_dir):
+    builder = PromptBuilder()
+    runtime = RuntimeConfig(injection_mode=InjectionMode.EVERY_TURN)
+    path = backend_base_dir / "workspace" / "AGENTS.md"
+
+    first = builder.build_system_prompt(
+        base_dir=backend_base_dir, runtime=runtime, rag_mode=False, is_first_turn=True
+    )
+    original_stat = path.stat()
+    path.write_text("same size", encoding="utf-8")
+    path.touch()
+    import os
+
+    os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+    second = builder.build_system_prompt(
+        base_dir=backend_base_dir, runtime=runtime, rag_mode=False, is_first_turn=True
+    )
+
+    assert second.digest != first.digest

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -43,8 +44,10 @@ from graph.skill_selector import SkillSelector
 from graph.stream_orchestrator import StreamOrchestrator
 from graph.tool_execution import ToolExecutionService
 from llm_routing import (
+    MAX_LLM_RETRIES,
     classify_llm_failure,
     inspect_profile_availability,
+    should_retry_for_error,
     should_fallback_for_error,
 )
 from tools import get_tool_runner
@@ -55,6 +58,7 @@ from tools.runner import ToolRunner
 from usage.pricing import calculate_cost_breakdown, infer_provider
 from hooks.engine import HookEngine
 from hooks.types import HookEvent
+from utils.redaction import redact_text
 
 
 class DefaultGraphRuntime(GraphRuntime):
@@ -243,6 +247,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 token_source=str(final_state.get("token_source", "fallback") or "fallback"),
                 run_id=str(final_state.get("run_id", "")),
                 compaction_degradation=final_state.get("compaction_degradation"),
+                retrieval_degradation=final_state.get("retrieval_degradation"),
                 last_checkpoint_id=final_state.get("last_checkpoint_id"),
                 error=error if isinstance(error, RuntimeErrorInfo) else None,
             )
@@ -453,17 +458,6 @@ class DefaultGraphRuntime(GraphRuntime):
                 )
             )
         return refs
-
-    @staticmethod
-    def _has_blocking_delegate_call(tool_calls: list[dict[str, Any]]) -> bool:
-        for call in tool_calls:
-            tool_name = str(call.get("name", "")).strip()
-            args = call.get("args", {})
-            if tool_name == "delegate" and isinstance(args, dict) and bool(
-                args.get("wait_for_result", False)
-            ):
-                return True
-        return False
 
     def _deny_tool_call_for_blocking_delegate(
         self,
@@ -690,7 +684,7 @@ class DefaultGraphRuntime(GraphRuntime):
     def _has_blocking_delegate_failures(
         results: list[ResolvedDelegateResult],
     ) -> bool:
-        return any(item.status in {"failed", "timeout"} for item in results)
+        return any(item.status in {"failed", "timeout", "cancelled"} for item in results)
 
     def _ensure_delegate_failure_disclosure(
         self,
@@ -713,13 +707,13 @@ class DefaultGraphRuntime(GraphRuntime):
             return final_text
         failures: list[str] = []
         for item in results:
-            if item.status not in {"failed", "timeout"}:
+            if item.status not in {"failed", "timeout", "cancelled"}:
                 continue
             detail = item.error_message or item.status
             failures.append(f"{item.role} ({detail})")
-        failure_summary = ", ".join(failures) or "a required delegate failed or timed out"
+        failure_summary = ", ".join(failures) or "a required delegate failed, timed out, or was cancelled"
         prefix = (
-            "Partial answer: one or more required delegates failed or timed out "
+            "Partial answer: one or more required delegates failed, timed out, or were cancelled "
             f"({failure_summary}), so this response may be incomplete."
         )
         body = final_text.strip()
@@ -784,6 +778,43 @@ class DefaultGraphRuntime(GraphRuntime):
                 "cost_usd": cost.get("total_cost_usd"),
             },
         )
+
+    @staticmethod
+    def _run_evidence(
+        *, request: RuntimeRequest, runtime_state: Any, state: RuntimeGraphState
+    ) -> dict[str, Any]:
+        snapshot_path = runtime_state.root_dir / "SKILLS_SNAPSHOT.md"
+        try:
+            skill_digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+        except OSError:
+            skill_digest = ""
+        input_snapshot = {
+            "message": str(request.message)[:20_000],
+            "history": [
+                {
+                    "role": str(item.get("role", "")),
+                    "content": str(item.get("content", ""))[:4_000],
+                }
+                for item in request.history[-20:]
+                if isinstance(item, dict)
+            ],
+        }
+        return {
+            "input_snapshot": input_snapshot,
+            "input_digest": hashlib.sha256(
+                json.dumps(input_snapshot, sort_keys=True, ensure_ascii=True).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+            "runtime_config_digest": str(
+                getattr(runtime_state, "runtime_config_digest", "")
+            ),
+            "skill_catalog_digest": skill_digest,
+            "selected_skills": [
+                item.name for item in state.get("selected_skill_items", [])
+            ],
+            "source_run_id": request.replay_source_run_id or "",
+        }
 
     def _prepare_request(
         self, state: RuntimeGraphState
@@ -868,6 +899,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 "rag_mode": effective_runtime.rag_mode,
                 "retrieval_results": [],
                 "rag_context": None,
+                "retrieval_degradation": None,
                 "selected_skill_items": [],
                 "usage_state": self.services.initial_usage_state(
                     provider=provider,
@@ -893,11 +925,13 @@ class DefaultGraphRuntime(GraphRuntime):
                 {
                     "query": request.message,
                     "results": retrieval_envelope.results,
+                    "degradation": retrieval_envelope.degradation,
                 },
             )
         return {
             "retrieval_results": retrieval_envelope.results,
             "rag_context": retrieval_envelope.rag_context,
+            "retrieval_degradation": retrieval_envelope.degradation,
         }
 
     def _select_skills(self, state: RuntimeGraphState) -> dict[str, Any]:
@@ -1051,6 +1085,10 @@ class DefaultGraphRuntime(GraphRuntime):
         attempt_number = int(state.get("attempt_number", 0))
         retry_index = int(state.get("retry_index", 0))
         loop_count = int(state.get("loop_count", 0)) + 1
+        retry_limit = min(
+            MAX_LLM_RETRIES,
+            max(0, int(effective_runtime.agent_runtime.max_retries)),
+        )
 
         if not run_id:
             run_id = str(uuid.uuid4())
@@ -1136,6 +1174,9 @@ class DefaultGraphRuntime(GraphRuntime):
             trigger_type=request.trigger_type,
             runtime_root=runtime_state.root_dir,
             runtime_audit_store=runtime_state.audit_store,
+            run_details=self._run_evidence(
+                request=request, runtime_state=runtime_state, state=state
+            ),
         )
         active_llm, active_model = self.services.resolve_tool_capable_model(
             runtime=runtime_state,
@@ -1436,6 +1477,10 @@ class DefaultGraphRuntime(GraphRuntime):
                         {
                             "run_id": run_id,
                             "tool": str(call.get("name", "unknown")),
+                            "tool_call_id": (
+                                str(call.get("id", "")).strip()
+                                or str(call.get("tool_call_id", "")).strip()
+                            ),
                             "input": call.get("args", {}),
                         },
                     )
@@ -1542,8 +1587,24 @@ class DefaultGraphRuntime(GraphRuntime):
                 goto="finalize_success",
             )
         except Exception as exc:  # noqa: BLE001
-            if retry_index < effective_runtime.agent_runtime.max_retries:
-                await asyncio.sleep(0.5 * (2**retry_index))
+            failure_kind = classify_llm_failure(exc)
+            safe_error = redact_text(str(exc))[:1000]
+            if retry_index < retry_limit and should_retry_for_error(failure_kind):
+                self.services.append_llm_route_event(
+                    runtime=runtime_state,
+                    run_id=run_id,
+                    session_id=request.session_id,
+                    trigger_type=request.trigger_type,
+                    event="llm_retry_attempt",
+                    details={
+                        "profile": candidate.profile_name,
+                        "failure_kind": failure_kind,
+                        "retry_index": retry_index + 1,
+                        "max_retries": retry_limit,
+                        "error": safe_error,
+                    },
+                )
+                await asyncio.sleep(min(2.0, 0.5 * (2**retry_index)))
                 return Command(
                     update={
                         "run_id": "",
@@ -1556,7 +1617,6 @@ class DefaultGraphRuntime(GraphRuntime):
                     goto="model_step",
                 )
 
-            failure_kind = classify_llm_failure(exc)
             has_more_candidates = candidate_index + 1 < len(route.candidates)
             if has_more_candidates and should_fallback_for_error(
                 route.fallback_policy, failure_kind
@@ -1572,7 +1632,7 @@ class DefaultGraphRuntime(GraphRuntime):
                         "from_profile": candidate.profile_name,
                         "to_profile": next_candidate.profile_name,
                         "failure_kind": failure_kind,
-                        "error": str(exc),
+                        "error": safe_error,
                     },
                 )
                 return Command(
@@ -1598,7 +1658,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 details={
                     "profile": candidate.profile_name,
                     "failure_kind": failure_kind,
-                    "error": str(exc),
+                    "error": safe_error,
                 },
             )
             error_code = (
@@ -1613,7 +1673,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     "pending_delegate_result_injection": [],
                     "delegate_synthesis_retry_count": 0,
                     "error": RuntimeErrorInfo(
-                        error=str(exc),
+                        error=safe_error,
                         code=error_code,
                         run_id=run_id,
                         attempt=attempt_number,
@@ -1630,16 +1690,14 @@ class DefaultGraphRuntime(GraphRuntime):
         pending_tool_calls = list(state.get("pending_tool_calls", []))
         original_tool_calls = list(pending_tool_calls)
         sibling_denials: list[tuple[ToolExecutionEnvelope, Any]] = []
-        if self._has_blocking_delegate_call(pending_tool_calls):
-            executable_calls: list[dict[str, Any]] = []
-            for index, call in enumerate(pending_tool_calls):
-                if str(call.get("name", "")).strip() == "delegate":
-                    executable_calls.append(call)
-                    continue
-                sibling_denials.append(
-                    self._deny_tool_call_for_blocking_delegate(call, index=index)
-                )
-            pending_tool_calls = executable_calls
+        delegate_calls = [
+            call for call in pending_tool_calls
+            if str(call.get("name", "")).strip() == "delegate"
+        ]
+        other_calls = [
+            call for call in pending_tool_calls
+            if str(call.get("name", "")).strip() != "delegate"
+        ]
         tool_service = self._build_tool_service(
             state=state,
             request=request,
@@ -1647,32 +1705,66 @@ class DefaultGraphRuntime(GraphRuntime):
             runtime_config=runtime_state.runtime_config,
             run_id=str(state.get("run_id", "")),
         )
-        envelopes, tool_messages = await tool_service.execute_pending(
-            pending_tool_calls
-        )
-        if sibling_denials:
-            ordered_envelopes: list[ToolExecutionEnvelope] = []
-            ordered_tool_messages: list[Any] = []
-            executed_index = 0
-            denial_index = 0
-            for call in original_tool_calls:
+        envelopes, tool_messages = await tool_service.execute_pending(delegate_calls)
+        blocking_refs = self._blocking_delegate_refs_from_envelopes(envelopes)
+        if blocking_refs:
+            for index, call in enumerate(pending_tool_calls):
                 if str(call.get("name", "")).strip() == "delegate":
-                    ordered_envelopes.append(envelopes[executed_index])
-                    ordered_tool_messages.append(tool_messages[executed_index])
-                    executed_index += 1
-                else:
-                    envelope, message = sibling_denials[denial_index]
-                    ordered_envelopes.append(envelope)
-                    ordered_tool_messages.append(message)
-                    denial_index += 1
-            envelopes = ordered_envelopes
-            tool_messages = ordered_tool_messages
+                    continue
+                sibling_denials.append(
+                    self._deny_tool_call_for_blocking_delegate(call, index=index)
+                )
+            for envelope, _ in sibling_denials:
+                runtime_state.audit_store.append_step(
+                    agent_id=request.agent_id,
+                    run_id=str(state.get("run_id", "")),
+                    session_id=request.session_id,
+                    trigger_type=request.trigger_type,
+                    event="tool_policy_denied",
+                    hook_type="pre_tool_use",
+                    status="deny",
+                    details={
+                        "tool": envelope.tool,
+                        "tool_call_id": envelope.tool_call_id,
+                        "reason": "blocking delegate launched in the same step",
+                    },
+                )
+        else:
+            other_envelopes, other_messages = await tool_service.execute_pending(other_calls)
+            envelopes.extend(other_envelopes)
+            tool_messages.extend(other_messages)
+        if not delegate_calls and not other_calls:
+            envelopes, tool_messages = [], []
+        denial_by_id = {
+            envelope.tool_call_id: (envelope, message)
+            for envelope, message in sibling_denials
+        }
+        executed_by_id = {
+            envelope.tool_call_id: (envelope, message)
+            for envelope, message in zip(envelopes, tool_messages, strict=True)
+        }
+        ordered_envelopes: list[ToolExecutionEnvelope] = []
+        ordered_tool_messages: list[Any] = []
+        for index, call in enumerate(original_tool_calls):
+            tool_name = str(call.get("name", "unknown")).strip() or "unknown"
+            call_id = (
+                str(call.get("id", "")).strip()
+                or str(call.get("tool_call_id", "")).strip()
+                or f"{tool_name}-{index}"
+            )
+            pair = denial_by_id.get(call_id) or executed_by_id.get(call_id)
+            if pair is not None:
+                ordered_envelopes.append(pair[0])
+                ordered_tool_messages.append(pair[1])
+        envelopes = ordered_envelopes
+        tool_messages = ordered_tool_messages
         for envelope in envelopes:
             self._emit(
                 "tool_end",
                 {
                     "run_id": str(state.get("run_id", "")),
                     "tool": envelope.tool,
+                    "tool_call_id": envelope.tool_call_id,
                     "output": envelope.output,
                 },
             )

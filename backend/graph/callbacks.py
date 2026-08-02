@@ -18,6 +18,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
         session_id: str,
         trigger_type: str,
         audit_store: AuditStore | None = None,
+        run_details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.audit_file = audit_file
@@ -25,6 +26,8 @@ class AuditCallbackHandler(BaseCallbackHandler):
         self.session_id = session_id
         self.trigger_type = trigger_type
         self.audit_store = audit_store
+        self.run_details = dict(run_details or {})
+        self.started_ms = int(time.time() * 1000)
         self.audit_file.parent.mkdir(parents=True, exist_ok=True)
         if self.audit_store is not None:
             self.audit_store.append_run(
@@ -32,6 +35,7 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 session_id=session_id,
                 trigger_type=trigger_type,
                 status="started",
+                details=self.run_details,
             )
 
     def _write(self, event: str, payload: dict[str, Any]) -> None:
@@ -58,18 +62,28 @@ class AuditCallbackHandler(BaseCallbackHandler):
     def on_tool_start(
         self, serialized: dict[str, Any], input_str: str, **kwargs: Any
     ) -> None:
+        metadata = kwargs.get("metadata")
+        tool_call_id = kwargs.get("tool_call_id") or (
+            metadata.get("tool_call_id") if isinstance(metadata, dict) else ""
+        )
         self._write(
             "tool_start",
             {
                 "tool": serialized.get("name", "unknown"),
+                "tool_call_id": str(tool_call_id or ""),
                 "input": input_str,
             },
         )
 
     def on_tool_end(self, output: Any, **kwargs: Any) -> None:
+        metadata = kwargs.get("metadata")
+        tool_call_id = kwargs.get("tool_call_id") or (
+            metadata.get("tool_call_id") if isinstance(metadata, dict) else ""
+        )
         self._write(
             "tool_end",
             {
+                "tool_call_id": str(tool_call_id or ""),
                 "output": str(output)[:2000],
             },
         )
@@ -98,6 +112,10 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 session_id=self.session_id,
                 trigger_type=self.trigger_type,
                 status="completed",
+                details={
+                    **self.run_details,
+                    "duration_ms": max(0, int(time.time() * 1000) - self.started_ms),
+                },
             )
 
     def on_llm_error(self, error: BaseException, **kwargs: Any) -> None:
@@ -113,7 +131,11 @@ class AuditCallbackHandler(BaseCallbackHandler):
                 session_id=self.session_id,
                 trigger_type=self.trigger_type,
                 status="failed",
-                details={"error": str(error)},
+                details={
+                    **self.run_details,
+                    "duration_ms": max(0, int(time.time() * 1000) - self.started_ms),
+                    "error": str(error),
+                },
             )
 
 

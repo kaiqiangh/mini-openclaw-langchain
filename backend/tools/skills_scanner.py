@@ -10,12 +10,23 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional at scaffold stage
     yaml = None
 
+MAX_SKILL_READ_CHARS = 64 * 1024
+
 
 @dataclass
 class SkillMeta:
     name: str
     description: str
     location: str
+
+
+def read_skill_text(path: Path) -> str:
+    """Read only the bounded prefix used for cataloging and selection."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(MAX_SKILL_READ_CHARS)
+    except OSError:
+        return ""
 
 
 def _extract_frontmatter(text: str) -> dict[str, str]:
@@ -68,14 +79,17 @@ def scan_skills(base_dir: Path) -> list[SkillMeta]:
     found: list[SkillMeta] = []
 
     for skill_file in _iter_skill_files(skills_dir):
-        try:
-            text = skill_file.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = read_skill_text(skill_file)
+        if not text:
             continue
         frontmatter = _extract_frontmatter(text)
+        if not frontmatter.get("name", "").strip() or not frontmatter.get(
+            "description", ""
+        ).strip():
+            continue
 
-        name = frontmatter.get("name", skill_file.parent.name)
-        description = frontmatter.get("description", "")
+        name = frontmatter["name"].strip()
+        description = frontmatter["description"].strip()
 
         # Skill paths in snapshot must be workspace-relative because tools are sandboxed to workspace root.
         rel_path = f"./skills/{skill_file.parent.name}/SKILL.md"

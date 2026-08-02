@@ -131,6 +131,7 @@ class FetchUrlTool:
     name: str = "fetch_url"
     description: str = "Fetch remote URL and convert content to compact text"
     permission_level: PermissionLevel = PermissionLevel.L2_NETWORK
+    retry_safe: bool = True
 
     @staticmethod
     def _is_blocked_ip(value: str) -> bool:
