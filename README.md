@@ -171,8 +171,8 @@ For Docker runs, copy `.env.example` to `.env`.
 
 | Variable                                                        | Required | Description                                                                       |
 | --------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------- |
-| `APP_ADMIN_TOKEN`                                               | ✅       | Admin secret for browser cookie bootstrap and `/api/v1/*`                         |
-| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅       | Key for the active LLM route defined in `backend/config.json`                     |
+| `APP_ADMIN_TOKEN`                                               | ✅        | Admin secret for browser cookie bootstrap and `/api/v1/*`                         |
+| `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` / `AZURE_FOUNDRY_API_KEY` | ✅        | Key for the active LLM route defined in `backend/config.json`                     |
 | `APP_ALLOWED_ORIGINS`                                           | Optional | CORS origins for backend requests                                                 |
 | `APP_TRUSTED_HOSTS`                                             | Optional | Trusted host allowlist for backend requests; include `backend-dev` for Docker dev |
 | `LANGSMITH_API_KEY`                                             | Optional | Enable LangSmith tracing                                                          |
@@ -328,25 +328,25 @@ Exit codes: `0` success · `1` invalid args · `2` missing binary · `3` health 
 
 ## Feature Status
 
-| Area                    | Status   | Notes                                                                   |
-| ----------------------- | -------- | ----------------------------------------------------------------------- |
-| Multi-agent workspaces  | ✅ Ready | Per-agent sessions, memory, knowledge, usage, scheduler state           |
-| Chat + streaming        | ✅ Ready | SSE streaming, debug events, tool/retrieval traces                      |
-| Session compression     | ✅ Ready | Context summarization and history truncation via `/compress`            |
-| Tool hardening          | ✅ Ready | URL scheme/host controls, private network blocking, allowlisted terminal environment |
-| Tool safety eval harness| ✅ Ready | YAML-defined adversarial cases, safety scorecard, CI-integrated         |
-| Scheduler API           | ✅ Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs                |
-| Scheduler observability | ✅ Ready | Windowed duration/latency aggregates + timeseries (`1h` → `30d`)        |
-| Scheduler UI            | ✅ Ready | `/scheduler` page for cron + heartbeat controls and history             |
-| Agent management UX     | ✅ Ready | Bulk delete/export/runtime patch, template-driven config, diff view     |
-| Retrieval engine        | ✅ Ready | SQLite + FTS5 prefilter, semantic+lexical blending, JSON migration      |
-| Runtime config editor   | ✅ Ready | Agent-scoped JSON editor via `/api/v1/agents/{agent_id}/config/runtime` |
-| Usage analytics         | ✅ Ready | Model breakdown, trend chart, CSV export                                |
-| Approval workflow       | ✅ Ready | High-risk tool approval queue with approve/deny UI                      |
-| Run comparison          | ✅ Ready | Side-by-side diff of two run outputs + replay history                   |
-| Setup wizard            | ✅ Ready | 3-step first-time setup (token → LLM → verify)                         |
-| Docker REPL sandbox     | ✅ Ready | Isolated Python execution with `--network=none --read-only`             |
-| Async I/O utilities     | ✅ Ready | aiofiles-based JSONL read/write/append foundation                       |
+| Area                     | Status  | Notes                                                                                |
+| ------------------------ | ------- | ------------------------------------------------------------------------------------ |
+| Multi-agent workspaces   | ✅ Ready | Per-agent sessions, memory, knowledge, usage, scheduler state                        |
+| Chat + streaming         | ✅ Ready | SSE streaming, debug events, tool/retrieval traces                                   |
+| Session compression      | ✅ Ready | Context summarization and history truncation via `/compress`                         |
+| Tool hardening           | ✅ Ready | URL scheme/host controls, private network blocking, allowlisted terminal environment |
+| Tool safety eval harness | ✅ Ready | YAML-defined adversarial cases, safety scorecard, CI-integrated                      |
+| Scheduler API            | ✅ Ready | Cron CRUD, run-now, runs/failures, heartbeat config/runs                             |
+| Scheduler observability  | ✅ Ready | Windowed duration/latency aggregates + timeseries (`1h` → `30d`)                     |
+| Scheduler UI             | ✅ Ready | `/scheduler` page for cron + heartbeat controls and history                          |
+| Agent management UX      | ✅ Ready | Bulk delete/export/runtime patch, template-driven config, diff view                  |
+| Retrieval engine         | ✅ Ready | SQLite + FTS5 prefilter, semantic+lexical blending, JSON migration                   |
+| Runtime config editor    | ✅ Ready | Agent-scoped JSON editor via `/api/v1/agents/{agent_id}/config/runtime`              |
+| Usage analytics          | ✅ Ready | Model breakdown, trend chart, CSV export                                             |
+| Approval workflow        | ✅ Ready | High-risk tool approval queue with approve/deny UI                                   |
+| Run comparison           | ✅ Ready | Side-by-side diff of two run outputs + replay history                                |
+| Setup wizard             | ✅ Ready | 3-step first-time setup (token → LLM → verify)                                       |
+| Docker REPL sandbox      | ✅ Ready | Isolated Python execution with `--network=none --read-only`                          |
+| Async I/O utilities      | ✅ Ready | aiofiles-based JSONL read/write/append foundation                                    |
 
 ---
 
