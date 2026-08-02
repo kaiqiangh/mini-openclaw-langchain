@@ -460,6 +460,11 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
                 "run_id": "run-blocking-tools",
                 "pending_tool_calls": [
                     {
+                        "id": "call-2",
+                        "name": "read_files",
+                        "args": {"path": "memory/MEMORY.md"},
+                    },
+                    {
                         "id": "call-1",
                         "name": "delegate",
                         "args": {
@@ -468,11 +473,6 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
                             "allowed_tools": ["read_files"],
                             "wait_for_result": True,
                         },
-                    },
-                    {
-                        "id": "call-2",
-                        "name": "read_files",
-                        "args": {"path": "memory/MEMORY.md"},
                     },
                 ],
                 "model_messages": [],
@@ -490,6 +490,10 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
     assert len(denied) == 1
     assert denied[0].error_code == "E_POLICY_DENIED"
     assert "blocking delegate" in denied[0].error_message
+    assert [item.tool for item in result.update["tool_history"]] == [
+        "read_files",
+        "delegate",
+    ]
 
 
 def test_wait_for_delegates_waits_until_all_blocking_delegates_finish(

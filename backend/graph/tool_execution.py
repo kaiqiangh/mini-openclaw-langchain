@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from config import RuntimeConfig
 from graph.runtime_types import ToolExecutionEnvelope
 from storage.run_store import AuditStore
@@ -52,6 +54,7 @@ def _failure_payload(
     message: str,
     duration_ms: int = 0,
     code: ErrorCode = "E_NOT_FOUND",
+    details: dict[str, Any] | None = None,
 ) -> str:
     return json.dumps(
         asdict(
@@ -61,6 +64,7 @@ def _failure_payload(
                 message=message,
                 duration_ms=duration_ms,
                 retryable=False,
+                details=details,
             )
         ),
         ensure_ascii=False,
@@ -216,6 +220,7 @@ class ToolExecutionService:
                 raw_output = _failure_payload(
                     tool_name=tool_name,
                     message=f"Tool '{tool_name}' is not available",
+                    details={"tool_call_id": tool_call_id},
                 )
                 envelopes.append(
                     ToolExecutionEnvelope(
@@ -266,6 +271,7 @@ class ToolExecutionService:
                         tool_name=tool_name,
                         message=f"Hook denied: {hook_result.reason}",
                         code="E_POLICY_DENIED",
+                        details={"tool_call_id": tool_call_id},
                     )
                     envelopes.append(
                         ToolExecutionEnvelope(
@@ -290,7 +296,39 @@ class ToolExecutionService:
                     )
                     continue
 
-            raw_output = await tool.ainvoke(parsed_args)
+            try:
+                raw_output = await tool.ainvoke(parsed_args)
+            except ValidationError as exc:
+                message = f"Invalid arguments for tool '{tool_name}': {exc}"
+                raw_output = _failure_payload(
+                    tool_name=tool_name,
+                    message=message,
+                    code="E_INVALID_ARGS",
+                    details={"tool_call_id": tool_call_id},
+                )
+                envelopes.append(
+                    ToolExecutionEnvelope(
+                        tool=tool_name,
+                        tool_call_id=tool_call_id,
+                        args=parsed_args,
+                        output=raw_output,
+                        raw_output=raw_output,
+                        ok=False,
+                        duration_ms=0,
+                        error_code="E_INVALID_ARGS",
+                        error_message=message,
+                        details={"tool_call_id": tool_call_id},
+                    )
+                )
+                tool_messages.append(
+                    ToolMessage(
+                        content=raw_output,
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                        status="error",
+                    )
+                )
+                continue
 
             # PostToolUse hook (async, fire-and-forget)
             if self.hook_engine and self.hook_engine.is_enabled:

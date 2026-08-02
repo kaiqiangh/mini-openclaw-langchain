@@ -492,6 +492,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     ),
                     duration_ms=0,
                     retryable=False,
+                    details={"tool_call_id": tool_call_id},
                 )
             ),
             ensure_ascii=False,
@@ -510,6 +511,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     f"Tool '{tool_name}' was skipped because a blocking delegate "
                     "was launched in the same step"
                 ),
+                details={"tool_call_id": tool_call_id},
             ),
             ToolMessage(
                 content=raw_output,
@@ -1626,6 +1628,7 @@ class DefaultGraphRuntime(GraphRuntime):
         request = state["request"]
         runtime_state = self.services.get_runtime(request.agent_id)
         pending_tool_calls = list(state.get("pending_tool_calls", []))
+        original_tool_calls = list(pending_tool_calls)
         sibling_denials: list[tuple[ToolExecutionEnvelope, Any]] = []
         if self._has_blocking_delegate_call(pending_tool_calls):
             executable_calls: list[dict[str, Any]] = []
@@ -1648,8 +1651,22 @@ class DefaultGraphRuntime(GraphRuntime):
             pending_tool_calls
         )
         if sibling_denials:
-            envelopes.extend(envelope for envelope, _ in sibling_denials)
-            tool_messages.extend(message for _, message in sibling_denials)
+            ordered_envelopes: list[ToolExecutionEnvelope] = []
+            ordered_tool_messages: list[Any] = []
+            executed_index = 0
+            denial_index = 0
+            for call in original_tool_calls:
+                if str(call.get("name", "")).strip() == "delegate":
+                    ordered_envelopes.append(envelopes[executed_index])
+                    ordered_tool_messages.append(tool_messages[executed_index])
+                    executed_index += 1
+                else:
+                    envelope, message = sibling_denials[denial_index]
+                    ordered_envelopes.append(envelope)
+                    ordered_tool_messages.append(message)
+                    denial_index += 1
+            envelopes = ordered_envelopes
+            tool_messages = ordered_tool_messages
         for envelope in envelopes:
             self._emit(
                 "tool_end",
