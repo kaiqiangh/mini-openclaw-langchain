@@ -9,3 +9,4 @@ class RetrievalEnvelope:
     rag_mode: bool
     results: list[dict[str, Any]] = field(default_factory=list)
     rag_context: str | None = None
+    degradation: str | None = None

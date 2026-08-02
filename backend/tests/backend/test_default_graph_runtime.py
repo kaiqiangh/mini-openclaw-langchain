@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -18,6 +19,8 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from graph.agent import AgentManager
+import graph.default_graph_runtime as default_graph_runtime
+from graph.compaction import CompactResult
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.runtime_execution_services import RuntimeCallbackBundle
 from graph.runtime_types import (
@@ -457,6 +460,11 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
                 "run_id": "run-blocking-tools",
                 "pending_tool_calls": [
                     {
+                        "id": "call-2",
+                        "name": "read_files",
+                        "args": {"path": "memory/MEMORY.md"},
+                    },
+                    {
                         "id": "call-1",
                         "name": "delegate",
                         "args": {
@@ -465,11 +473,6 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
                             "allowed_tools": ["read_files"],
                             "wait_for_result": True,
                         },
-                    },
-                    {
-                        "id": "call-2",
-                        "name": "read_files",
-                        "args": {"path": "memory/MEMORY.md"},
                     },
                 ],
                 "model_messages": [],
@@ -487,6 +490,10 @@ def test_tool_step_denies_sibling_business_tools_for_blocking_delegate(
     assert len(denied) == 1
     assert denied[0].error_code == "E_POLICY_DENIED"
     assert "blocking delegate" in denied[0].error_message
+    assert [item.tool for item in result.update["tool_history"]] == [
+        "read_files",
+        "delegate",
+    ]
 
 
 def test_wait_for_delegates_waits_until_all_blocking_delegates_finish(
@@ -626,6 +633,73 @@ def test_compose_inputs_injects_blocking_delegate_results(tmp_path: Path):
         and "Delegated summary" in message.content
         for message in composed["input_messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_compaction_node_awaits_and_hands_off_canonical_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    graph = manager._runtime_graph()
+    compacted_messages = [HumanMessage(content="canonical compacted state")]
+    calls: list[dict[str, Any]] = []
+
+    class _AsyncPipeline:
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            calls.append({"messages": messages, **kwargs})
+            return CompactResult(
+                messages=compacted_messages,
+                summary=None,
+                checkpoint_id="checkpoint-1",
+                was_compacted=True,
+                degradation="drop_only",
+            )
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _AsyncPipeline)
+    request = RuntimeRequest(
+        message="continue",
+        history=[],
+        session_id="session-1",
+        agent_id="default",
+    )
+
+    compacted = await graph._compact_step(
+        {
+            "request": request,
+            "run_id": "run-1",
+            "loop_count": 2,
+            "input_messages": [HumanMessage(content="stale state")],
+        }
+    )
+
+    assert calls[0]["agent_id"] == "default"
+    assert calls[0]["session_id"] == "session-1"
+    assert compacted["input_messages"] == compacted_messages
+    assert compacted["model_messages"] == []
+    assert compacted["last_checkpoint_id"] == "checkpoint-1"
+    assert compacted["compaction_applied"] is True
+    assert compacted["compaction_degradation"] == "drop_only"
+
+    composed = graph._compose_inputs(
+        {
+            "base_system_prompt": "base prompt",
+            "selected_skill_items": [],
+            "messages": [{"role": "user", "content": "stale history"}],
+            "model_messages": [AIMessage(content="stale model state")],
+            **compacted,
+        }
+    )
+
+    assert composed["input_messages"] == compacted_messages
+    assert composed["compaction_applied"] is False
 
 
 def test_compose_inputs_does_not_reinject_consumed_delegate_results(tmp_path: Path):
@@ -792,7 +866,7 @@ def test_model_step_clears_pending_delegate_injection_on_retry(
     monkeypatch.setattr(
         manager.lcel_pipelines,
         "model_chain",
-        lambda **kwargs: _RetryingChain([RuntimeError("temporary failure")]),
+        lambda **kwargs: _RetryingChain([TimeoutError("temporary failure")]),
     )
 
     result = asyncio.run(
@@ -1665,6 +1739,153 @@ def test_graph_runtime_streams_tool_loop_events(monkeypatch, tmp_path: Path):
     assert graph._tool_runners == {}
 
 
+def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    payloads: list[dict[str, Any]] = []
+    scripted = [
+        [AIMessageChunk(content="before compaction")],
+        [AIMessageChunk(content="after compaction")],
+    ]
+
+    class _LiveCompactionPipeline:
+        needs_calls = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def needs_compaction(self, messages: list[Any]) -> tuple[bool, int]:
+            _ = messages
+            type(self).needs_calls += 1
+            return type(self).needs_calls == 1, 1
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            _ = messages
+            assert kwargs["summarize_fn"] is not None
+            asyncio.get_running_loop()
+            return CompactResult(
+                messages=[HumanMessage(content="canonical compacted state")],
+                summary=None,
+                checkpoint_id="checkpoint-live",
+                was_compacted=True,
+                degradation="drop_only",
+            )
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _LiveCompactionPipeline)
+    monkeypatch.setattr(
+        manager.runtime_services,
+        "get_runtime_llm",
+        lambda runtime, profile: RunnableLambda(lambda payload: payload),
+    )
+    monkeypatch.setattr(
+        manager.lcel_pipelines,
+        "model_chain",
+        lambda **kwargs: _RecordingScriptedChain(payloads, scripted),
+    )
+
+    async def collect():
+        rows = []
+        async for event in manager.astream(
+            message="run with context pressure",
+            session_id="session-compaction-live",
+            agent_id="default",
+        ):
+            rows.append(event)
+        return rows
+
+    events = asyncio.run(collect())
+    compaction_events = [row for row in events if row["type"] == "compaction"]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["content"] == "after compaction"
+    assert compaction_events[0]["data"]["degradation"] == "drop_only"
+    compaction_index = events.index(compaction_events[0])
+    assert any(
+        row["type"] == "new_response" for row in events[compaction_index + 1 :]
+    )
+    persisted_state = asyncio.run(
+        manager.get_graph_state(
+            session_id="session-compaction-live",
+            agent_id="default",
+        )
+    )
+    persisted_contents = [
+        str(row.get("content", ""))
+        for row in persisted_state.get("messages", [])
+        if isinstance(row, dict)
+    ]
+    assert "canonical compacted state" in persisted_contents
+    assert "before compaction" not in persisted_contents
+    second_messages = payloads[1]["messages"]
+    assert any(
+        getattr(message, "content", "") == "canonical compacted state"
+        for message in second_messages
+    )
+    assert not any(
+        getattr(message, "content", "") == "before compaction"
+        for message in second_messages
+    )
+
+
+def test_live_graph_compaction_failure_is_observable(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    class _FailingCompactionPipeline:
+        needs_calls = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def needs_compaction(self, messages: list[Any]) -> tuple[bool, int]:
+            _ = messages
+            type(self).needs_calls += 1
+            return type(self).needs_calls == 1, 1
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            _ = messages, kwargs
+            raise OSError("checkpoint unavailable")
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _FailingCompactionPipeline)
+    monkeypatch.setattr(
+        manager.runtime_services,
+        "get_runtime_llm",
+        lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
+    )
+    monkeypatch.setattr(
+        manager.lcel_pipelines,
+        "model_chain",
+        lambda **kwargs: _ScriptedChain([[AIMessageChunk(content="answer")]]),
+    )
+
+    async def collect():
+        rows = []
+        async for event in manager.astream(
+            message="run with failing compaction",
+            session_id="session-compaction-failure",
+            agent_id="default",
+        ):
+            rows.append(event)
+        return rows
+
+    events = asyncio.run(collect())
+    compaction_events = [row for row in events if row["type"] == "compaction"]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["content"] == "answer"
+    assert compaction_events[0]["data"]["degradation"] == "compaction_failed"
+
+
 def test_graph_runtime_reuses_tool_runner_per_request(tmp_path: Path):
     _seed_base(tmp_path)
     manager = AgentManager()
@@ -1900,7 +2121,7 @@ def test_graph_runtime_retries_then_succeeds(monkeypatch, tmp_path: Path):
         lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
     )
     outcomes: list[Exception | list[AIMessageChunk]] = [
-        RuntimeError("temporary failure"),
+        TimeoutError("temporary failure"),
         [AIMessageChunk(content="retry success")],
     ]
     monkeypatch.setattr(

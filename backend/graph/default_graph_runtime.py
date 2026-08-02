@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import time
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -19,7 +19,11 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from graph.compaction import CompactionPipeline, CompactionSummary
+from graph.compaction import (
+    CompactionPipeline,
+    CompactionSummary,
+    compacted_history_entries,
+)
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.retrieval_orchestrator import RetrievalOrchestrator
 from graph.runtime_types import (
@@ -27,6 +31,7 @@ from graph.runtime_types import (
     GraphRuntime,
     ResolvedDelegateResult,
     RuntimeCheckpointer,
+    CompactionDegradation,
     RuntimeErrorInfo,
     RuntimeEvent,
     RuntimeGraphState,
@@ -38,18 +43,20 @@ from graph.skill_selector import SkillSelector
 from graph.stream_orchestrator import StreamOrchestrator
 from graph.tool_execution import ToolExecutionService
 from llm_routing import (
+    MAX_LLM_RETRIES,
     classify_llm_failure,
     inspect_profile_availability,
+    should_retry_for_error,
     should_fallback_for_error,
 )
 from tools import get_tool_runner
 from tools.base import ToolContext
-from tools.contracts import ToolResult
 from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from tools.runner import ToolRunner
 from usage.pricing import calculate_cost_breakdown, infer_provider
 from hooks.engine import HookEngine
 from hooks.types import HookEvent
+from utils.redaction import redact_text
 
 
 class DefaultGraphRuntime(GraphRuntime):
@@ -237,6 +244,9 @@ class DefaultGraphRuntime(GraphRuntime):
                 structured_response=final_state.get("structured_response"),
                 token_source=str(final_state.get("token_source", "fallback") or "fallback"),
                 run_id=str(final_state.get("run_id", "")),
+                compaction_degradation=final_state.get("compaction_degradation"),
+                retrieval_degradation=final_state.get("retrieval_degradation"),
+                last_checkpoint_id=final_state.get("last_checkpoint_id"),
                 error=error if isinstance(error, RuntimeErrorInfo) else None,
             )
             if result.error is None:
@@ -244,6 +254,9 @@ class DefaultGraphRuntime(GraphRuntime):
             else:
                 await session_repository.fail_stream(prepared_request)
             return result
+        except Exception:
+            await session_repository.fail_stream(prepared_request)
+            raise
         finally:
             self._tool_runners.pop(id(prepared_request), None)
 
@@ -328,6 +341,9 @@ class DefaultGraphRuntime(GraphRuntime):
             "loop_count": 0,
             "run_id": "",
             "input_messages": [],
+            "compaction_applied": False,
+            "compaction_degradation": None,
+            "last_checkpoint_id": None,
             "model_messages": [],
             "pending_tool_calls": [],
             "pending_new_response": False,
@@ -440,71 +456,6 @@ class DefaultGraphRuntime(GraphRuntime):
                 )
             )
         return refs
-
-    @staticmethod
-    def _has_blocking_delegate_call(tool_calls: list[dict[str, Any]]) -> bool:
-        for call in tool_calls:
-            tool_name = str(call.get("name", "")).strip()
-            args = call.get("args", {})
-            if tool_name == "delegate" and isinstance(args, dict) and bool(
-                args.get("wait_for_result", False)
-            ):
-                return True
-        return False
-
-    def _deny_tool_call_for_blocking_delegate(
-        self,
-        call: dict[str, Any],
-        *,
-        index: int,
-    ) -> tuple[ToolExecutionEnvelope, Any]:
-        from langchain_core.messages import ToolMessage
-
-        tool_name = str(call.get("name", "unknown")).strip() or "unknown"
-        tool_call_id = (
-            str(call.get("id", "")).strip()
-            or str(call.get("tool_call_id", "")).strip()
-            or f"{tool_name}-{index}"
-        )
-        args = call.get("args", {})
-        parsed_args = args if isinstance(args, dict) else {}
-        raw_output = json.dumps(
-            asdict(
-                ToolResult.failure(
-                    tool_name=tool_name,
-                    code="E_POLICY_DENIED",
-                    message=(
-                        f"Tool '{tool_name}' was skipped because a blocking delegate "
-                        "was launched in the same step"
-                    ),
-                    duration_ms=0,
-                    retryable=False,
-                )
-            ),
-            ensure_ascii=False,
-        )
-        return (
-            ToolExecutionEnvelope(
-                tool=tool_name,
-                tool_call_id=tool_call_id,
-                args=parsed_args,
-                output=raw_output,
-                raw_output=raw_output,
-                ok=False,
-                duration_ms=0,
-                error_code="E_POLICY_DENIED",
-                error_message=(
-                    f"Tool '{tool_name}' was skipped because a blocking delegate "
-                    "was launched in the same step"
-                ),
-            ),
-            ToolMessage(
-                content=raw_output,
-                name=tool_name,
-                tool_call_id=tool_call_id,
-                status="error",
-            ),
-        )
 
     @staticmethod
     def _resolved_delegate_result(
@@ -675,7 +626,7 @@ class DefaultGraphRuntime(GraphRuntime):
     def _has_blocking_delegate_failures(
         results: list[ResolvedDelegateResult],
     ) -> bool:
-        return any(item.status in {"failed", "timeout"} for item in results)
+        return any(item.status in {"failed", "timeout", "cancelled"} for item in results)
 
     def _ensure_delegate_failure_disclosure(
         self,
@@ -698,13 +649,13 @@ class DefaultGraphRuntime(GraphRuntime):
             return final_text
         failures: list[str] = []
         for item in results:
-            if item.status not in {"failed", "timeout"}:
+            if item.status not in {"failed", "timeout", "cancelled"}:
                 continue
             detail = item.error_message or item.status
             failures.append(f"{item.role} ({detail})")
-        failure_summary = ", ".join(failures) or "a required delegate failed or timed out"
+        failure_summary = ", ".join(failures) or "a required delegate failed, timed out, or was cancelled"
         prefix = (
-            "Partial answer: one or more required delegates failed or timed out "
+            "Partial answer: one or more required delegates failed, timed out, or were cancelled "
             f"({failure_summary}), so this response may be incomplete."
         )
         body = final_text.strip()
@@ -769,6 +720,43 @@ class DefaultGraphRuntime(GraphRuntime):
                 "cost_usd": cost.get("total_cost_usd"),
             },
         )
+
+    @staticmethod
+    def _run_evidence(
+        *, request: RuntimeRequest, runtime_state: Any, state: RuntimeGraphState
+    ) -> dict[str, Any]:
+        snapshot_path = runtime_state.root_dir / "SKILLS_SNAPSHOT.md"
+        try:
+            skill_digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+        except OSError:
+            skill_digest = ""
+        input_snapshot = {
+            "message": str(request.message)[:20_000],
+            "history": [
+                {
+                    "role": str(item.get("role", "")),
+                    "content": str(item.get("content", ""))[:4_000],
+                }
+                for item in request.history[-20:]
+                if isinstance(item, dict)
+            ],
+        }
+        return {
+            "input_snapshot": input_snapshot,
+            "input_digest": hashlib.sha256(
+                json.dumps(input_snapshot, sort_keys=True, ensure_ascii=True).encode(
+                    "utf-8"
+                )
+            ).hexdigest(),
+            "runtime_config_digest": str(
+                getattr(runtime_state, "runtime_config_digest", "")
+            ),
+            "skill_catalog_digest": skill_digest,
+            "selected_skills": [
+                item.name for item in state.get("selected_skill_items", [])
+            ],
+            "source_run_id": request.replay_source_run_id or "",
+        }
 
     def _prepare_request(
         self, state: RuntimeGraphState
@@ -853,6 +841,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 "rag_mode": effective_runtime.rag_mode,
                 "retrieval_results": [],
                 "rag_context": None,
+                "retrieval_degradation": None,
                 "selected_skill_items": [],
                 "usage_state": self.services.initial_usage_state(
                     provider=provider,
@@ -864,10 +853,10 @@ class DefaultGraphRuntime(GraphRuntime):
             goto="retrieve_context",
         )
 
-    def _retrieve_context(self, state: RuntimeGraphState) -> dict[str, Any]:
+    async def _retrieve_context(self, state: RuntimeGraphState) -> dict[str, Any]:
         request = state["request"]
         runtime_state = self.services.get_runtime(request.agent_id)
-        retrieval_envelope = RetrievalOrchestrator.build_envelope(
+        retrieval_envelope = await RetrievalOrchestrator.abuild_envelope(
             runtime=runtime_state.runtime_config,
             memory_indexer=runtime_state.memory_indexer,
             message=request.message,
@@ -878,11 +867,13 @@ class DefaultGraphRuntime(GraphRuntime):
                 {
                     "query": request.message,
                     "results": retrieval_envelope.results,
+                    "degradation": retrieval_envelope.degradation,
                 },
             )
         return {
             "retrieval_results": retrieval_envelope.results,
             "rag_context": retrieval_envelope.rag_context,
+            "retrieval_degradation": retrieval_envelope.degradation,
         }
 
     def _select_skills(self, state: RuntimeGraphState) -> dict[str, Any]:
@@ -916,6 +907,12 @@ class DefaultGraphRuntime(GraphRuntime):
                 "selected_skills": state.get("selected_skill_items", []),
             }
         )
+        if state.get("compaction_applied"):
+            return {
+                "system_prompt": system_prompt,
+                "input_messages": list(state.get("input_messages", [])),
+                "compaction_applied": False,
+            }
         pending_results = list(state.get("pending_delegate_result_injection", []))
         turn_messages = (
             []
@@ -1030,6 +1027,10 @@ class DefaultGraphRuntime(GraphRuntime):
         attempt_number = int(state.get("attempt_number", 0))
         retry_index = int(state.get("retry_index", 0))
         loop_count = int(state.get("loop_count", 0)) + 1
+        retry_limit = min(
+            MAX_LLM_RETRIES,
+            max(0, int(effective_runtime.agent_runtime.max_retries)),
+        )
 
         if not run_id:
             run_id = str(uuid.uuid4())
@@ -1115,6 +1116,9 @@ class DefaultGraphRuntime(GraphRuntime):
             trigger_type=request.trigger_type,
             runtime_root=runtime_state.root_dir,
             runtime_audit_store=runtime_state.audit_store,
+            run_details=self._run_evidence(
+                request=request, runtime_state=runtime_state, state=state
+            ),
         )
         active_llm, active_model = self.services.resolve_tool_capable_model(
             runtime=runtime_state,
@@ -1415,6 +1419,10 @@ class DefaultGraphRuntime(GraphRuntime):
                         {
                             "run_id": run_id,
                             "tool": str(call.get("name", "unknown")),
+                            "tool_call_id": (
+                                str(call.get("id", "")).strip()
+                                or str(call.get("tool_call_id", "")).strip()
+                            ),
                             "input": call.get("args", {}),
                         },
                     )
@@ -1471,7 +1479,7 @@ class DefaultGraphRuntime(GraphRuntime):
                         "retry_index": 0,
                         "model_messages": [*model_messages, final_message],
                         "pending_tool_calls": [],
-                        "pending_new_response": False,
+                        "pending_new_response": True,
                         "token_source": token_source or "fallback",
                         "fallback_final_text": fallback_final_text,
                         "final_text": final_text,
@@ -1521,11 +1529,26 @@ class DefaultGraphRuntime(GraphRuntime):
                 goto="finalize_success",
             )
         except Exception as exc:  # noqa: BLE001
-            if retry_index < effective_runtime.agent_runtime.max_retries:
-                await asyncio.sleep(0.5 * (2**retry_index))
+            failure_kind = classify_llm_failure(exc)
+            safe_error = redact_text(str(exc))[:1000]
+            if retry_index < retry_limit and should_retry_for_error(failure_kind):
+                self.services.append_llm_route_event(
+                    runtime=runtime_state,
+                    run_id=run_id,
+                    session_id=request.session_id,
+                    trigger_type=request.trigger_type,
+                    event="llm_retry_attempt",
+                    details={
+                        "profile": candidate.profile_name,
+                        "failure_kind": failure_kind,
+                        "retry_index": retry_index + 1,
+                        "max_retries": retry_limit,
+                        "error": safe_error,
+                    },
+                )
+                await asyncio.sleep(min(2.0, 0.5 * (2**retry_index)))
                 return Command(
                     update={
-                        "run_id": "",
                         "attempt_number": attempt_number,
                         "retry_index": retry_index + 1,
                         "loop_count": 0,
@@ -1535,7 +1558,6 @@ class DefaultGraphRuntime(GraphRuntime):
                     goto="model_step",
                 )
 
-            failure_kind = classify_llm_failure(exc)
             has_more_candidates = candidate_index + 1 < len(route.candidates)
             if has_more_candidates and should_fallback_for_error(
                 route.fallback_policy, failure_kind
@@ -1551,12 +1573,11 @@ class DefaultGraphRuntime(GraphRuntime):
                         "from_profile": candidate.profile_name,
                         "to_profile": next_candidate.profile_name,
                         "failure_kind": failure_kind,
-                        "error": str(exc),
+                        "error": safe_error,
                     },
                 )
                 return Command(
                     update={
-                        "run_id": "",
                         "candidate_index": candidate_index + 1,
                         "retry_index": 0,
                         "pending_new_response": True,
@@ -1577,7 +1598,7 @@ class DefaultGraphRuntime(GraphRuntime):
                 details={
                     "profile": candidate.profile_name,
                     "failure_kind": failure_kind,
-                    "error": str(exc),
+                    "error": safe_error,
                 },
             )
             error_code = (
@@ -1592,7 +1613,7 @@ class DefaultGraphRuntime(GraphRuntime):
                     "pending_delegate_result_injection": [],
                     "delegate_synthesis_retry_count": 0,
                     "error": RuntimeErrorInfo(
-                        error=str(exc),
+                        error=safe_error,
                         code=error_code,
                         run_id=run_id,
                         attempt=attempt_number,
@@ -1607,17 +1628,16 @@ class DefaultGraphRuntime(GraphRuntime):
         request = state["request"]
         runtime_state = self.services.get_runtime(request.agent_id)
         pending_tool_calls = list(state.get("pending_tool_calls", []))
+        original_tool_calls = list(pending_tool_calls)
         sibling_denials: list[tuple[ToolExecutionEnvelope, Any]] = []
-        if self._has_blocking_delegate_call(pending_tool_calls):
-            executable_calls: list[dict[str, Any]] = []
-            for index, call in enumerate(pending_tool_calls):
-                if str(call.get("name", "")).strip() == "delegate":
-                    executable_calls.append(call)
-                    continue
-                sibling_denials.append(
-                    self._deny_tool_call_for_blocking_delegate(call, index=index)
-                )
-            pending_tool_calls = executable_calls
+        delegate_calls = [
+            call for call in pending_tool_calls
+            if str(call.get("name", "")).strip() == "delegate"
+        ]
+        other_calls = [
+            call for call in pending_tool_calls
+            if str(call.get("name", "")).strip() != "delegate"
+        ]
         tool_service = self._build_tool_service(
             state=state,
             request=request,
@@ -1625,18 +1645,55 @@ class DefaultGraphRuntime(GraphRuntime):
             runtime_config=runtime_state.runtime_config,
             run_id=str(state.get("run_id", "")),
         )
-        envelopes, tool_messages = await tool_service.execute_pending(
-            pending_tool_calls
-        )
-        if sibling_denials:
-            envelopes.extend(envelope for envelope, _ in sibling_denials)
-            tool_messages.extend(message for _, message in sibling_denials)
+        envelopes, tool_messages = await tool_service.execute_pending(delegate_calls)
+        blocking_refs = self._blocking_delegate_refs_from_envelopes(envelopes)
+        if blocking_refs:
+            for call in pending_tool_calls:
+                if str(call.get("name", "")).strip() == "delegate":
+                    continue
+                denied_envelopes, denied_messages = await tool_service.deny_pending(
+                    [call],
+                    reason="a blocking delegate was launched in the same step",
+                )
+                sibling_denials.extend(
+                    zip(denied_envelopes, denied_messages, strict=True)
+                )
+        else:
+            other_envelopes, other_messages = await tool_service.execute_pending(other_calls)
+            envelopes.extend(other_envelopes)
+            tool_messages.extend(other_messages)
+        if not delegate_calls and not other_calls:
+            envelopes, tool_messages = [], []
+        denial_by_id = {
+            envelope.tool_call_id: (envelope, message)
+            for envelope, message in sibling_denials
+        }
+        executed_by_id = {
+            envelope.tool_call_id: (envelope, message)
+            for envelope, message in zip(envelopes, tool_messages, strict=True)
+        }
+        ordered_envelopes: list[ToolExecutionEnvelope] = []
+        ordered_tool_messages: list[Any] = []
+        for index, call in enumerate(original_tool_calls):
+            tool_name = str(call.get("name", "unknown")).strip() or "unknown"
+            call_id = (
+                str(call.get("id", "")).strip()
+                or str(call.get("tool_call_id", "")).strip()
+                or f"{tool_name}-{index}"
+            )
+            pair = denial_by_id.get(call_id) or executed_by_id.get(call_id)
+            if pair is not None:
+                ordered_envelopes.append(pair[0])
+                ordered_tool_messages.append(pair[1])
+        envelopes = ordered_envelopes
+        tool_messages = ordered_tool_messages
         for envelope in envelopes:
             self._emit(
                 "tool_end",
                 {
                     "run_id": str(state.get("run_id", "")),
                     "tool": envelope.tool,
+                    "tool_call_id": envelope.tool_call_id,
                     "output": envelope.output,
                 },
             )
@@ -1767,7 +1824,7 @@ class DefaultGraphRuntime(GraphRuntime):
 
         return {}
 
-    def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any]:
+    async def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any] | Command:
         """Compaction node: reduce message count when budget exceeded."""
         runtime = self.services.get_runtime(state["request"].agent_id)
         model_name = runtime.resolve_model_name() if hasattr(runtime, "resolve_model_name") else "gpt-4o"
@@ -1804,24 +1861,26 @@ class DefaultGraphRuntime(GraphRuntime):
             if not hook_result.allow:
                 return {"compaction_deferred": True}
 
-        # Create a summarize functor if we have an LLM available
+        # Resolve the active route candidate for structured summarization.
         summarize_fn = None
-        if hasattr(self, "pipelines") and hasattr(self.pipelines, "model"):
-            try:
-                from graph.lcel_compaction import build_summarize_pipeline
-                summarize_fn = build_summarize_pipeline(self.pipelines.model)
-            except Exception:
-                pass
-
-        # Run compaction in async context
+        summarizer_error_type: str | None = None
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            route = state.get("route")
+            candidates = getattr(route, "candidates", [])
+            candidate_index = min(
+                int(state.get("candidate_index", 0)), len(candidates) - 1
+            )
+            candidate = candidates[candidate_index]
+            active_llm = self.services.get_runtime_llm(runtime, candidate.profile)
+            from graph.lcel_compaction import build_summarize_pipeline
 
-        result = loop.run_until_complete(
-            pipeline.compact_round(
+            summarize_fn = build_summarize_pipeline(active_llm)
+        except Exception as exc:
+            summarize_fn = None
+            summarizer_error_type = type(exc).__name__
+
+        try:
+            result = await pipeline.compact_round(
                 messages,
                 run_id=state.get("run_id", ""),
                 step=state.get("loop_count", 0),
@@ -1829,24 +1888,58 @@ class DefaultGraphRuntime(GraphRuntime):
                 agent_id=state["request"].agent_id,
                 session_id=state["request"].session_id,
             )
-        )
+        except Exception as exc:
+            self._emit(
+                "compaction",
+                {
+                    "checkpoint_id": None,
+                    "was_compacted": False,
+                    "degradation": "compaction_failed",
+                    "error_type": type(exc).__name__,
+                    "summarizer_error_type": summarizer_error_type,
+                    "message_count_before": len(messages),
+                    "message_count_after": len(messages),
+                    "summary": None,
+                },
+            )
+            return Command(
+                update={
+                    "compaction_applied": False,
+                    "compaction_degradation": "compaction_failed",
+                    "compaction_deferred": True,
+                    "last_checkpoint_id": None,
+                },
+                goto="finalize_success",
+            )
 
         # Distill to memory
-        if result.summary and result.was_compacted and workspace:
+        degradation: CompactionDegradation | None = result.degradation
+        if result.summary and result.was_compacted and not result.degradation and workspace:
             memory_file = runtime.root_dir / "memory" / "MEMORY.md"
-            loop.run_until_complete(pipeline.distill(result.summary, memory_file=memory_file))
+            try:
+                await pipeline.distill(result.summary, memory_file=memory_file)
+            except Exception:
+                degradation = "memory_distill_failed"
 
         self._emit("compaction", {
             "checkpoint_id": result.checkpoint_id,
             "was_compacted": result.was_compacted,
+            "degradation": degradation,
+            "mode": degradation or "summarized",
             "message_count_before": len(messages),
             "message_count_after": len(result.messages),
             "summary": result.summary.summary if result.summary else None,
+            "summarizer_error_type": summarizer_error_type,
         })
 
         return {
             "input_messages": result.messages,
+            # The compacted input is canonical; only post-compaction tool turns belong here.
+            "model_messages": [],
+            "messages": compacted_history_entries(result.messages),
             "last_checkpoint_id": result.checkpoint_id,
+            "compaction_applied": True,
+            "compaction_degradation": degradation,
             "compaction_deferred": False,
         }
 

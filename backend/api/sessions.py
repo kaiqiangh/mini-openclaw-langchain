@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.compaction import compacted_history_entries, history_entries_to_messages
+from graph.checkpoint_session_repository import ConcurrentSessionMutationError
 from graph.session_manager import (
     InvalidSessionIdError,
     LegacySessionStateError,
@@ -506,11 +508,6 @@ async def cancel_delegate(
 # ── Compaction & Rewind ─────────────────────────────────────────
 
 
-class CompactSessionRequest(BaseModel):
-    """Optional body for manual compaction (keep future extensibility)."""
-    dry_run: bool = False
-
-
 class RewindRequest(BaseModel):
     checkpoint_id: str = Field(min_length=1)
 
@@ -519,7 +516,6 @@ class RewindRequest(BaseModel):
 async def trigger_compact(
     agent_id: str,
     session_id: str,
-    body: CompactSessionRequest | None = None,
 ) -> dict[str, Any]:
     """Manually trigger compaction for a session."""
     agent, session_manager = _resolve_session_manager(agent_id)
@@ -539,31 +535,50 @@ async def trigger_compact(
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
     messages = list(snapshot.messages) if snapshot.messages else []
-    from langchain_core.messages import messages_from_dict
-    lc_messages = messages_from_dict(messages) if messages else []
+    lc_messages = history_entries_to_messages(messages)
+    summarize_fn = None
+    try:
+        from graph.lcel_compaction import build_summarize_pipeline
+
+        candidate = agent.runtime_services.resolve_auxiliary_llm_candidate(runtime)
+        if candidate is not None:
+            llm = agent.runtime_services.get_runtime_llm(runtime, candidate.profile)
+            summarize_fn = build_summarize_pipeline(llm)
+    except Exception:
+        summarize_fn = None
 
     result = await pipeline.compact_round(
         lc_messages,
         run_id="manual",
         step=0,
+        summarize_fn=summarize_fn,
         agent_id=agent_id,
         session_id=session_id,
     )
 
     if result.was_compacted:
-        from langchain_core.messages import messages_to_dict
-        compacted_dicts = messages_to_dict(result.messages)
-        # Persist the compacted messages back via the session repository
-        await repository.update_state(
-            agent_id=agent_id,
-            session_id=session_id,
-            values={"model_messages": compacted_dicts},
-        )
+        try:
+            await repository.replace_session_state(
+                agent_id=agent_id,
+                session_id=session_id,
+                expected_messages=messages,
+                values={
+                    "messages": compacted_history_entries(result.messages),
+                    "model_messages": list(result.messages),
+                    "input_messages": list(result.messages),
+                    "compaction_applied": True,
+                    "compaction_degradation": result.degradation,
+                    "last_checkpoint_id": result.checkpoint_id,
+                },
+            )
+        except ConcurrentSessionMutationError as exc:
+            raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc
 
     return {
         "data": {
             "compacted": result.was_compacted,
             "checkpoint_id": result.checkpoint_id,
+            "degradation": result.degradation,
             "messages_before": len(messages),
             "messages_after": len(result.messages),
         }
@@ -611,15 +626,22 @@ async def rewind_session(
     except RuntimeError as exc:
         raise ApiError(status_code=400, code="invalid_request", message=str(exc))
 
-    from langchain_core.messages import messages_to_dict
-    message_dicts = messages_to_dict(messages)
-
     repository = agent.get_session_repository(agent_id)
-    await repository.update_state(
-        agent_id=agent_id,
-        session_id=session_id,
-        values={"model_messages": message_dicts},
-    )
+    try:
+        await repository.replace_session_state(
+            agent_id=agent_id,
+            session_id=session_id,
+            values={
+                "messages": compacted_history_entries(messages),
+                "model_messages": list(messages),
+                "input_messages": list(messages),
+                "compaction_applied": True,
+                "compaction_degradation": None,
+                "last_checkpoint_id": body.checkpoint_id,
+            },
+        )
+    except ConcurrentSessionMutationError as exc:
+        raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc
 
     return {
         "data": {

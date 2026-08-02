@@ -14,6 +14,10 @@ class _RateLimitFailure(Exception):
     status_code = 429
 
 
+class _AuthFailure(Exception):
+    status_code = 401
+
+
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=True) + "\n", encoding="utf-8")
@@ -209,6 +213,42 @@ def test_run_once_skips_unavailable_fallbacks_and_uses_next_available_profile(
     assert "llm_route_skipped" in events
     assert "llm_fallback_attempt" in events
     assert "llm_fallback_selected" in events
+
+
+def test_non_transient_llm_failure_fails_fast_without_retry(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+    _seed_base(
+        tmp_path,
+        {
+            "agent_runtime": {"max_retries": 3},
+            "llm_defaults": {"default": "openai", "fallbacks": []},
+        },
+    )
+
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    call_order: list[str] = []
+    _patch_agent_execution(
+        monkeypatch,
+        manager,
+        {"openai": [_AuthFailure("invalid api key")]},
+        call_order,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid api key"):
+        asyncio.run(
+            manager.run_once(
+                message="hello",
+                session_id="session-auth-fail-fast",
+                agent_id="default",
+            )
+        )
+
+    assert call_order == ["openai"]
+    events = _load_audit_events(manager.get_runtime("default").audit_store.steps_file)
+    assert "llm_retry_attempt" not in events
 
 
 def test_fallback_order_is_respected_across_multiple_candidates(

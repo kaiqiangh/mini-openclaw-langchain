@@ -119,6 +119,20 @@ The event model remains SSE-aligned:
 - `done`
 - `error`
 
+### Reliability and Replay Evidence
+
+- Transient LLM failures (`timeout`, network errors, rate limits, and 5xx responses)
+  use a bounded graph retry with capped backoff. Authentication and invalid-request
+  failures fail fast; fallback profiles are considered only when their configured
+  policy allows it.
+- Ambiguous non-idempotent tool failures are returned as unresolved and are not
+  retried. A tool must declare retry safety before the runner will retry it.
+- Run audit records keep the parent `run_id` across retries and fallbacks. Delegate
+  lifecycle events are written to the same audit step stream, so trace and replay
+  evidence can correlate child work with the parent run.
+- Replay uses the saved input/config/skill digests and disables tools by default;
+  its response includes provenance and evidence for comparison with the source run.
+
 `stream_orchestrator` utilities still own token extraction and reasoning parsing so
 event ordering/content remain stable across providers.
 
@@ -207,6 +221,11 @@ Behavior notes:
 - Selected skills are advisory only, but they are injected into the system prompt and tracked separately from actual skill usage.
 - Scheduler workers are started per agent rather than only for the default workspace.
 - Broken in-flight checkpoint state from the older tool-loop bug is automatically repaired on next active access instead of requiring manual session cleanup.
+- Context compaction runs as an async graph node. Its pre-compaction checkpoint is scoped to
+  the agent and session, and the canonical compacted messages replace both prompt and tool-loop
+  state before the next model step. Compaction events and non-streaming results expose the
+  checkpoint ID plus a bounded `compaction_degradation` value such as `drop_only`,
+  `memory_distill_failed`, or `compaction_failed` when recovery is degraded.
 
 ## Runtime Config Matrix
 
@@ -422,6 +441,17 @@ Run all evals:
 ```bash
 python -m evals.runner
 ```
+
+Run the deterministic five-workload performance corpus (tool loop, blocking and
+background delegation, skill loading, and compaction plus retrieval) to collect
+local p50/p95 evidence before setting numeric thresholds:
+
+```bash
+python -m evals.workloads
+```
+
+`evals/workload_baseline.json` records the initial local p50/p95 snapshot; it is
+evidence only, not a CI threshold.
 
 Output: JSON report with pass/fail per case and overall safety score.
 

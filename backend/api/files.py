@@ -180,6 +180,9 @@ async def save_file(
             settings=runtime.runtime_config.retrieval.memory,
         )
     elif request.path.startswith("skills/"):
+        skill_selector = getattr(agent_manager, "skill_selector", None)
+        if skill_selector is not None:
+            skill_selector.invalidate(runtime.root_dir)
         await asyncio.to_thread(ensure_skills_snapshot, runtime.root_dir)
 
     return {"data": {"path": request.path, "saved": True}}

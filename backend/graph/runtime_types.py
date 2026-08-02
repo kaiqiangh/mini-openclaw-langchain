@@ -15,6 +15,7 @@ from tools.contracts import ErrorCode
 
 RuntimeEventType = Literal[
     "agent_update",
+    "compaction",
     "done",
     "error",
     "new_response",
@@ -26,6 +27,11 @@ RuntimeEventType = Literal[
     "tool_end",
     "tool_start",
     "usage",
+]
+CompactionDegradation = Literal[
+    "drop_only",
+    "memory_distill_failed",
+    "compaction_failed",
 ]
 
 
@@ -42,6 +48,7 @@ class RuntimeRequest:
     resume_same_turn: bool = False
     explicit_enabled_tools: list[str] | None = None
     explicit_blocked_tools: list[str] | None = None
+    replay_source_run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +121,9 @@ class RuntimeResult:
     structured_response: Any | None = None
     token_source: str = "fallback"
     run_id: str = ""
+    compaction_degradation: CompactionDegradation | None = None
+    retrieval_degradation: str | None = None
+    last_checkpoint_id: str | None = None
     error: RuntimeErrorInfo | None = None
 
 
@@ -175,6 +185,7 @@ class RuntimeGraphState(TypedDict, total=False):
     compressed_context: str
     retrieval_results: list[dict[str, Any]]
     rag_context: str | None
+    retrieval_degradation: str | None
     messages: list[dict[str, Any]]
     live_response: dict[str, Any] | None
     assistant_segments: list[dict[str, Any]]
@@ -187,6 +198,9 @@ class RuntimeGraphState(TypedDict, total=False):
     run_id: str
     active_model: str
     input_messages: list[BaseMessage]
+    compaction_applied: bool
+    compaction_degradation: CompactionDegradation | None
+    last_checkpoint_id: str | None
     model_messages: list[BaseMessage]
     pending_tool_calls: list[dict[str, Any]]
     pending_new_response: bool

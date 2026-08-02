@@ -185,7 +185,7 @@ class RuntimeExecutionServices:
         tool_loop_model: str = "",
         tool_loop_model_overrides: dict[str, str] | None = None,
     ) -> str:
-        model = configured_model.strip() or "deepseek-chat"
+        model = configured_model.strip() or "deepseek-v4-flash"
         if not has_tools:
             return model
 
@@ -293,6 +293,7 @@ class RuntimeExecutionServices:
         trigger_type: str,
         runtime_root: Path,
         runtime_audit_store: Any,
+        run_details: dict[str, Any] | None = None,
     ) -> RuntimeCallbackBundle:
         callback = AuditCallbackHandler(
             audit_file=runtime_root / "storage" / "runs_events.jsonl",
@@ -300,6 +301,7 @@ class RuntimeExecutionServices:
             session_id=session_id,
             trigger_type=trigger_type,
             audit_store=runtime_audit_store,
+            run_details=run_details,
         )
         usage_capture = UsageCaptureCallbackHandler()
         return RuntimeCallbackBundle(

@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
+from langchain_core.tools import StructuredTool
+
 from config import RuntimeConfig
 from graph.runtime_types import ToolExecutionEnvelope
 from storage.run_store import AuditStore
@@ -52,6 +55,7 @@ def _failure_payload(
     message: str,
     duration_ms: int = 0,
     code: ErrorCode = "E_NOT_FOUND",
+    details: dict[str, Any] | None = None,
 ) -> str:
     return json.dumps(
         asdict(
@@ -61,6 +65,7 @@ def _failure_payload(
                 message=message,
                 duration_ms=duration_ms,
                 retryable=False,
+                details=details,
             )
         ),
         ensure_ascii=False,
@@ -192,6 +197,102 @@ class ToolExecutionService:
             },
         )
 
+    async def deny_pending(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        reason: str,
+    ) -> tuple[list[ToolExecutionEnvelope], list[Any]]:
+        """Return policy denials while still running the shared pre-tool hook."""
+        from langchain_core.messages import ToolMessage
+
+        envelopes: list[ToolExecutionEnvelope] = []
+        tool_messages: list[Any] = []
+        for index, call in enumerate(tool_calls):
+            tool_name = str(call.get("name", "unknown")).strip() or "unknown"
+            tool_call_id = (
+                str(call.get("id", "")).strip()
+                or str(call.get("tool_call_id", "")).strip()
+                or f"{tool_name}-{index}"
+            )
+            args = call.get("args", {})
+            parsed_args = args if isinstance(args, dict) else {}
+            denial_reason = reason
+            if self.hook_engine and self.hook_engine.is_enabled:
+                hook_event = HookEvent(
+                    hook_type="pre_tool_use",
+                    agent_id=self.agent_id,
+                    session_id=self.session_id,
+                    run_id=self.run_id,
+                    timestamp=_hook_timestamp(),
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                        "policy_denial": reason,
+                    },
+                )
+                hook_result = self.hook_engine.dispatch_sync(hook_event)
+                self._append_hook_audit_event(
+                    hook_event=hook_event,
+                    hook_type="pre_tool_use",
+                    status="allow" if hook_result.allow else "deny",
+                    details={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                        "reason": hook_result.reason or reason,
+                    },
+                )
+                if not hook_result.allow:
+                    denial_reason = f"Hook denied: {hook_result.reason}"
+
+            message = f"Tool '{tool_name}' was skipped because {denial_reason}"
+            raw_output = _failure_payload(
+                tool_name=tool_name,
+                message=message,
+                code="E_POLICY_DENIED",
+                details={"tool_call_id": tool_call_id},
+            )
+            envelopes.append(
+                ToolExecutionEnvelope(
+                    tool=tool_name,
+                    tool_call_id=tool_call_id,
+                    args=parsed_args,
+                    output=raw_output,
+                    raw_output=raw_output,
+                    ok=False,
+                    duration_ms=0,
+                    error_code="E_POLICY_DENIED",
+                    error_message=message,
+                    details={"tool_call_id": tool_call_id, "reason": denial_reason},
+                )
+            )
+            tool_messages.append(
+                ToolMessage(
+                    content=raw_output,
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
+            )
+            if self.audit_store is not None:
+                self.audit_store.append_step(
+                    agent_id=self.agent_id,
+                    run_id=self.run_id,
+                    session_id=self.session_id,
+                    trigger_type=self.trigger_type,
+                    event="tool_policy_denied",
+                    hook_type="pre_tool_use",
+                    status="deny",
+                    details={
+                        "tool": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "reason": denial_reason,
+                    },
+                )
+        return envelopes, tool_messages
+
     async def execute_pending(
         self,
         tool_calls: list[dict[str, Any]],
@@ -216,6 +317,7 @@ class ToolExecutionService:
                 raw_output = _failure_payload(
                     tool_name=tool_name,
                     message=f"Tool '{tool_name}' is not available",
+                    details={"tool_call_id": tool_call_id},
                 )
                 envelopes.append(
                     ToolExecutionEnvelope(
@@ -248,7 +350,11 @@ class ToolExecutionService:
                     session_id=self.session_id,
                     run_id=self.run_id,
                     timestamp=_hook_timestamp(),
-                    payload={"tool_name": tool_name, "input": parsed_args},
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                    },
                 )
                 hook_result = self.hook_engine.dispatch_sync(hook_event)
                 self._append_hook_audit_event(
@@ -257,6 +363,7 @@ class ToolExecutionService:
                     status="allow" if hook_result.allow else "deny",
                     details={
                         "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
                         "input": parsed_args,
                         "reason": hook_result.reason,
                     },
@@ -266,6 +373,7 @@ class ToolExecutionService:
                         tool_name=tool_name,
                         message=f"Hook denied: {hook_result.reason}",
                         code="E_POLICY_DENIED",
+                        details={"tool_call_id": tool_call_id},
                     )
                     envelopes.append(
                         ToolExecutionEnvelope(
@@ -290,7 +398,45 @@ class ToolExecutionService:
                     )
                     continue
 
-            raw_output = await tool.ainvoke(parsed_args)
+            try:
+                if isinstance(tool, StructuredTool):
+                    raw_output = await tool.ainvoke(
+                        parsed_args,
+                        config={"metadata": {"tool_call_id": tool_call_id}},
+                    )
+                else:
+                    raw_output = await tool.ainvoke(parsed_args)
+            except ValidationError as exc:
+                message = f"Invalid arguments for tool '{tool_name}': {exc}"
+                raw_output = _failure_payload(
+                    tool_name=tool_name,
+                    message=message,
+                    code="E_INVALID_ARGS",
+                    details={"tool_call_id": tool_call_id},
+                )
+                envelopes.append(
+                    ToolExecutionEnvelope(
+                        tool=tool_name,
+                        tool_call_id=tool_call_id,
+                        args=parsed_args,
+                        output=raw_output,
+                        raw_output=raw_output,
+                        ok=False,
+                        duration_ms=0,
+                        error_code="E_INVALID_ARGS",
+                        error_message=message,
+                        details={"tool_call_id": tool_call_id},
+                    )
+                )
+                tool_messages.append(
+                    ToolMessage(
+                        content=raw_output,
+                        name=tool_name,
+                        tool_call_id=tool_call_id,
+                        status="error",
+                    )
+                )
+                continue
 
             # PostToolUse hook (async, fire-and-forget)
             if self.hook_engine and self.hook_engine.is_enabled:
@@ -300,7 +446,11 @@ class ToolExecutionService:
                     session_id=self.session_id,
                     run_id=self.run_id,
                     timestamp=_hook_timestamp(),
-                    payload={"tool_name": tool_name, "result": str(raw_output)},
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "result": str(raw_output),
+                    },
                 )
                 self.hook_engine.dispatch_async(hook_event)
                 self._append_hook_audit_event(
@@ -309,6 +459,7 @@ class ToolExecutionService:
                     status="dispatched",
                     details={
                         "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
                         "result_preview": str(raw_output)[:300],
                     },
                 )

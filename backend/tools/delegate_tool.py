@@ -87,6 +87,7 @@ def _failure_payload(
 class _DelegateLaunch:
     agent_id: str
     parent_session_id: str
+    parent_run_id: str | None
     task: str
     role: str
     allowed_tools: list[str]
@@ -212,15 +213,41 @@ def build_delegate_tool(
         content: str,
         delegate_payload: dict[str, Any],
     ) -> None:
-        repository = agent_manager.get_session_repository(agent_id)
-        await repository.append_message(
-            agent_id=agent_id,
-            session_id=session_id,
-            role="assistant",
-            content=content,
-            event_kind="delegate",
-            delegate=delegate_payload,
-        )
+        try:
+            repository = agent_manager.get_session_repository(agent_id)
+            await repository.append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                event_kind="delegate",
+                delegate=delegate_payload,
+            )
+            runtime = _existing_runtime(agent_id)
+            audit_store = getattr(runtime, "audit_store", None)
+            if audit_store is not None:
+                audit_store.append_step(
+                    agent_id=agent_id,
+                    run_id=str(delegate_payload.get("parent_run_id", "")),
+                    session_id=session_id,
+                    trigger_type="delegate",
+                    event=(
+                        "delegate_"
+                        f"{str(delegate_payload.get('status', 'unknown')).strip() or 'unknown'}"
+                    ),
+                    status=str(delegate_payload.get("status", "")),
+                    details=dict(delegate_payload),
+                )
+        except Exception:
+            delegate_id = str(delegate_payload.get("delegate_id", "")).strip()
+            if delegate_id:
+                registry.mark_reporting_error(
+                    delegate_id, "parent delegate lifecycle event could not be persisted"
+                )
+            logger.exception(
+                "Unable to persist delegate lifecycle event %s",
+                delegate_payload.get("delegate_id", "unknown"),
+            )
 
     async def _run_sub_agent(
         task: str,
@@ -244,6 +271,7 @@ def build_delegate_tool(
                 metadata={
                     "session_kind": "delegate_child",
                     "parent_session_id": context.session_id,
+                    "parent_run_id": context.run_id,
                     "delegate_id": delegate_id,
                     "delegate_role": role,
                 },
@@ -309,6 +337,7 @@ def build_delegate_tool(
                     "role": role,
                     "task": task,
                     "sub_session_id": sub_session_id,
+                    "parent_run_id": context.run_id,
                     "summary": summary,
                     "tools_used": list(tools_used_set),
                     "steps_completed": steps,
@@ -332,12 +361,31 @@ def build_delegate_tool(
                     "role": role,
                     "task": task,
                     "sub_session_id": sub_session_id,
+                    "parent_run_id": context.run_id,
                     "duration_ms": timeout_state.duration_ms if timeout_state else 0,
                 },
             )
             return
         except asyncio.CancelledError:
             registry.mark_cancelled(delegate_id)
+            cancelled_state = registry.get_status(delegate_id)
+            try:
+                await _append_parent_delegate_event(
+                    agent_id=context.agent_id,
+                    session_id=context.session_id or "unknown",
+                    content=f"Delegate cancelled ({role}): {task[:240]}",
+                    delegate_payload={
+                        "delegate_id": delegate_id,
+                        "status": "cancelled",
+                        "role": role,
+                        "task": task,
+                        "sub_session_id": sub_session_id,
+                        "parent_run_id": context.run_id,
+                        "duration_ms": cancelled_state.duration_ms if cancelled_state else 0,
+                    },
+                )
+            except Exception:
+                pass
             raise
         except Exception as exc:
             logger.exception(f"Sub-agent {delegate_id} failed")
@@ -353,6 +401,7 @@ def build_delegate_tool(
                     "role": role,
                     "task": task,
                     "sub_session_id": sub_session_id,
+                    "parent_run_id": context.run_id,
                     "error": str(exc),
                     "duration_ms": failed_state.duration_ms if failed_state else 0,
                 },
@@ -534,12 +583,14 @@ def build_delegate_tool(
             allowed_tools=list(resolved_allowed_tools),
             blocked_tools=list(blocked),
             timeout_seconds=timeout,
+            parent_run_id=context.run_id,
         )
         return (
             None,
             _DelegateLaunch(
                 agent_id=agent_id,
                 parent_session_id=session_id,
+                parent_run_id=context.run_id,
                 task=normalized_task,
                 role=role,
                 allowed_tools=list(resolved_allowed_tools),
@@ -566,6 +617,7 @@ def build_delegate_tool(
                     "role": launch.role,
                     "task": launch.task,
                     "sub_session_id": launch.sub_session_id,
+                    "parent_run_id": launch.parent_run_id,
                     "allowed_tools": list(launch.allowed_tools),
                     "blocked_tools": list(launch.blocked_tools),
                 },
@@ -592,6 +644,7 @@ def build_delegate_tool(
             "delegate_id": launch.delegate_id,
             "status": state.status if state is not None else "running",
             "session_id": launch.sub_session_id,
+            "parent_run_id": launch.parent_run_id,
             "role": launch.role,
             "wait_for_result": launch.wait_for_result,
             "blocking": launch.wait_for_result,
@@ -722,6 +775,7 @@ def build_delegate_status_tool(
             "role": state.role,
             "task": state.task,
             "sub_session_id": state.sub_session_id,
+            "parent_run_id": state.parent_run_id,
             "created_at": state.created_at,
         }
         if state.status in ("completed", "failed", "timeout", "cancelled"):
@@ -734,6 +788,8 @@ def build_delegate_status_tool(
             result["token_usage"] = state.token_usage
         if state.status in ("failed", "timeout", "cancelled"):
             result["error_message"] = state.error_message or "Sub-agent timed out"
+        if state.reporting_error:
+            result["reporting_error"] = state.reporting_error
         return _success_payload(
             tool_name="delegate_status",
             data=result,

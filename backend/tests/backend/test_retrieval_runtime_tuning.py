@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -47,6 +48,120 @@ def test_memory_indexer_honors_top_k_and_chunk_settings(tmp_path: Path):
 
     rows = indexer.retrieve("alpha", settings=settings)
     assert len(rows) == 1
+
+
+def test_memory_indexer_normalizes_punctuation_in_lexical_queries(tmp_path: Path):
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text(
+        '{"retrieval":{"storage":{"engine":"json"}}}\n', encoding="utf-8"
+    )
+    (tmp_path / "memory" / "MEMORY.md").write_text(
+        "BSC meme-token launch notes", encoding="utf-8"
+    )
+    settings = RetrievalDomainConfig(
+        top_k=1,
+        semantic_weight=0.0,
+        lexical_weight=1.0,
+        chunk_size=64,
+        chunk_overlap=0,
+    )
+    indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
+
+    rows = indexer.retrieve("meme-token", settings=settings)
+
+    assert rows
+    assert rows[0]["score"] == 2.0
+
+
+def test_memory_indexer_async_retrieval_is_bounded_and_offloads_work(tmp_path: Path):
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "memory" / "MEMORY.md").write_text(
+        "\n".join(f"alpha {index}" for index in range(30)), encoding="utf-8"
+    )
+    indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
+    settings = RetrievalDomainConfig(
+        top_k=100,
+        semantic_weight=0.0,
+        lexical_weight=1.0,
+        chunk_size=64,
+        chunk_overlap=0,
+    )
+
+    rows = asyncio.run(indexer.aretrieve("alpha", settings=settings))
+
+    assert len(rows) <= 20
+
+
+def test_memory_indexer_does_not_return_stale_rows_while_rebuilding(tmp_path: Path, monkeypatch):
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text(
+        '{"retrieval":{"storage":{"engine":"sqlite"}}}\n', encoding="utf-8"
+    )
+    memory_file = tmp_path / "memory" / "MEMORY.md"
+    memory_file.write_text("old fact", encoding="utf-8")
+    settings = RetrievalDomainConfig(
+        top_k=2, semantic_weight=0.0, lexical_weight=1.0, chunk_size=64, chunk_overlap=0
+    )
+    indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
+    indexer.rebuild_index(settings=settings)
+    memory_file.write_text("new fact", encoding="utf-8")
+    monkeypatch.setattr(indexer, "schedule_rebuild", lambda **kwargs: indexer._set_status(state="building"))
+
+    assert indexer.retrieve("old", settings=settings) == []
+    assert indexer.status()["state"] == "building"
+
+
+def test_memory_indexer_reports_failed_rebuild_without_raising(tmp_path: Path, monkeypatch):
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text("{}\n", encoding="utf-8")
+    indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
+    monkeypatch.setattr(indexer, "_rebuild_index", lambda **kwargs: (_ for _ in ()).throw(OSError("index unavailable")))
+
+    indexer.rebuild_index()
+
+    assert indexer.status()["state"] == "failed"
+    assert "index unavailable" in str(indexer.status()["last_error"])
+
+
+def test_retrieval_orchestrator_degrades_when_indexer_fails():
+    from config import RuntimeConfig
+    from graph.retrieval_orchestrator import RetrievalOrchestrator
+
+    class BrokenIndexer:
+        def retrieve(self, *args, **kwargs):
+            raise OSError("index unavailable")
+
+    envelope = RetrievalOrchestrator.build_envelope(
+        runtime=RuntimeConfig(rag_mode=True),
+        memory_indexer=BrokenIndexer(),
+        message="memory",
+    )
+
+    assert envelope.results == []
+    assert envelope.degradation == "index_unavailable"
+
+
+def test_retrieval_orchestrator_skips_malformed_rows():
+    from config import RuntimeConfig
+    from graph.retrieval_orchestrator import RetrievalOrchestrator
+
+    class Indexer:
+        def retrieve(self, *args, **kwargs):
+            return [{"score": 1, "text": "valid"}, {"metadata": {"bad": True}}]
+
+    envelope = RetrievalOrchestrator.build_envelope(
+        runtime=RuntimeConfig(rag_mode=True),
+        memory_indexer=Indexer(),
+        message="memory",
+    )
+
+    assert len(envelope.results) == 1
+    assert envelope.results[0]["text"] == "valid"
 
 
 def test_search_knowledge_tool_honors_runtime_tuning(tmp_path: Path):

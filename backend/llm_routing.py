@@ -17,6 +17,12 @@ from config import (
 )
 
 
+MAX_LLM_RETRIES = 3
+_RETRYABLE_FAILURE_KINDS = frozenset(
+    {"timeout", "network_error", "rate_limit", "5xx"}
+)
+
+
 @dataclass(frozen=True)
 class LlmProfileAvailability:
     available: bool
@@ -319,3 +325,8 @@ def should_fallback_for_error(
     if failure_kind == "network_error":
         return policy.on_network_error == "fallback"
     return False
+
+
+def should_retry_for_error(failure_kind: str) -> bool:
+    """Retry only provider failures with a bounded, transient classification."""
+    return failure_kind in _RETRYABLE_FAILURE_KINDS

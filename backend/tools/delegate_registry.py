@@ -23,6 +23,7 @@ class DelegateState:
     allowed_tools: list[str]
     blocked_tools: list[str]
     timeout_seconds: int | None
+    parent_run_id: str | None = None
     task_ref: Any = None
     status: str = "running"
     created_at: float = field(default_factory=time.time)
@@ -33,6 +34,7 @@ class DelegateState:
     duration_ms: int = 0
     token_usage: dict[str, int] = field(default_factory=dict)
     error_message: str | None = None
+    reporting_error: str | None = None
     result_dir: Path | None = None
 
 
@@ -53,6 +55,7 @@ class DelegateRegistry:
         allowed_tools: list[str],
         blocked_tools: list[str],
         timeout_seconds: int | None,
+        parent_run_id: str | None = None,
     ) -> dict[str, str]:
         """Register a new delegate sub-agent.
 
@@ -82,6 +85,7 @@ class DelegateRegistry:
             allowed_tools=allowed_tools,
             blocked_tools=blocked_tools,
             timeout_seconds=timeout_seconds,
+            parent_run_id=parent_run_id,
             status="running",
             result_dir=result_dir,
         )
@@ -99,6 +103,7 @@ class DelegateRegistry:
                     "allowed_tools": allowed_tools,
                     "blocked_tools": blocked_tools,
                     "timeout_seconds": timeout_seconds,
+                    "parent_run_id": parent_run_id,
                     "sub_session_id": sub_session_id,
                     "created_at": state.created_at,
                     "status": state.status,
@@ -141,12 +146,10 @@ class DelegateRegistry:
             state.task_ref = task_ref
 
     def mark_completed(self, delegate_id: str, result: dict[str, Any]) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "completed"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.result_summary = result.get("summary", "")
         state.steps_completed = result.get("steps", 0)
         state.tools_used = result.get("tools_used", [])
@@ -155,23 +158,19 @@ class DelegateRegistry:
         self._persist_config(state)
 
     def mark_failed(self, delegate_id: str, error_message: str) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "failed"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = error_message
         self._persist_error(state, error_message)
         self._persist_config(state)
 
     def mark_timeout(self, delegate_id: str) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "timeout"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = f"Sub-agent exceeded timeout ({state.timeout_seconds}s)"
         self._persist_error(
             state, state.error_message
@@ -179,12 +178,10 @@ class DelegateRegistry:
         self._persist_config(state)
 
     def mark_cancelled(self, delegate_id: str) -> None:
-        state = self._delegates.get(delegate_id)
-        if not state or state.status != "running":
+        state = self._claim_terminal(delegate_id)
+        if not state:
             return
         state.status = "cancelled"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = "Sub-agent execution was cancelled"
         self._persist_error(state, state.error_message)
         self._persist_config(state)
@@ -196,6 +193,26 @@ class DelegateRegistry:
         task = state.task_ref
         if task is not None and hasattr(task, "done") and not task.done():
             task.cancel()
+
+    def cancel_for_parent(
+        self, *, agent_id: str, parent_session_id: str, parent_run_id: str | None = None
+    ) -> None:
+        for state in list(self._delegates.values()):
+            if (
+                state.status == "running"
+                and state.agent_id == agent_id
+                and state.parent_session_id == parent_session_id
+                and (parent_run_id is None or state.parent_run_id == parent_run_id)
+            ):
+                self.cancel_task(state.delegate_id)
+                self.mark_cancelled(state.delegate_id)
+
+    def mark_reporting_error(self, delegate_id: str, message: str) -> None:
+        state = self._delegates.get(delegate_id)
+        if state is None:
+            return
+        state.reporting_error = message[:240]
+        self._persist_config(state)
 
     def check_max_per_session(
         self, agent_id: str, parent_session_id: str, max_count: int
@@ -209,6 +226,14 @@ class DelegateRegistry:
             and d.status == "running"
         ]
         return len(active) < max_count
+
+    def _claim_terminal(self, delegate_id: str) -> DelegateState | None:
+        state = self._delegates.get(delegate_id)
+        if state is None or state.status != "running":
+            return None
+        state.completed_at = time.time()
+        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
+        return state
 
     # -- private helpers -------------------------------------------------------
 
@@ -260,6 +285,7 @@ class DelegateRegistry:
                     "delegate_id": state.delegate_id,
                     "agent_id": state.agent_id,
                     "parent_session_id": state.parent_session_id,
+                    "parent_run_id": state.parent_run_id,
                     "sub_session_id": state.sub_session_id,
                     "task": state.task,
                     "role": state.role,
@@ -270,6 +296,7 @@ class DelegateRegistry:
                     "completed_at": state.completed_at,
                     "duration_ms": state.duration_ms,
                     "status": state.status,
+                    "reporting_error": state.reporting_error,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -278,13 +305,7 @@ class DelegateRegistry:
         )
 
     def _mark_stale_timeout(self, state: DelegateState) -> None:
-        state.status = "timeout"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
-        timeout_seconds = state.timeout_seconds or 0
-        state.error_message = f"Sub-agent exceeded timeout ({timeout_seconds}s)"
-        self._persist_error(state, state.error_message)
-        self._persist_config(state)
+        self.mark_timeout(state.delegate_id)
 
     def _hydrate_from_disk(
         self,
@@ -326,6 +347,7 @@ class DelegateRegistry:
                 or candidate_delegate_id,
                 agent_id=candidate_agent_id or config_path.parents[4].name,
                 parent_session_id=candidate_parent_session_id or config_path.parents[2].name,
+                parent_run_id=str(raw.get("parent_run_id", "")).strip() or None,
                 sub_session_id=str(raw.get("sub_session_id", "")).strip(),
                 task=str(raw.get("task", "")).strip(),
                 role=str(raw.get("role", "")).strip() or "delegate",
@@ -345,6 +367,7 @@ class DelegateRegistry:
                     else None
                 ),
                 status=str(raw.get("status", "running")).strip() or "running",
+                reporting_error=str(raw.get("reporting_error", "")).strip() or None,
                 created_at=float(raw.get("created_at", time.time())),
                 completed_at=(
                     float(raw["completed_at"])
@@ -355,6 +378,7 @@ class DelegateRegistry:
                 result_dir=config_path.parent,
             )
             self._hydrate_terminal_files(state)
+            self._delegates[state.delegate_id] = state
             if state.status == "running":
                 timeout_seconds = state.timeout_seconds
                 if (
@@ -363,7 +387,6 @@ class DelegateRegistry:
                     and (time.time() - state.created_at) >= timeout_seconds
                 ):
                     self._mark_stale_timeout(state)
-            self._delegates[state.delegate_id] = state
 
     def _hydrate_terminal_files(self, state: DelegateState) -> None:
         if not state.result_dir:

@@ -75,7 +75,7 @@ def _persist_provider_config(
         "provider_id": provider,
         "driver": "openai_compatible",
         "base_url": base_url or ("https://api.deepseek.com" if provider == "deepseek" else "https://api.openai.com/v1"),
-        "model": model or ("deepseek-chat" if provider == "deepseek" else "gpt-4o-mini"),
+        "model": model or ("deepseek-v4-flash" if provider == "deepseek" else "gpt-4o-mini"),
         "api_key_env": "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY",
         "default_headers": {},
         "timeout_seconds": 60,

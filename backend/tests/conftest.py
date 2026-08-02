@@ -33,6 +33,7 @@ from api import (
 from api.errors import ApiError, error_payload  # noqa: E402
 from config import RuntimeConfig, load_runtime_config  # noqa: E402
 from graph.memory_indexer import MemoryIndexer  # noqa: E402
+from graph.checkpoint_session_repository import ConcurrentSessionMutationError  # noqa: E402
 from graph.session_manager import SessionManager  # noqa: E402
 from scheduler.cron import CronScheduler  # noqa: E402
 from scheduler.heartbeat import HeartbeatScheduler  # noqa: E402
@@ -290,7 +291,12 @@ class FakeSessionRepository:
         _ = agent_id, graph_name
         session = await self.manager.load_session(session_id)
         key = self._key(session_id, archived=False)
-        if "model_messages" in values:
+        if "messages" in values and isinstance(values.get("messages"), list):
+            raw_messages = values.get("messages")
+            self._messages[key] = [
+                dict(item) for item in raw_messages if isinstance(item, dict)
+            ]
+        elif "model_messages" in values:
             normalized: list[dict[str, object]] = []
             raw_messages = values.get("model_messages")
             if isinstance(raw_messages, list):
@@ -308,6 +314,36 @@ class FakeSessionRepository:
             else:
                 self._live_responses.pop(key, None)
         return {key: value for key, value in values.items()}
+
+    async def replace_session_state(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        expected_messages: list[dict[str, object]] | None = None,
+        values: dict[str, object],
+        graph_name: str = "default",
+    ) -> dict[str, object]:
+        _ = graph_name
+        snapshot = await self.load_snapshot(
+            agent_id=agent_id,
+            session_id=session_id,
+            include_live=True,
+        )
+        if expected_messages is not None and snapshot.messages != expected_messages:
+            raise ConcurrentSessionMutationError(
+                "Session changed while compaction was preparing; retry"
+            )
+        if snapshot.live_response is not None:
+            raise ConcurrentSessionMutationError(
+                "Cannot compact while a response is streaming; retry"
+            )
+        return await self.update_state(
+            agent_id=agent_id,
+            session_id=session_id,
+            values=values,
+            graph_name=graph_name,
+        )
 
     async def set_live_response(
         self,

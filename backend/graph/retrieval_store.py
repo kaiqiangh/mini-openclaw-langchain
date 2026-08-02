@@ -15,6 +15,12 @@ SCHEMA_VERSION = 1
 _LOCK_REGISTRY_GUARD = threading.Lock()
 _DB_LOCKS: dict[str, threading.RLock] = {}
 _FTS_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+_QUERY_TOKEN = re.compile(r"[A-Za-z0-9]+")
+
+
+def normalize_query_terms(query: str) -> set[str]:
+    """Normalize lexical query terms consistently across retrieval backends."""
+    return {match.group(0).lower() for match in _QUERY_TOKEN.finditer(query)}
 
 
 def _lock_for(path: Path) -> threading.RLock:
@@ -260,7 +266,7 @@ class SQLiteRetrievalStore:
         rows = self._candidate_rows(
             domain=domain, query=query, limit=max(top_k, fts_prefilter_k)
         )
-        terms = {item for item in query.lower().split() if item}
+        terms = normalize_query_terms(query)
         scored: list[tuple[float, str, str]] = []
         for row in rows:
             text = str(row["chunk_text"])

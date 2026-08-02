@@ -1215,7 +1215,7 @@ def _default_llm_profiles() -> dict[str, LLMProfile]:
             provider_id="deepseek",
             driver=LLMDriver.OPENAI_COMPATIBLE,
             base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             api_key_env="DEEPSEEK_API_KEY",
             default_headers={},
             timeout_seconds=max(5, int(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "60"))),

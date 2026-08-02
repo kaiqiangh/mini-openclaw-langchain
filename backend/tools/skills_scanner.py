@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 from typing import Iterable
 
@@ -9,12 +10,23 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional at scaffold stage
     yaml = None
 
+MAX_SKILL_READ_CHARS = 64 * 1024
+
 
 @dataclass
 class SkillMeta:
     name: str
     description: str
     location: str
+
+
+def read_skill_text(path: Path) -> str:
+    """Read only the bounded prefix used for cataloging and selection."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return handle.read(MAX_SKILL_READ_CHARS)
+    except OSError:
+        return ""
 
 
 def _extract_frontmatter(text: str) -> dict[str, str]:
@@ -26,7 +38,10 @@ def _extract_frontmatter(text: str) -> dict[str, str]:
         if lines[idx].strip() == "---":
             raw = "\n".join(lines[1:idx])
             if yaml is not None:
-                parsed = yaml.safe_load(raw) or {}
+                try:
+                    parsed = yaml.safe_load(raw) or {}
+                except yaml.YAMLError:
+                    return {}
                 if isinstance(parsed, dict):
                     return {str(k): str(v) for k, v in parsed.items()}
                 return {}
@@ -42,9 +57,21 @@ def _extract_frontmatter(text: str) -> dict[str, str]:
 
 
 def _iter_skill_files(skills_dir: Path) -> Iterable[Path]:
-    if not skills_dir.exists():
+    if skills_dir.is_symlink() or not skills_dir.is_dir():
         return []
-    return sorted(skills_dir.glob("*/SKILL.md"))
+    root = skills_dir.resolve()
+    files: list[Path] = []
+    for candidate in sorted(skills_dir.glob("*/SKILL.md")):
+        if candidate.is_symlink() or candidate.parent.is_symlink():
+            continue
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        if candidate.is_file():
+            files.append(candidate)
+    return files
 
 
 def scan_skills(base_dir: Path) -> list[SkillMeta]:
@@ -52,11 +79,17 @@ def scan_skills(base_dir: Path) -> list[SkillMeta]:
     found: list[SkillMeta] = []
 
     for skill_file in _iter_skill_files(skills_dir):
-        text = skill_file.read_text(encoding="utf-8")
+        text = read_skill_text(skill_file)
+        if not text:
+            continue
         frontmatter = _extract_frontmatter(text)
+        if not frontmatter.get("name", "").strip() or not frontmatter.get(
+            "description", ""
+        ).strip():
+            continue
 
-        name = frontmatter.get("name", skill_file.parent.name)
-        description = frontmatter.get("description", "")
+        name = frontmatter["name"].strip()
+        description = frontmatter["description"].strip()
 
         # Skill paths in snapshot must be workspace-relative because tools are sandboxed to workspace root.
         rel_path = f"./skills/{skill_file.parent.name}/SKILL.md"
@@ -71,9 +104,9 @@ def render_skills_snapshot(skills: Iterable[SkillMeta]) -> str:
         lines.extend(
             [
                 "  <skill>",
-                f"    <name>{item.name}</name>",
-                f"    <description>{item.description}</description>",
-                f"    <location>{item.location}</location>",
+                f"    <name>{escape(item.name)}</name>",
+                f"    <description>{escape(item.description)}</description>",
+                f"    <location>{escape(item.location)}</location>",
                 "  </skill>",
             ]
         )

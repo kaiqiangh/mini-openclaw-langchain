@@ -1,4 +1,5 @@
 """CompactionPipeline: Budget-aware message compaction with checkpoint/rewind."""
+
 from __future__ import annotations
 
 import json
@@ -17,16 +18,21 @@ from langchain_core.messages import (
 )
 from pydantic import BaseModel, Field
 
+from graph.runtime_types import CompactionDegradation
+
 # Token counting — use tiktoken if available, fallback to heuristic
 try:
     import tiktoken
+
     _ENCODER = tiktoken.encoding_for_model("gpt-4o")
 
     def count_tokens(text: str) -> int:
         if not text:
             return 0
         return len(_ENCODER.encode(text))
+
 except ImportError:
+
     def count_tokens(text: str) -> int:
         # ~4 chars per token heuristic
         if not text:
@@ -40,8 +46,9 @@ _MODEL_WINDOWS: dict[str, int] = {
     "claude-sonnet": 200_000,
     "claude-sonnet-4": 200_000,
     "qwen-plus": 131_072,
-    "deepseek-chat": 65_536,
+    "deepseek-v4-flash": 1_000_000,
 }
+_MAX_SUMMARY_MESSAGES = 200
 
 
 class CompactionSummary(BaseModel):
@@ -58,6 +65,66 @@ class CompactResult:
     summary: CompactionSummary | None
     checkpoint_id: str | None
     was_compacted: bool
+    degradation: CompactionDegradation | None = None
+
+
+def compacted_history_entries(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    """Convert compacted model context to the session's user-visible history."""
+    entries: list[dict[str, Any]] = []
+    for message in messages:
+        if isinstance(message, SystemMessage) or getattr(message, "tool_call_id", None):
+            continue
+        if isinstance(message, AIMessage):
+            role = "assistant"
+            tool_calls = getattr(message, "tool_calls", None)
+        elif isinstance(message, HumanMessage):
+            role = "user"
+            tool_calls = None
+        else:
+            continue
+        content = (
+            message.content
+            if isinstance(message.content, str)
+            else str(message.content)
+        )
+        entry: dict[str, Any] = {"role": role, "content": content}
+        if isinstance(tool_calls, list) and tool_calls:
+            entry["tool_calls"] = list(tool_calls)
+        if content.strip() or entry.get("tool_calls"):
+            entries.append(entry)
+    return entries
+
+
+def history_entries_to_messages(entries: list[dict[str, Any]]) -> list[BaseMessage]:
+    """Parse the session history shape at the model-message boundary."""
+    parsed: list[BaseMessage] = []
+    for entry in entries:
+        role = str(entry.get("role", "")).strip().lower()
+        content = str(entry.get("content", ""))
+        if role == "assistant":
+            raw_tool_calls = entry.get("tool_calls")
+            tool_calls = []
+            if isinstance(raw_tool_calls, list):
+                for index, call in enumerate(raw_tool_calls):
+                    if not isinstance(call, dict):
+                        continue
+                    args = call.get("args", call.get("input", {}))
+                    tool_calls.append(
+                        {
+                            "name": str(call.get("name", call.get("tool", "tool"))),
+                            "args": args if isinstance(args, dict) else {},
+                            "id": str(
+                                call.get(
+                                    "id", call.get("tool_call_id", f"history-{index}")
+                                )
+                            ),
+                            "type": "tool_call",
+                        }
+                    )
+            parsed.append(AIMessage(content=content, tool_calls=tool_calls))
+        elif role == "user":
+            parsed.append(HumanMessage(content=content))
+    return parsed
 
 
 class CompactionPipeline:
@@ -92,7 +159,9 @@ class CompactionPipeline:
                         total += count_tokens(item["text"])
         return total
 
-    def needs_compaction(self, messages: list[BaseMessage], token_count: int | None = None) -> tuple[bool, int]:
+    def needs_compaction(
+        self, messages: list[BaseMessage], token_count: int | None = None
+    ) -> tuple[bool, int]:
         """Check if messages exceed the compaction threshold."""
         budget = self.compute_budget()
         threshold = int(budget * self.budget_factor)
@@ -184,12 +253,14 @@ class CompactionPipeline:
                     data, agent_id=agent_id, session_id=session_id
                 ):
                     continue
-                results.append({
-                    "checkpoint_id": data["checkpoint_id"],
-                    "run_id": data["run_id"],
-                    "step": data["step"],
-                    "message_count": len(data.get("messages", [])),
-                })
+                results.append(
+                    {
+                        "checkpoint_id": data["checkpoint_id"],
+                        "run_id": data["run_id"],
+                        "step": data["step"],
+                        "message_count": len(data.get("messages", [])),
+                    }
+                )
                 stored_agent_id = str(data.get("agent_id", "")).strip()
                 stored_session_id = str(data.get("session_id", "")).strip()
                 if stored_agent_id:
@@ -217,6 +288,7 @@ class CompactionPipeline:
             memory_file.write_text("# Memory\n\n")
 
         import datetime
+
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         lines = [
             f"\n--- Compaction {timestamp} ---\n",
@@ -258,10 +330,25 @@ class CompactionPipeline:
 
         remaining = list(system_msgs)
         if summary_text:
-            remaining.append(HumanMessage(content=f"[Previous conversation summary: {summary_text}]"))
+            remaining.append(
+                HumanMessage(content=f"[Previous conversation summary: {summary_text}]")
+            )
         remaining.extend(keep)
 
         return remaining, dropped
+
+    @staticmethod
+    def _bounded_summary_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+        """Keep summarization bounded while preserving the full rewind checkpoint."""
+        if len(messages) <= _MAX_SUMMARY_MESSAGES:
+            return messages
+        system_messages = [
+            message for message in messages if isinstance(message, SystemMessage)
+        ]
+        non_system = [
+            message for message in messages if not isinstance(message, SystemMessage)
+        ]
+        return system_messages + non_system[-_MAX_SUMMARY_MESSAGES:]
 
     async def compact_round(
         self,
@@ -276,7 +363,9 @@ class CompactionPipeline:
         """Execute one full compaction round."""
         needs, budget = self.needs_compaction(messages)
         if not needs:
-            return CompactResult(messages=messages, summary=None, checkpoint_id=None, was_compacted=False)
+            return CompactResult(
+                messages=messages, summary=None, checkpoint_id=None, was_compacted=False
+            )
 
         # Checkpoint
         checkpoint_id = await self.create_checkpoint(
@@ -290,14 +379,24 @@ class CompactionPipeline:
         # Summarize
         summary: CompactionSummary | None = None
         summary_text = ""
+        degradation: CompactionDegradation | None = None
         try:
+            summary_messages = self._bounded_summary_messages(messages)
             if summarize_fn is not None:
-                summary = await summarize_fn(messages)
+                summary = await summarize_fn(summary_messages)
             else:
-                summary = await self.llm_summarize(messages)
+                summary = await self.llm_summarize(summary_messages)
             summary_text = summary.summary if summary else ""
         except Exception:
-            summary_text = "[Conversation summarized (LLM unavailable, proceeding with drop-only)]"
+            summary_text = (
+                "[Conversation summarized (LLM unavailable, proceeding with drop-only)]"
+            )
+            degradation = "drop_only"
+        if not summary_text.strip():
+            summary_text = (
+                "[Conversation summary unavailable, proceeding with drop-only]"
+            )
+            degradation = "drop_only"
 
         # Drop
         remaining, dropped = self.drop(messages, summary_text, keep_last=keep_last)
@@ -307,4 +406,5 @@ class CompactionPipeline:
             summary=summary,
             checkpoint_id=checkpoint_id,
             was_compacted=True,
+            degradation=degradation,
         )

@@ -36,7 +36,7 @@ def test_normalization_openai_with_cached_and_reasoning_details():
 
     usage = extract_usage_from_message(
         message=message,
-        fallback_model="deepseek-chat",
+        fallback_model="deepseek-v4-flash",
         fallback_base_url="https://api.openai.com/v1",
     )
 
@@ -65,7 +65,7 @@ def test_normalization_anthropic_cache_creation_and_read():
 
     usage = extract_usage_from_message(
         message=message,
-        fallback_model="deepseek-chat",
+        fallback_model="deepseek-v4-flash",
         fallback_base_url="https://api.anthropic.com",
     )
 
@@ -80,7 +80,7 @@ def test_normalization_anthropic_cache_creation_and_read():
 def test_normalization_deepseek_hit_miss_mapping():
     message = _msg(
         response_metadata={
-            "model": "deepseek-chat",
+            "model": "deepseek-v4-flash",
             "usage": {
                 "prompt_tokens": 260,
                 "completion_tokens": 44,
@@ -93,7 +93,7 @@ def test_normalization_deepseek_hit_miss_mapping():
 
     usage = extract_usage_from_message(
         message=message,
-        fallback_model="deepseek-chat",
+        fallback_model="deepseek-v4-flash",
         fallback_base_url="https://api.deepseek.com/v1",
     )
 
@@ -122,6 +122,24 @@ def test_cost_breakdown_openai_priced():
     assert cost["total_cost_usd"] is not None
     # (80 * 0.25 + 20 * 0.025 + 30 * 2.0) / 1_000_000 = 0.0000805
     assert abs(float(cost["total_cost_usd"]) - 0.0000805) < 1e-8
+
+
+def test_cost_breakdown_deepseek_v4_flash_priced():
+    cost = calculate_cost_breakdown(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        input_tokens=1_000_000,
+        input_uncached_tokens=600_000,
+        input_cache_read_tokens=400_000,
+        input_cache_write_tokens_5m=0,
+        input_cache_write_tokens_1h=0,
+        input_cache_write_tokens_unknown=0,
+        output_tokens=1_000_000,
+    )
+
+    assert cost["priced"] is True
+    assert abs(float(cost["total_cost_usd"]) - 0.36512) < 1e-8
+    assert cost["source"] == "deepseek-pricing-2026-08-02"
 
 
 def test_cost_breakdown_long_context_anthropic_sonnet4():
@@ -164,7 +182,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
     orchestrator = UsageOrchestrator()
     usage_state = {
         "provider": "deepseek",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "model_source": "fallback_model",
         "usage_source": "unknown",
         "input_tokens": 0,
@@ -182,7 +200,7 @@ def test_usage_accumulator_sums_distinct_calls_and_dedupes_replays():
 
     call_a = {
         "provider": "deepseek",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
         "model_source": "model_name",
         "usage_source": "usage_metadata",
         "input_tokens": 100,
@@ -243,9 +261,9 @@ def test_tool_loop_model_respects_llm_route_override():
         has_tools=True,
         provider_id="deepseek",
         base_url="https://api.deepseek.com",
-        tool_loop_model="deepseek-chat",
+        tool_loop_model="deepseek-v4-flash",
     )
-    assert selected == "deepseek-chat"
+    assert selected == "deepseek-v4-flash"
 
 
 def test_tool_loop_model_respects_llm_route_override_map():
@@ -255,11 +273,11 @@ def test_tool_loop_model_respects_llm_route_override_map():
         provider_id="deepseek",
         base_url="https://api.deepseek.com",
         tool_loop_model_overrides={
-            "deepseek-reasoner": "deepseek-chat",
+            "deepseek-reasoner": "deepseek-v4-flash",
             "o3": "gpt-4.1-mini",
         },
     )
-    assert selected == "deepseek-chat"
+    assert selected == "deepseek-v4-flash"
 
 
 def test_tool_loop_model_respects_llm_route_override_map_exact_key():
@@ -279,7 +297,7 @@ def test_tool_loop_model_ignores_cross_provider_llm_route_override():
         has_tools=True,
         provider_id="openai",
         base_url="https://api.openai.com/v1",
-        tool_loop_model="deepseek-chat",
+        tool_loop_model="deepseek-v4-flash",
     )
     assert selected == "gpt-4o-mini"
 
@@ -290,6 +308,6 @@ def test_tool_loop_model_ignores_cross_provider_llm_route_map_override():
         has_tools=True,
         provider_id="openai",
         base_url="https://api.openai.com/v1",
-        tool_loop_model_overrides={"gpt-4o-mini": "deepseek-chat"},
+        tool_loop_model_overrides={"gpt-4o-mini": "deepseek-v4-flash"},
     )
     assert selected == "gpt-4o-mini"

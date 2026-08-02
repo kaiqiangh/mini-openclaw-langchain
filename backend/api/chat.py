@@ -236,6 +236,16 @@ async def _run_stream_task(
                         "title": title,
                     },
                 )
+    except asyncio.CancelledError:
+        require_existing_runtime(agent, state.agent_id)
+        services = getattr(agent, "runtime_services", None)
+        registry = getattr(services, "delegate_registry", None)
+        if registry is not None:
+            registry.cancel_for_parent(
+                agent_id=state.agent_id,
+                parent_session_id=state.session_id,
+            )
+        raise
     except Exception:  # noqa: BLE001
         logger.exception(
             "Chat stream failed",
@@ -318,6 +328,8 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
                     if str(item).strip()
                 ],
                 "usage": result.get("usage", {}),
+                "compaction_degradation": result.get("compaction_degradation"),
+                "last_checkpoint_id": result.get("last_checkpoint_id"),
             }
         }
 

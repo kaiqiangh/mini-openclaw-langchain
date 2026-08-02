@@ -96,6 +96,7 @@ class AuditStore:
         tool_name: str,
         status: str,
         duration_ms: int,
+        tool_call_id: str | None = None,
         details: dict[str, Any] | None = None,
     ) -> None:
         self._append(
@@ -106,6 +107,7 @@ class AuditStore:
                 "session_id": session_id or "",
                 "trigger_type": trigger_type,
                 "tool_name": tool_name,
+                "tool_call_id": tool_call_id or "",
                 "status": status,
                 "duration_ms": duration_ms,
                 "details": details or {},

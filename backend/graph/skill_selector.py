@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tools.skills_scanner import scan_skills
+from tools.skills_scanner import read_skill_text, scan_skills
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,}")
 _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
@@ -84,8 +86,17 @@ class _SkillDescriptor:
 
 
 class SkillSelector:
-    def __init__(self) -> None:
-        self._descriptor_cache: dict[str, tuple[str, list[_SkillDescriptor]]] = {}
+    def __init__(self, max_cache_entries: int = 128) -> None:
+        self._max_cache_entries = max(1, int(max_cache_entries))
+        self._descriptor_cache: OrderedDict[
+            str, tuple[str, list[_SkillDescriptor]]
+        ] = OrderedDict()
+
+    def invalidate(self, base_dir: Path | None = None) -> None:
+        if base_dir is None:
+            self._descriptor_cache.clear()
+            return
+        self._descriptor_cache.pop(str(base_dir.resolve()), None)
 
     @staticmethod
     def _normalize_text(value: str) -> str:
@@ -133,23 +144,26 @@ class SkillSelector:
         for path in sorted(skills_dir.glob("*/SKILL.md")):
             try:
                 relative_path = path.relative_to(base_dir).as_posix()
-                entries.append(f"{relative_path}:{path.stat().st_mtime_ns}")
-            except FileNotFoundError:
+                stat = path.stat()
+                digest = hashlib.sha256(read_skill_text(path).encode("utf-8")).hexdigest()
+                entries.append(f"{relative_path}:{stat.st_mtime_ns}:{stat.st_size}:{digest}")
+            except OSError:
                 continue
         return "|".join(entries)
 
     def _load_descriptors(self, base_dir: Path) -> list[_SkillDescriptor]:
+        base_dir = base_dir.resolve()
         cache_key = self._cache_key(base_dir)
-        cached = self._descriptor_cache.get(str(base_dir))
+        cache_id = str(base_dir)
+        cached = self._descriptor_cache.pop(cache_id, None)
         if cached is not None and cached[0] == cache_key:
+            self._descriptor_cache[cache_id] = cached
             return cached[1]
 
         descriptors: list[_SkillDescriptor] = []
         for meta in scan_skills(base_dir):
             skill_path = base_dir / meta.location.lstrip("./")
-            text = ""
-            if skill_path.exists():
-                text = skill_path.read_text(encoding="utf-8", errors="replace")
+            text = read_skill_text(skill_path)
             excerpt = self._build_excerpt(text) if text else ""
             full_text = " ".join(
                 part for part in [meta.name, meta.description, excerpt] if part.strip()
@@ -165,7 +179,9 @@ class SkillSelector:
                     full_text=self._normalize_text(full_text),
                 )
             )
-        self._descriptor_cache[str(base_dir)] = (cache_key, descriptors)
+        self._descriptor_cache[cache_id] = (cache_key, descriptors)
+        while len(self._descriptor_cache) > self._max_cache_entries:
+            self._descriptor_cache.popitem(last=False)
         return descriptors
 
     @staticmethod
@@ -246,7 +262,7 @@ class SkillSelector:
             )
 
         matches.sort(key=lambda item: (-item.score, item.name.lower()))
-        return matches[: max(1, top_k)]
+        return matches[: min(10, max(1, int(top_k)))]
 
     @staticmethod
     def render_prompt_section(selected_skills: list[SelectedSkill]) -> str:

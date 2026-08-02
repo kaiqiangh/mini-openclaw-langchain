@@ -162,6 +162,9 @@ class CheckpointSessionRepository:
             "loop_count": 0,
             "active_model": "",
             "input_messages": [],
+            "compaction_applied": False,
+            "compaction_degradation": None,
+            "last_checkpoint_id": None,
             "model_messages": [],
             "pending_tool_calls": [],
             "pending_new_response": False,
@@ -216,6 +219,40 @@ class CheckpointSessionRepository:
             agent_id=agent_id, session_id=session_id, graph_name=graph_name
         )
         return await self._graph_getter(graph_name).aupdate_state(request, values)
+
+    async def replace_session_state(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        expected_messages: list[dict[str, Any]] | None = None,
+        values: dict[str, Any],
+        graph_name: str = "default",
+    ) -> dict[str, Any]:
+        async with self._session_lock(agent_id, session_id):
+            current = await self.get_state(
+                agent_id=agent_id,
+                session_id=session_id,
+                graph_name=graph_name,
+            )
+            if (
+                expected_messages is not None
+                and self._normalize_messages(current.get("messages", []))
+                != expected_messages
+            ):
+                raise ConcurrentSessionMutationError(
+                    "Session changed while compaction was preparing; retry"
+                )
+            if self._normalize_live_response(current.get("live_response")) is not None:
+                raise ConcurrentSessionMutationError(
+                    "Cannot compact while a response is streaming; retry"
+                )
+            request = self._state_request(
+                agent_id=agent_id,
+                session_id=session_id,
+                graph_name=graph_name,
+            )
+            return await self._graph_getter(graph_name).aupdate_state(request, values)
 
     async def _ensure_session_state(
         self,
@@ -471,11 +508,18 @@ class CheckpointSessionRepository:
             graph_name=request.graph_name,
         )
         messages = self._normalize_messages(state.get("messages", []))
+        if not messages and request.history:
+            messages = self._normalize_messages(request.history)
         is_first_turn = len(messages) == 0
         normalized_message = request.message.strip()
 
         key = self._stream_key(request)
         self._streams.pop(key, None)
+        pending_live_response = {
+            "run_id": "__pending__",
+            "content": "",
+            "timestamp_ms": int(time.time() * 1000),
+        }
 
         if request.resume_same_turn and messages:
             last = messages[-1]
@@ -488,7 +532,7 @@ class CheckpointSessionRepository:
                     session_id=request.session_id,
                     graph_name=request.graph_name,
                     values={
-                        "live_response": None,
+                        "live_response": pending_live_response,
                         "assistant_segments": [],
                         "selected_skill_names": [],
                     },
@@ -510,9 +554,13 @@ class CheckpointSessionRepository:
             values={
                 "messages": updated_messages,
                 "compressed_context": compressed_context,
-                "live_response": None,
+                "live_response": pending_live_response,
                 "assistant_segments": [],
                 "selected_skill_names": [],
+                "input_messages": [],
+                "model_messages": [],
+                "compaction_applied": False,
+                "compaction_degradation": None,
             },
         )
         history = self._history_with_summary(messages, compressed_context)
@@ -693,6 +741,7 @@ class CheckpointSessionRepository:
             state.current_tool_calls.append(
                 {
                     "tool": data.get("tool", "tool"),
+                    "tool_call_id": data.get("tool_call_id", ""),
                     "input": data.get("input", {}),
                 }
             )
@@ -700,13 +749,38 @@ class CheckpointSessionRepository:
             return
 
         if event.type == "tool_end" and state.current_tool_calls:
-            state.current_tool_calls[-1]["output"] = data.get("output", "")
+            tool_call_id = str(data.get("tool_call_id", "")).strip()
+            target = next(
+                (
+                    item
+                    for item in reversed(state.current_tool_calls)
+                    if tool_call_id and item.get("tool_call_id") == tool_call_id
+                ),
+                state.current_tool_calls[-1],
+            )
+            target["output"] = data.get("output", "")
             await self._persist_live_snapshot(request, state, force=True)
             return
 
         if event.type == "new_response":
             self._flush_current_segment(state)
             await self._persist_live_snapshot(request, state, force=True)
+            return
+
+        if event.type == "compaction":
+            state.current_content = ""
+            state.current_tool_calls = []
+            state.current_skill_uses = []
+            state.assistant_segments = []
+            await self.update_state(
+                agent_id=request.agent_id,
+                session_id=request.session_id,
+                graph_name=request.graph_name,
+                values={
+                    "live_response": None,
+                    "assistant_segments": [],
+                },
+            )
             return
 
         if event.type == "done":

@@ -23,5 +23,4 @@ class MiniTool(Protocol):
     name: str
     description: str
     permission_level: PermissionLevel
-
     def run(self, args: dict[str, Any], context: ToolContext) -> ToolResult: ...

@@ -135,3 +135,71 @@ def test_skill_selector_refreshes_cache_when_skill_folder_moves(tmp_path: Path):
 
     assert second
     assert second[0].location == "./skills/meme-rush-v2/SKILL.md"
+
+
+def test_skill_selector_refreshes_cache_when_skill_content_changes(tmp_path: Path):
+    _write_skill(
+        tmp_path,
+        "meme-rush",
+        "Meme token discovery for BSC and launchpads.",
+        "Use BSC meme tokens.",
+    )
+    selector = SkillSelector()
+    assert selector.select(base_dir=tmp_path, message="BSC meme tokens", history=[])
+
+    _write_skill(
+        tmp_path,
+        "meme-rush",
+        "A quiet gardening helper.",
+        "Use garden planning only.",
+    )
+
+    assert selector.select(base_dir=tmp_path, message="BSC meme tokens", history=[]) == []
+
+
+def test_skill_selector_skips_symlinked_skill_files(tmp_path: Path):
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "SKILL.md").write_text(
+        "---\nname: external-secret\ndescription: BSC meme tokens\n---\n",
+        encoding="utf-8",
+    )
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "linked").symlink_to(external, target_is_directory=True)
+
+    selector = SkillSelector()
+    assert selector.select(base_dir=tmp_path, message="BSC meme tokens", history=[]) == []
+
+
+def test_skill_selector_clamps_requested_result_count(tmp_path: Path):
+    for index in range(12):
+        _write_skill(
+            tmp_path,
+            f"skill-{index}",
+            "BSC meme token discovery",
+            "Use for BSC meme tokens.",
+        )
+
+    selected = SkillSelector().select(
+        base_dir=tmp_path,
+        message="BSC meme tokens",
+        history=[],
+        top_k=1000,
+    )
+
+    assert len(selected) == 10
+
+
+def test_skill_selector_bounds_workspace_cache(tmp_path: Path):
+    roots = []
+    for index in range(3):
+        root = tmp_path / f"agent-{index}"
+        _write_skill(root, "skill", "BSC meme token discovery", "Use for BSC.")
+        roots.append(root)
+
+    selector = SkillSelector(max_cache_entries=2)
+    for root in roots:
+        selector.select(base_dir=root, message="BSC meme tokens", history=[])
+
+    assert len(selector._descriptor_cache) == 2

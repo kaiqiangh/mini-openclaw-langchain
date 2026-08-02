@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel
 
 from config import load_runtime_config
 from graph.tool_execution import ToolExecutionService
@@ -19,6 +21,33 @@ def clear_cache():
 
 
 class TestPreToolUseHookIntegration:
+    @pytest.mark.asyncio
+    async def test_invalid_args_return_structured_failure_with_correlation(self):
+        class TerminalArgs(BaseModel):
+            command: str
+
+        tool = StructuredTool.from_function(
+            lambda command: command,
+            name="terminal",
+            description="Run a terminal command",
+            args_schema=TerminalArgs,
+        )
+        service = ToolExecutionService(
+            tools=[tool],
+            tools_by_name={"terminal": tool},
+        )
+
+        envelopes, tool_messages = await service.execute_pending(
+            [{"name": "terminal", "id": "call-invalid", "args": {}}]
+        )
+
+        payload = json.loads(envelopes[0].output)
+        assert envelopes[0].error_code == "E_INVALID_ARGS"
+        assert payload["error"]["code"] == "E_INVALID_ARGS"
+        assert payload["error"]["details"]["tool_call_id"] == "call-invalid"
+        assert tool_messages[0].tool_call_id == "call-invalid"
+        assert tool_messages[0].status == "error"
+
     @pytest.mark.asyncio
     async def test_hook_denies_tool_execution(self, tmp_path: Path):
         """When PreToolUse hook denies, tool should not be invoked."""
@@ -51,6 +80,8 @@ class TestPreToolUseHookIntegration:
         assert envelopes[0].ok is False
         assert envelopes[0].error_code == "E_POLICY_DENIED"
         assert "Hook denied" in envelopes[0].error_message
+        assert json.loads(tool_msgs[0].content)["error"]["code"] == "E_POLICY_DENIED"
+        assert json.loads(tool_msgs[0].content)["error"]["details"]["tool_call_id"] == "call-1"
         mock_tool.ainvoke.assert_not_called()
 
     @pytest.mark.asyncio
