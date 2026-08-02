@@ -315,12 +315,12 @@ class FakeSessionRepository:
                 self._live_responses.pop(key, None)
         return {key: value for key, value in values.items()}
 
-    async def replace_compacted_state(
+    async def replace_session_state(
         self,
         *,
         agent_id: str,
         session_id: str,
-        expected_messages: list[dict[str, object]],
+        expected_messages: list[dict[str, object]] | None = None,
         values: dict[str, object],
         graph_name: str = "default",
     ) -> dict[str, object]:
@@ -330,7 +330,7 @@ class FakeSessionRepository:
             session_id=session_id,
             include_live=True,
         )
-        if snapshot.messages != expected_messages:
+        if expected_messages is not None and snapshot.messages != expected_messages:
             raise ConcurrentSessionMutationError(
                 "Session changed while compaction was preparing; retry"
             )

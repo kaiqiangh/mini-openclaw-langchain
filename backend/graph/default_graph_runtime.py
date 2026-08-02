@@ -31,6 +31,7 @@ from graph.runtime_types import (
     GraphRuntime,
     ResolvedDelegateResult,
     RuntimeCheckpointer,
+    CompactionDegradation,
     RuntimeErrorInfo,
     RuntimeEvent,
     RuntimeGraphState,
@@ -1861,7 +1862,7 @@ class DefaultGraphRuntime(GraphRuntime):
             )
 
         # Distill to memory
-        degradation = result.degradation
+        degradation: CompactionDegradation | None = result.degradation
         if result.summary and result.was_compacted and not result.degradation and workspace:
             memory_file = runtime.root_dir / "memory" / "MEMORY.md"
             try:

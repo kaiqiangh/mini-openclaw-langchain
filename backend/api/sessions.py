@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
-from graph.compaction import compacted_history_entries
+from graph.compaction import compacted_history_entries, history_entries_to_messages
 from graph.checkpoint_session_repository import ConcurrentSessionMutationError
 from graph.session_manager import (
     InvalidSessionIdError,
@@ -508,11 +508,6 @@ async def cancel_delegate(
 # ── Compaction & Rewind ─────────────────────────────────────────
 
 
-class CompactSessionRequest(BaseModel):
-    """Optional body for manual compaction (keep future extensibility)."""
-    dry_run: bool = False
-
-
 class RewindRequest(BaseModel):
     checkpoint_id: str = Field(min_length=1)
 
@@ -521,7 +516,6 @@ class RewindRequest(BaseModel):
 async def trigger_compact(
     agent_id: str,
     session_id: str,
-    body: CompactSessionRequest | None = None,
 ) -> dict[str, Any]:
     """Manually trigger compaction for a session."""
     agent, session_manager = _resolve_session_manager(agent_id)
@@ -541,23 +535,7 @@ async def trigger_compact(
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
     messages = list(snapshot.messages) if snapshot.messages else []
-    from langchain_core.messages import AIMessage, HumanMessage
-
-    lc_messages = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        content = str(message.get("content", ""))
-        if str(message.get("role", "")).strip().lower() == "assistant":
-            tool_calls = message.get("tool_calls")
-            lc_messages.append(
-                AIMessage(
-                    content=content,
-                    tool_calls=tool_calls if isinstance(tool_calls, list) else [],
-                )
-            )
-        else:
-            lc_messages.append(HumanMessage(content=content))
+    lc_messages = history_entries_to_messages(messages)
 
     result = await pipeline.compact_round(
         lc_messages,
@@ -569,7 +547,7 @@ async def trigger_compact(
 
     if result.was_compacted:
         try:
-            await repository.replace_compacted_state(
+            await repository.replace_session_state(
                 agent_id=agent_id,
                 session_id=session_id,
                 expected_messages=messages,
@@ -638,18 +616,21 @@ async def rewind_session(
         raise ApiError(status_code=400, code="invalid_request", message=str(exc))
 
     repository = agent.get_session_repository(agent_id)
-    await repository.update_state(
-        agent_id=agent_id,
-        session_id=session_id,
-        values={
-            "messages": compacted_history_entries(messages),
-            "model_messages": list(messages),
-            "input_messages": list(messages),
-            "compaction_applied": True,
-            "compaction_degradation": None,
-            "last_checkpoint_id": body.checkpoint_id,
-        },
-    )
+    try:
+        await repository.replace_session_state(
+            agent_id=agent_id,
+            session_id=session_id,
+            values={
+                "messages": compacted_history_entries(messages),
+                "model_messages": list(messages),
+                "input_messages": list(messages),
+                "compaction_applied": True,
+                "compaction_degradation": None,
+                "last_checkpoint_id": body.checkpoint_id,
+            },
+        )
+    except ConcurrentSessionMutationError as exc:
+        raise ApiError(status_code=409, code="conflict", message=str(exc)) from exc
 
     return {
         "data": {

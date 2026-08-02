@@ -17,6 +17,8 @@ from langchain_core.messages import (
 )
 from pydantic import BaseModel, Field
 
+from graph.runtime_types import CompactionDegradation
+
 # Token counting — use tiktoken if available, fallback to heuristic
 try:
     import tiktoken
@@ -58,7 +60,7 @@ class CompactResult:
     summary: CompactionSummary | None
     checkpoint_id: str | None
     was_compacted: bool
-    degradation: str | None = None
+    degradation: CompactionDegradation | None = None
 
 
 def compacted_history_entries(messages: list[BaseMessage]) -> list[dict[str, Any]]:
@@ -82,6 +84,34 @@ def compacted_history_entries(messages: list[BaseMessage]) -> list[dict[str, Any
         if content.strip() or entry.get("tool_calls"):
             entries.append(entry)
     return entries
+
+
+def history_entries_to_messages(entries: list[dict[str, Any]]) -> list[BaseMessage]:
+    """Parse the session history shape at the model-message boundary."""
+    parsed: list[BaseMessage] = []
+    for entry in entries:
+        role = str(entry.get("role", "")).strip().lower()
+        content = str(entry.get("content", ""))
+        if role == "assistant":
+            raw_tool_calls = entry.get("tool_calls")
+            tool_calls = []
+            if isinstance(raw_tool_calls, list):
+                for index, call in enumerate(raw_tool_calls):
+                    if not isinstance(call, dict):
+                        continue
+                    args = call.get("args", call.get("input", {}))
+                    tool_calls.append(
+                        {
+                            "name": str(call.get("name", call.get("tool", "tool"))),
+                            "args": args if isinstance(args, dict) else {},
+                            "id": str(call.get("id", call.get("tool_call_id", f"history-{index}"))),
+                            "type": "tool_call",
+                        }
+                    )
+            parsed.append(AIMessage(content=content, tool_calls=tool_calls))
+        elif role == "user":
+            parsed.append(HumanMessage(content=content))
+    return parsed
 
 
 class CompactionPipeline:
@@ -314,7 +344,7 @@ class CompactionPipeline:
         # Summarize
         summary: CompactionSummary | None = None
         summary_text = ""
-        degradation: str | None = None
+        degradation: CompactionDegradation | None = None
         try:
             if summarize_fn is not None:
                 summary = await summarize_fn(messages)

@@ -220,12 +220,12 @@ class CheckpointSessionRepository:
         )
         return await self._graph_getter(graph_name).aupdate_state(request, values)
 
-    async def replace_compacted_state(
+    async def replace_session_state(
         self,
         *,
         agent_id: str,
         session_id: str,
-        expected_messages: list[dict[str, Any]],
+        expected_messages: list[dict[str, Any]] | None = None,
         values: dict[str, Any],
         graph_name: str = "default",
     ) -> dict[str, Any]:
@@ -235,7 +235,11 @@ class CheckpointSessionRepository:
                 session_id=session_id,
                 graph_name=graph_name,
             )
-            if self._normalize_messages(current.get("messages", [])) != expected_messages:
+            if (
+                expected_messages is not None
+                and self._normalize_messages(current.get("messages", []))
+                != expected_messages
+            ):
                 raise ConcurrentSessionMutationError(
                     "Session changed while compaction was preparing; retry"
                 )
