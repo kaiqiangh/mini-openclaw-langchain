@@ -114,6 +114,8 @@ class RuntimeResult:
     structured_response: Any | None = None
     token_source: str = "fallback"
     run_id: str = ""
+    compaction_degradation: str | None = None
+    last_checkpoint_id: str | None = None
     error: RuntimeErrorInfo | None = None
 
 
@@ -188,7 +190,7 @@ class RuntimeGraphState(TypedDict, total=False):
     active_model: str
     input_messages: list[BaseMessage]
     compaction_applied: bool
-    compaction_degraded: bool
+    compaction_degradation: str | None
     last_checkpoint_id: str | None
     model_messages: list[BaseMessage]
     pending_tool_calls: list[dict[str, Any]]

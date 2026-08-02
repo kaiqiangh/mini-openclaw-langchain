@@ -237,6 +237,8 @@ class DefaultGraphRuntime(GraphRuntime):
                 structured_response=final_state.get("structured_response"),
                 token_source=str(final_state.get("token_source", "fallback") or "fallback"),
                 run_id=str(final_state.get("run_id", "")),
+                compaction_degradation=final_state.get("compaction_degradation"),
+                last_checkpoint_id=final_state.get("last_checkpoint_id"),
                 error=error if isinstance(error, RuntimeErrorInfo) else None,
             )
             if result.error is None:
@@ -329,7 +331,7 @@ class DefaultGraphRuntime(GraphRuntime):
             "run_id": "",
             "input_messages": [],
             "compaction_applied": False,
-            "compaction_degraded": False,
+            "compaction_degradation": None,
             "last_checkpoint_id": None,
             "model_messages": [],
             "pending_tool_calls": [],
@@ -1776,7 +1778,7 @@ class DefaultGraphRuntime(GraphRuntime):
 
         return {}
 
-    async def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any]:
+    async def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any] | Command:
         """Compaction node: reduce message count when budget exceeded."""
         runtime = self.services.get_runtime(state["request"].agent_id)
         model_name = runtime.resolve_model_name() if hasattr(runtime, "resolve_model_name") else "gpt-4o"
@@ -1822,30 +1824,52 @@ class DefaultGraphRuntime(GraphRuntime):
             except Exception:
                 pass
 
-        result = await pipeline.compact_round(
-            messages,
-            run_id=state.get("run_id", ""),
-            step=state.get("loop_count", 0),
-            summarize_fn=summarize_fn,
-            agent_id=state["request"].agent_id,
-            session_id=state["request"].session_id,
-        )
+        try:
+            result = await pipeline.compact_round(
+                messages,
+                run_id=state.get("run_id", ""),
+                step=state.get("loop_count", 0),
+                summarize_fn=summarize_fn,
+                agent_id=state["request"].agent_id,
+                session_id=state["request"].session_id,
+            )
+        except Exception as exc:
+            self._emit(
+                "compaction",
+                {
+                    "checkpoint_id": None,
+                    "was_compacted": False,
+                    "degradation": "compaction_failed",
+                    "error_type": type(exc).__name__,
+                    "message_count_before": len(messages),
+                    "message_count_after": len(messages),
+                    "summary": None,
+                },
+            )
+            return Command(
+                update={
+                    "compaction_applied": False,
+                    "compaction_degradation": "compaction_failed",
+                    "compaction_deferred": True,
+                    "last_checkpoint_id": None,
+                },
+                goto="finalize_success",
+            )
 
         # Distill to memory
+        degradation = result.degradation
         if result.summary and result.was_compacted and workspace:
             memory_file = runtime.root_dir / "memory" / "MEMORY.md"
-            await pipeline.distill(result.summary, memory_file=memory_file)
-
-        degraded = bool(
-            getattr(result, "degraded", False)
-            or (result.was_compacted and result.summary is None)
-        )
+            try:
+                await pipeline.distill(result.summary, memory_file=memory_file)
+            except Exception:
+                degradation = "memory_distill_failed"
 
         self._emit("compaction", {
             "checkpoint_id": result.checkpoint_id,
             "was_compacted": result.was_compacted,
-            "degraded": degraded,
-            "mode": "drop_only" if degraded else "summarized",
+            "degradation": degradation,
+            "mode": degradation or "summarized",
             "message_count_before": len(messages),
             "message_count_after": len(result.messages),
             "summary": result.summary.summary if result.summary else None,
@@ -1853,9 +1877,10 @@ class DefaultGraphRuntime(GraphRuntime):
 
         return {
             "input_messages": result.messages,
+            "model_messages": list(result.messages),
             "last_checkpoint_id": result.checkpoint_id,
             "compaction_applied": True,
-            "compaction_degraded": degraded,
+            "compaction_degradation": degradation,
             "compaction_deferred": False,
         }
 

@@ -163,7 +163,7 @@ class CheckpointSessionRepository:
             "active_model": "",
             "input_messages": [],
             "compaction_applied": False,
-            "compaction_degraded": False,
+            "compaction_degradation": None,
             "last_checkpoint_id": None,
             "model_messages": [],
             "pending_tool_calls": [],

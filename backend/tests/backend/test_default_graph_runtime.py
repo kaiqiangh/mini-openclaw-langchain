@@ -656,7 +656,7 @@ async def test_compaction_node_awaits_and_hands_off_canonical_messages(
                 summary=None,
                 checkpoint_id="checkpoint-1",
                 was_compacted=True,
-                degraded=True,
+                degradation="drop_only",
             )
 
     monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _AsyncPipeline)
@@ -679,9 +679,10 @@ async def test_compaction_node_awaits_and_hands_off_canonical_messages(
     assert calls[0]["agent_id"] == "default"
     assert calls[0]["session_id"] == "session-1"
     assert compacted["input_messages"] == compacted_messages
+    assert compacted["model_messages"] == compacted_messages
     assert compacted["last_checkpoint_id"] == "checkpoint-1"
     assert compacted["compaction_applied"] is True
-    assert compacted["compaction_degraded"] is True
+    assert compacted["compaction_degradation"] == "drop_only"
 
     composed = graph._compose_inputs(
         {
@@ -1732,6 +1733,135 @@ def test_graph_runtime_streams_tool_loop_events(monkeypatch, tmp_path: Path):
     assert events[-1]["data"]["content"] == "final answer"
     graph = manager.graph_registry.resolve("default")
     assert graph._tool_runners == {}
+
+
+def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    payloads: list[dict[str, Any]] = []
+    scripted = [
+        [AIMessageChunk(content="before compaction")],
+        [AIMessageChunk(content="after compaction")],
+    ]
+
+    class _LiveCompactionPipeline:
+        needs_calls = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def needs_compaction(self, messages: list[Any]) -> tuple[bool, int]:
+            _ = messages
+            type(self).needs_calls += 1
+            return type(self).needs_calls == 1, 1
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            _ = messages, kwargs
+            asyncio.get_running_loop()
+            return CompactResult(
+                messages=[HumanMessage(content="canonical compacted state")],
+                summary=None,
+                checkpoint_id="checkpoint-live",
+                was_compacted=True,
+                degradation="drop_only",
+            )
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _LiveCompactionPipeline)
+    monkeypatch.setattr(
+        manager.runtime_services,
+        "get_runtime_llm",
+        lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
+    )
+    monkeypatch.setattr(
+        manager.lcel_pipelines,
+        "model_chain",
+        lambda **kwargs: _RecordingScriptedChain(payloads, scripted),
+    )
+
+    async def collect():
+        rows = []
+        async for event in manager.astream(
+            message="run with context pressure",
+            session_id="session-compaction-live",
+            agent_id="default",
+        ):
+            rows.append(event)
+        return rows
+
+    events = asyncio.run(collect())
+    compaction_events = [row for row in events if row["type"] == "compaction"]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["content"] == "after compaction"
+    assert compaction_events[0]["data"]["degradation"] == "drop_only"
+    second_messages = payloads[1]["messages"]
+    assert any(
+        getattr(message, "content", "") == "canonical compacted state"
+        for message in second_messages
+    )
+    assert not any(
+        getattr(message, "content", "") == "before compaction"
+        for message in second_messages
+    )
+
+
+def test_live_graph_compaction_failure_is_observable(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+
+    class _FailingCompactionPipeline:
+        needs_calls = 0
+
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def needs_compaction(self, messages: list[Any]) -> tuple[bool, int]:
+            _ = messages
+            type(self).needs_calls += 1
+            return type(self).needs_calls == 1, 1
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            _ = messages, kwargs
+            raise OSError("checkpoint unavailable")
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _FailingCompactionPipeline)
+    monkeypatch.setattr(
+        manager.runtime_services,
+        "get_runtime_llm",
+        lambda runtime, profile: _StubToolCapableModel(profile.profile_name),
+    )
+    monkeypatch.setattr(
+        manager.lcel_pipelines,
+        "model_chain",
+        lambda **kwargs: _ScriptedChain([[AIMessageChunk(content="answer")]]),
+    )
+
+    async def collect():
+        rows = []
+        async for event in manager.astream(
+            message="run with failing compaction",
+            session_id="session-compaction-failure",
+            agent_id="default",
+        ):
+            rows.append(event)
+        return rows
+
+    events = asyncio.run(collect())
+    compaction_events = [row for row in events if row["type"] == "compaction"]
+
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["content"] == "answer"
+    assert compaction_events[0]["data"]["degradation"] == "compaction_failed"
 
 
 def test_graph_runtime_reuses_tool_runner_per_request(tmp_path: Path):

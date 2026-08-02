@@ -207,6 +207,11 @@ Behavior notes:
 - Selected skills are advisory only, but they are injected into the system prompt and tracked separately from actual skill usage.
 - Scheduler workers are started per agent rather than only for the default workspace.
 - Broken in-flight checkpoint state from the older tool-loop bug is automatically repaired on next active access instead of requiring manual session cleanup.
+- Context compaction runs as an async graph node. Its pre-compaction checkpoint is scoped to
+  the agent and session, and the canonical compacted messages replace both prompt and tool-loop
+  state before the next model step. Compaction events and non-streaming results expose the
+  checkpoint ID plus a bounded `compaction_degradation` value such as `drop_only`,
+  `memory_distill_failed`, or `compaction_failed` when recovery is degraded.
 
 ## Runtime Config Matrix
 

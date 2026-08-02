@@ -58,7 +58,7 @@ class CompactResult:
     summary: CompactionSummary | None
     checkpoint_id: str | None
     was_compacted: bool
-    degraded: bool = False
+    degradation: str | None = None
 
 
 class CompactionPipeline:
@@ -291,7 +291,7 @@ class CompactionPipeline:
         # Summarize
         summary: CompactionSummary | None = None
         summary_text = ""
-        degraded = False
+        degradation: str | None = None
         try:
             if summarize_fn is not None:
                 summary = await summarize_fn(messages)
@@ -300,7 +300,10 @@ class CompactionPipeline:
             summary_text = summary.summary if summary else ""
         except Exception:
             summary_text = "[Conversation summarized (LLM unavailable, proceeding with drop-only)]"
-            degraded = True
+            degradation = "drop_only"
+        if summary is None and not summary_text:
+            summary_text = "[Conversation summary unavailable, proceeding with drop-only]"
+            degradation = "drop_only"
 
         # Drop
         remaining, dropped = self.drop(messages, summary_text, keep_last=keep_last)
@@ -310,5 +313,5 @@ class CompactionPipeline:
             summary=summary,
             checkpoint_id=checkpoint_id,
             was_compacted=True,
-            degraded=degraded,
+            degradation=degradation,
         )
