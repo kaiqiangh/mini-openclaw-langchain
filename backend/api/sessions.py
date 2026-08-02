@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from api.agent_guard import require_existing_runtime
 from api.errors import ApiError
 from graph.agent import AgentManager
+from graph.compaction import compacted_history_entries
 from graph.session_manager import (
     InvalidSessionIdError,
     LegacySessionStateError,
@@ -611,14 +612,18 @@ async def rewind_session(
     except RuntimeError as exc:
         raise ApiError(status_code=400, code="invalid_request", message=str(exc))
 
-    from langchain_core.messages import messages_to_dict
-    message_dicts = messages_to_dict(messages)
-
     repository = agent.get_session_repository(agent_id)
     await repository.update_state(
         agent_id=agent_id,
         session_id=session_id,
-        values={"model_messages": message_dicts},
+        values={
+            "messages": compacted_history_entries(messages),
+            "model_messages": [],
+            "input_messages": [],
+            "compaction_applied": False,
+            "compaction_degradation": None,
+            "last_checkpoint_id": body.checkpoint_id,
+        },
     )
 
     return {

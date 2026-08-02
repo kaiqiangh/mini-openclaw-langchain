@@ -290,7 +290,12 @@ class FakeSessionRepository:
         _ = agent_id, graph_name
         session = await self.manager.load_session(session_id)
         key = self._key(session_id, archived=False)
-        if "model_messages" in values:
+        if "messages" in values and isinstance(values.get("messages"), list):
+            raw_messages = values.get("messages")
+            self._messages[key] = [
+                dict(item) for item in raw_messages if isinstance(item, dict)
+            ]
+        elif "model_messages" in values:
             normalized: list[dict[str, object]] = []
             raw_messages = values.get("model_messages")
             if isinstance(raw_messages, list):

@@ -61,6 +61,29 @@ class CompactResult:
     degradation: str | None = None
 
 
+def compacted_history_entries(messages: list[BaseMessage]) -> list[dict[str, Any]]:
+    """Convert compacted model context to the session's user-visible history."""
+    entries: list[dict[str, Any]] = []
+    for message in messages:
+        if isinstance(message, SystemMessage) or getattr(message, "tool_call_id", None):
+            continue
+        if isinstance(message, AIMessage):
+            role = "assistant"
+            tool_calls = getattr(message, "tool_calls", None)
+        elif isinstance(message, HumanMessage):
+            role = "user"
+            tool_calls = None
+        else:
+            continue
+        content = message.content if isinstance(message.content, str) else str(message.content)
+        entry: dict[str, Any] = {"role": role, "content": content}
+        if isinstance(tool_calls, list) and tool_calls:
+            entry["tool_calls"] = list(tool_calls)
+        if content.strip() or entry.get("tool_calls"):
+            entries.append(entry)
+    return entries
+
+
 class CompactionPipeline:
     """Compaction pipeline with budget check, checkpoint, summarize, distill, drop."""
 

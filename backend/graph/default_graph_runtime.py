@@ -19,7 +19,11 @@ from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from graph.compaction import CompactionPipeline, CompactionSummary
+from graph.compaction import (
+    CompactionPipeline,
+    CompactionSummary,
+    compacted_history_entries,
+)
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.retrieval_orchestrator import RetrievalOrchestrator
 from graph.runtime_types import (
@@ -1878,6 +1882,7 @@ class DefaultGraphRuntime(GraphRuntime):
         return {
             "input_messages": result.messages,
             "model_messages": list(result.messages),
+            "messages": compacted_history_entries(result.messages),
             "last_checkpoint_id": result.checkpoint_id,
             "compaction_applied": True,
             "compaction_degradation": degradation,

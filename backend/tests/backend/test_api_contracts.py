@@ -416,6 +416,15 @@ def test_checkpoint_endpoints_enforce_exact_session_ownership(client, api_app):
     assert owned_rewind.json()["data"]["checkpoint_id"] == owned_checkpoint
     assert owned_rewind.json()["data"]["message_count"] == 1
 
+    repository = api_app["agent_manager"].get_session_repository("default")
+    history = asyncio.run(
+        repository.load_history_for_agent(
+            agent_id="default",
+            session_id=session_a,
+        )
+    )
+    assert history == [{"role": "user", "content": "owned"}]
+
 
 def test_cron_sessions_use_job_name_in_session_lists(client):
     created_job = client.post(

@@ -1799,6 +1799,19 @@ def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_pat
     assert events[-1]["type"] == "done"
     assert events[-1]["data"]["content"] == "after compaction"
     assert compaction_events[0]["data"]["degradation"] == "drop_only"
+    persisted_state = asyncio.run(
+        manager.get_graph_state(
+            session_id="session-compaction-live",
+            agent_id="default",
+        )
+    )
+    persisted_contents = [
+        str(row.get("content", ""))
+        for row in persisted_state.get("messages", [])
+        if isinstance(row, dict)
+    ]
+    assert "canonical compacted state" in persisted_contents
+    assert "before compaction" not in persisted_contents
     second_messages = payloads[1]["messages"]
     assert any(
         getattr(message, "content", "") == "canonical compacted state"
