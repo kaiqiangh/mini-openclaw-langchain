@@ -1490,7 +1490,7 @@ class DefaultGraphRuntime(GraphRuntime):
                         "retry_index": 0,
                         "model_messages": [*model_messages, final_message],
                         "pending_tool_calls": [],
-                        "pending_new_response": False,
+                        "pending_new_response": True,
                         "token_source": token_source or "fallback",
                         "fallback_final_text": fallback_final_text,
                         "final_text": final_text,
@@ -1896,7 +1896,8 @@ class DefaultGraphRuntime(GraphRuntime):
 
         return {
             "input_messages": result.messages,
-            "model_messages": list(result.messages),
+            # The compacted input is canonical; only post-compaction tool turns belong here.
+            "model_messages": [],
             "messages": compacted_history_entries(result.messages),
             "last_checkpoint_id": result.checkpoint_id,
             "compaction_applied": True,

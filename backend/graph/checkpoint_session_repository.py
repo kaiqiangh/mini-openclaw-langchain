@@ -755,6 +755,22 @@ class CheckpointSessionRepository:
             await self._persist_live_snapshot(request, state, force=True)
             return
 
+        if event.type == "compaction":
+            state.current_content = ""
+            state.current_tool_calls = []
+            state.current_skill_uses = []
+            state.assistant_segments = []
+            await self.update_state(
+                agent_id=request.agent_id,
+                session_id=request.session_id,
+                graph_name=request.graph_name,
+                values={
+                    "live_response": None,
+                    "assistant_segments": [],
+                },
+            )
+            return
+
         if event.type == "done":
             done_content = str(data.get("content", "")).strip()
             self._flush_current_segment(

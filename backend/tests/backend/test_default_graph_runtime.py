@@ -679,7 +679,7 @@ async def test_compaction_node_awaits_and_hands_off_canonical_messages(
     assert calls[0]["agent_id"] == "default"
     assert calls[0]["session_id"] == "session-1"
     assert compacted["input_messages"] == compacted_messages
-    assert compacted["model_messages"] == compacted_messages
+    assert compacted["model_messages"] == []
     assert compacted["last_checkpoint_id"] == "checkpoint-1"
     assert compacted["compaction_applied"] is True
     assert compacted["compaction_degradation"] == "drop_only"
@@ -1800,6 +1800,10 @@ def test_live_graph_compaction_uses_async_canonical_handoff(monkeypatch, tmp_pat
     assert events[-1]["type"] == "done"
     assert events[-1]["data"]["content"] == "after compaction"
     assert compaction_events[0]["data"]["degradation"] == "drop_only"
+    compaction_index = events.index(compaction_events[0])
+    assert any(
+        row["type"] == "new_response" for row in events[compaction_index + 1 :]
+    )
     persisted_state = asyncio.run(
         manager.get_graph_state(
             session_id="session-compaction-live",
