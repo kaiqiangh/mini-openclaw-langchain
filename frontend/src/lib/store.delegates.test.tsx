@@ -131,6 +131,34 @@ describe("delegate store wiring", () => {
     expect(apiMocks.getDelegateDetail).toHaveBeenCalledTimes(1);
   });
 
+  it("does not restart delegate-list polling when delegate state is unchanged", async () => {
+    apiMocks.listDelegates.mockResolvedValue({
+      delegates: [
+        {
+          delegate_id: "del_running",
+          role: "researcher",
+          task: "Summarize memory",
+          status: "running",
+          sub_session_id: "sub_running",
+          created_at: 1,
+        },
+      ],
+    });
+
+    renderHook(() => useAppStore(), { wrapper });
+
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await flushMicrotasks(2);
+    });
+
+    expect(apiMocks.listDelegates.mock.calls.length).toBeLessThanOrEqual(4);
+  });
+
   it("does not leak old-session delegate data during a session switch", async () => {
     const oldDelegateList = deferred<{
       delegates: Array<{

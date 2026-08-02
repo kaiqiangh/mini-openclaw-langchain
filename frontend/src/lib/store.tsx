@@ -121,6 +121,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const delegatePollInFlightRef = useRef(false);
   const delegateDetailsRef = useRef<Record<string, DelegateDetail>>({});
   const delegateDetailAttemptsRef = useRef<Record<string, number>>({});
+  const delegatePollingStateRef = useRef({
+    isStreaming: false,
+    delegates: [] as DelegateSummary[],
+    detailById: {} as Record<string, DelegateDetail>,
+    hydrated: false,
+  });
+  delegatePollingStateRef.current = {
+    isStreaming,
+    delegates: delegateSummaries,
+    detailById: delegateDetailsById,
+    hydrated: delegatesHydrated,
+  };
 
   const delegates = useMemo(
     () => buildDelegateViewModels(delegateSummaries, delegateDetailsById),
@@ -1208,14 +1220,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!initialized) return;
     if (!currentSessionId) return;
     if (sessionsScope === "archived") return;
-    if (
-      !shouldPollDelegates({
-        isStreaming,
-        delegates: delegateSummaries,
-        detailById: delegateDetailsById,
-        hydrated: delegatesHydrated,
-      })
-    ) {
+    if (!shouldPollDelegates(delegatePollingStateRef.current)) {
       return;
     }
 
@@ -1223,6 +1228,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const isCancelled = () => cancelled;
 
     const poll = async () => {
+      if (!shouldPollDelegates(delegatePollingStateRef.current)) {
+        return;
+      }
       if (delegatePollInFlightRef.current) {
         return;
       }
@@ -1254,8 +1262,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [
     currentAgentId,
     currentSessionId,
-    delegateDetailsById,
-    delegateSummaries,
     delegatesHydrated,
     initialized,
     isStreaming,
