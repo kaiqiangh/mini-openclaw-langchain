@@ -141,12 +141,10 @@ class DelegateRegistry:
             state.task_ref = task_ref
 
     def mark_completed(self, delegate_id: str, result: dict[str, Any]) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "completed"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.result_summary = result.get("summary", "")
         state.steps_completed = result.get("steps", 0)
         state.tools_used = result.get("tools_used", [])
@@ -155,23 +153,19 @@ class DelegateRegistry:
         self._persist_config(state)
 
     def mark_failed(self, delegate_id: str, error_message: str) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "failed"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = error_message
         self._persist_error(state, error_message)
         self._persist_config(state)
 
     def mark_timeout(self, delegate_id: str) -> None:
-        state = self._delegates.get(delegate_id)
+        state = self._claim_terminal(delegate_id)
         if not state:
             return
         state.status = "timeout"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = f"Sub-agent exceeded timeout ({state.timeout_seconds}s)"
         self._persist_error(
             state, state.error_message
@@ -179,12 +173,10 @@ class DelegateRegistry:
         self._persist_config(state)
 
     def mark_cancelled(self, delegate_id: str) -> None:
-        state = self._delegates.get(delegate_id)
-        if not state or state.status != "running":
+        state = self._claim_terminal(delegate_id)
+        if not state:
             return
         state.status = "cancelled"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
         state.error_message = "Sub-agent execution was cancelled"
         self._persist_error(state, state.error_message)
         self._persist_config(state)
@@ -209,6 +201,14 @@ class DelegateRegistry:
             and d.status == "running"
         ]
         return len(active) < max_count
+
+    def _claim_terminal(self, delegate_id: str) -> DelegateState | None:
+        state = self._delegates.get(delegate_id)
+        if state is None or state.status != "running":
+            return None
+        state.completed_at = time.time()
+        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
+        return state
 
     # -- private helpers -------------------------------------------------------
 
@@ -278,13 +278,7 @@ class DelegateRegistry:
         )
 
     def _mark_stale_timeout(self, state: DelegateState) -> None:
-        state.status = "timeout"
-        state.completed_at = time.time()
-        state.duration_ms = int((state.completed_at - state.created_at) * 1000)
-        timeout_seconds = state.timeout_seconds or 0
-        state.error_message = f"Sub-agent exceeded timeout ({timeout_seconds}s)"
-        self._persist_error(state, state.error_message)
-        self._persist_config(state)
+        self.mark_timeout(state.delegate_id)
 
     def _hydrate_from_disk(
         self,
@@ -355,6 +349,7 @@ class DelegateRegistry:
                 result_dir=config_path.parent,
             )
             self._hydrate_terminal_files(state)
+            self._delegates[state.delegate_id] = state
             if state.status == "running":
                 timeout_seconds = state.timeout_seconds
                 if (
@@ -363,7 +358,6 @@ class DelegateRegistry:
                     and (time.time() - state.created_at) >= timeout_seconds
                 ):
                     self._mark_stale_timeout(state)
-            self._delegates[state.delegate_id] = state
 
     def _hydrate_terminal_files(self, state: DelegateState) -> None:
         if not state.result_dir:

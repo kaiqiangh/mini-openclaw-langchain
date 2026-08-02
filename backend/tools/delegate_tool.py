@@ -212,15 +212,21 @@ def build_delegate_tool(
         content: str,
         delegate_payload: dict[str, Any],
     ) -> None:
-        repository = agent_manager.get_session_repository(agent_id)
-        await repository.append_message(
-            agent_id=agent_id,
-            session_id=session_id,
-            role="assistant",
-            content=content,
-            event_kind="delegate",
-            delegate=delegate_payload,
-        )
+        try:
+            repository = agent_manager.get_session_repository(agent_id)
+            await repository.append_message(
+                agent_id=agent_id,
+                session_id=session_id,
+                role="assistant",
+                content=content,
+                event_kind="delegate",
+                delegate=delegate_payload,
+            )
+        except Exception:
+            logger.exception(
+                "Unable to persist delegate lifecycle event %s",
+                delegate_payload.get("delegate_id", "unknown"),
+            )
 
     async def _run_sub_agent(
         task: str,

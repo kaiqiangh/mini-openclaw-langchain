@@ -306,6 +306,55 @@ def test_delegate_child_runtime_preserves_agent_identity_and_scope(tmp_path: Pat
     assert parent_messages[-1]["delegate"]["status"] == "completed"
 
 
+def test_delegate_lifecycle_event_failure_does_not_change_terminal_status(tmp_path: Path):
+    registry = DelegateRegistry(base_dir=tmp_path)
+    runtime = _runtime_with_delegation({"researcher": ["fetch_url"]})
+    runtime.root_dir = tmp_path / "workspaces" / "alpha"
+    runtime.root_dir.mkdir(parents=True, exist_ok=True)
+
+    class _Repository:
+        async def append_message(self, **kwargs):
+            raise RuntimeError("parent session unavailable")
+
+    class _GraphRuntime:
+        async def invoke(self, request):
+            return SimpleNamespace(
+                messages=[SimpleNamespace(type="assistant", content="Done")],
+                token_usage={},
+            )
+
+    am = MagicMock()
+    am.get_runtime.return_value = runtime
+    am.get_existing_runtime.return_value = runtime
+    am.get_session_repository.return_value = _Repository()
+    am.graph_registry.resolve.return_value = _GraphRuntime()
+
+    tool = build_delegate_tool(
+        agent_manager=am,
+        registry=registry,
+        base_dir=tmp_path,
+        context=_ctx(tmp_path, agent_id="alpha"),
+    )
+
+    async def _exercise():
+        payload = _unwrap_success(
+            await tool.ainvoke(
+                {
+                    "task": "Investigate APIs",
+                    "role": "researcher",
+                    "allowed_tools": ["fetch_url"],
+                }
+            )
+        )
+        state = registry.get_status(payload["delegate_id"])
+        assert state is not None and state.task_ref is not None
+        await state.task_ref
+        return state
+
+    state = asyncio.run(_exercise())
+    assert state.status == "completed"
+
+
 def test_delegate_ainvoke_schedules_background_subagent(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     runtime = _runtime_with_delegation(

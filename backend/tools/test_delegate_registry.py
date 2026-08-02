@@ -98,6 +98,21 @@ def test_mark_failed(tmp_path: Path):
     assert "TimeoutError" in status.error_message
 
 
+def test_terminal_delegate_state_cannot_be_overwritten(tmp_path: Path):
+    registry = DelegateRegistry(base_dir=tmp_path)
+    reg = registry.register(
+        "alpha", "sess_1", "Task", "researcher", ["web_search"], [], 30
+    )
+
+    registry.mark_timeout(reg["delegate_id"])
+    registry.mark_completed(reg["delegate_id"], {"summary": "late result"})
+    registry.mark_failed(reg["delegate_id"], "late failure")
+
+    status = registry.get_status(reg["delegate_id"])
+    assert status.status == "timeout"
+    assert status.error_message == "Sub-agent exceeded timeout (30s)"
+
+
 def test_max_per_session_enforced(tmp_path: Path):
     registry = DelegateRegistry(base_dir=tmp_path)
     registry.register("alpha", "sess_1", "T1", "r", ["w"], [], 30)
