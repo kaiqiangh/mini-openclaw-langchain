@@ -318,6 +318,8 @@ async def chat(agent_id: str, request: ChatRequest) -> Any:
                     if str(item).strip()
                 ],
                 "usage": result.get("usage", {}),
+                "compaction_degradation": result.get("compaction_degradation"),
+                "last_checkpoint_id": result.get("last_checkpoint_id"),
             }
         }
 

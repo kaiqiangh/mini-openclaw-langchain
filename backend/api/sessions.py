@@ -540,8 +540,23 @@ async def trigger_compact(
         raise ApiError(status_code=404, code="not_found", message=str(exc)) from exc
 
     messages = list(snapshot.messages) if snapshot.messages else []
-    from langchain_core.messages import messages_from_dict
-    lc_messages = messages_from_dict(messages) if messages else []
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    lc_messages = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = str(message.get("content", ""))
+        if str(message.get("role", "")).strip().lower() == "assistant":
+            tool_calls = message.get("tool_calls")
+            lc_messages.append(
+                AIMessage(
+                    content=content,
+                    tool_calls=tool_calls if isinstance(tool_calls, list) else [],
+                )
+            )
+        else:
+            lc_messages.append(HumanMessage(content=content))
 
     result = await pipeline.compact_round(
         lc_messages,
@@ -552,19 +567,24 @@ async def trigger_compact(
     )
 
     if result.was_compacted:
-        from langchain_core.messages import messages_to_dict
-        compacted_dicts = messages_to_dict(result.messages)
-        # Persist the compacted messages back via the session repository
         await repository.update_state(
             agent_id=agent_id,
             session_id=session_id,
-            values={"model_messages": compacted_dicts},
+            values={
+                "messages": compacted_history_entries(result.messages),
+                "model_messages": list(result.messages),
+                "input_messages": list(result.messages),
+                "compaction_applied": True,
+                "compaction_degradation": result.degradation,
+                "last_checkpoint_id": result.checkpoint_id,
+            },
         )
 
     return {
         "data": {
             "compacted": result.was_compacted,
             "checkpoint_id": result.checkpoint_id,
+            "degradation": result.degradation,
             "messages_before": len(messages),
             "messages_after": len(result.messages),
         }
@@ -618,9 +638,9 @@ async def rewind_session(
         session_id=session_id,
         values={
             "messages": compacted_history_entries(messages),
-            "model_messages": [],
-            "input_messages": [],
-            "compaction_applied": False,
+            "model_messages": list(messages),
+            "input_messages": list(messages),
+            "compaction_applied": True,
             "compaction_degradation": None,
             "last_checkpoint_id": body.checkpoint_id,
         },

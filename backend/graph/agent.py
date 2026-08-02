@@ -583,6 +583,8 @@ class AgentManager:
                 "selected_skills": result.selected_skills,
                 "usage": result.usage,
                 "run_id": result.run_id,
+                "compaction_degradation": result.compaction_degradation,
+                "last_checkpoint_id": result.last_checkpoint_id,
             }
         return {
             "text": result.text,
@@ -590,6 +592,8 @@ class AgentManager:
             "selected_skills": result.selected_skills,
             "usage": result.usage,
             "run_id": result.run_id,
+            "compaction_degradation": result.compaction_degradation,
+            "last_checkpoint_id": result.last_checkpoint_id,
         }
 
     async def astream(

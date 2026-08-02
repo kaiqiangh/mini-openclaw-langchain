@@ -510,14 +510,18 @@ class CheckpointSessionRepository:
             agent_id=request.agent_id,
             session_id=request.session_id,
             graph_name=request.graph_name,
-            values={
-                "messages": updated_messages,
-                "compressed_context": compressed_context,
-                "live_response": None,
-                "assistant_segments": [],
-                "selected_skill_names": [],
-            },
-        )
+                values={
+                    "messages": updated_messages,
+                    "compressed_context": compressed_context,
+                    "live_response": None,
+                    "assistant_segments": [],
+                    "selected_skill_names": [],
+                    "input_messages": [],
+                    "model_messages": [],
+                    "compaction_applied": False,
+                    "compaction_degradation": None,
+                },
+            )
         history = self._history_with_summary(messages, compressed_context)
         return replace(request, history=history, is_first_turn=is_first_turn)
 
