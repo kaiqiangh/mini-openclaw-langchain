@@ -239,6 +239,7 @@ class TestE2E:
         result = await pipeline.compact_round(messages, run_id="run-1", step=10)
         assert result.was_compacted is True
         assert result.checkpoint_id is not None
+        assert result.degraded is True
         # Even without summary, messages should be reduced
         assert len(result.messages) < len(messages)
         # The drop-only fallback should insert a summary placeholder

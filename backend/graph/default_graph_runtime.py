@@ -328,6 +328,9 @@ class DefaultGraphRuntime(GraphRuntime):
             "loop_count": 0,
             "run_id": "",
             "input_messages": [],
+            "compaction_applied": False,
+            "compaction_degraded": False,
+            "last_checkpoint_id": None,
             "model_messages": [],
             "pending_tool_calls": [],
             "pending_new_response": False,
@@ -916,6 +919,12 @@ class DefaultGraphRuntime(GraphRuntime):
                 "selected_skills": state.get("selected_skill_items", []),
             }
         )
+        if state.get("compaction_applied"):
+            return {
+                "system_prompt": system_prompt,
+                "input_messages": list(state.get("input_messages", [])),
+                "compaction_applied": False,
+            }
         pending_results = list(state.get("pending_delegate_result_injection", []))
         turn_messages = (
             []
@@ -1767,7 +1776,7 @@ class DefaultGraphRuntime(GraphRuntime):
 
         return {}
 
-    def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any]:
+    async def _compact_step(self, state: RuntimeGraphState) -> dict[str, Any]:
         """Compaction node: reduce message count when budget exceeded."""
         runtime = self.services.get_runtime(state["request"].agent_id)
         model_name = runtime.resolve_model_name() if hasattr(runtime, "resolve_model_name") else "gpt-4o"
@@ -1813,32 +1822,30 @@ class DefaultGraphRuntime(GraphRuntime):
             except Exception:
                 pass
 
-        # Run compaction in async context
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        result = loop.run_until_complete(
-            pipeline.compact_round(
-                messages,
-                run_id=state.get("run_id", ""),
-                step=state.get("loop_count", 0),
-                summarize_fn=summarize_fn,
-                agent_id=state["request"].agent_id,
-                session_id=state["request"].session_id,
-            )
+        result = await pipeline.compact_round(
+            messages,
+            run_id=state.get("run_id", ""),
+            step=state.get("loop_count", 0),
+            summarize_fn=summarize_fn,
+            agent_id=state["request"].agent_id,
+            session_id=state["request"].session_id,
         )
 
         # Distill to memory
         if result.summary and result.was_compacted and workspace:
             memory_file = runtime.root_dir / "memory" / "MEMORY.md"
-            loop.run_until_complete(pipeline.distill(result.summary, memory_file=memory_file))
+            await pipeline.distill(result.summary, memory_file=memory_file)
+
+        degraded = bool(
+            getattr(result, "degraded", False)
+            or (result.was_compacted and result.summary is None)
+        )
 
         self._emit("compaction", {
             "checkpoint_id": result.checkpoint_id,
             "was_compacted": result.was_compacted,
+            "degraded": degraded,
+            "mode": "drop_only" if degraded else "summarized",
             "message_count_before": len(messages),
             "message_count_after": len(result.messages),
             "summary": result.summary.summary if result.summary else None,
@@ -1847,6 +1854,8 @@ class DefaultGraphRuntime(GraphRuntime):
         return {
             "input_messages": result.messages,
             "last_checkpoint_id": result.checkpoint_id,
+            "compaction_applied": True,
+            "compaction_degraded": degraded,
             "compaction_deferred": False,
         }
 

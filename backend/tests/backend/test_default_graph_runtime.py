@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -18,6 +19,8 @@ from langchain_core.runnables import RunnableLambda
 from langgraph.types import Command
 
 from graph.agent import AgentManager
+import graph.default_graph_runtime as default_graph_runtime
+from graph.compaction import CompactResult
 from graph.lcel_pipelines import RuntimeLcelPipelines
 from graph.runtime_execution_services import RuntimeCallbackBundle
 from graph.runtime_types import (
@@ -626,6 +629,72 @@ def test_compose_inputs_injects_blocking_delegate_results(tmp_path: Path):
         and "Delegated summary" in message.content
         for message in composed["input_messages"]
     )
+
+
+@pytest.mark.asyncio
+async def test_compaction_node_awaits_and_hands_off_canonical_messages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _seed_base(tmp_path)
+    manager = AgentManager()
+    manager.initialize(tmp_path)
+    graph = manager._runtime_graph()
+    compacted_messages = [HumanMessage(content="canonical compacted state")]
+    calls: list[dict[str, Any]] = []
+
+    class _AsyncPipeline:
+        def __init__(self, **kwargs: Any) -> None:
+            _ = kwargs
+
+        def count_messages_tokens(self, messages: list[Any]) -> int:
+            return len(messages)
+
+        async def compact_round(self, messages: list[Any], **kwargs: Any) -> CompactResult:
+            calls.append({"messages": messages, **kwargs})
+            return CompactResult(
+                messages=compacted_messages,
+                summary=None,
+                checkpoint_id="checkpoint-1",
+                was_compacted=True,
+                degraded=True,
+            )
+
+    monkeypatch.setattr(default_graph_runtime, "CompactionPipeline", _AsyncPipeline)
+    request = RuntimeRequest(
+        message="continue",
+        history=[],
+        session_id="session-1",
+        agent_id="default",
+    )
+
+    compacted = await graph._compact_step(
+        {
+            "request": request,
+            "run_id": "run-1",
+            "loop_count": 2,
+            "input_messages": [HumanMessage(content="stale state")],
+        }
+    )
+
+    assert calls[0]["agent_id"] == "default"
+    assert calls[0]["session_id"] == "session-1"
+    assert compacted["input_messages"] == compacted_messages
+    assert compacted["last_checkpoint_id"] == "checkpoint-1"
+    assert compacted["compaction_applied"] is True
+    assert compacted["compaction_degraded"] is True
+
+    composed = graph._compose_inputs(
+        {
+            "base_system_prompt": "base prompt",
+            "selected_skill_items": [],
+            "messages": [{"role": "user", "content": "stale history"}],
+            "model_messages": [AIMessage(content="stale model state")],
+            **compacted,
+        }
+    )
+
+    assert composed["input_messages"] == compacted_messages
+    assert composed["compaction_applied"] is False
 
 
 def test_compose_inputs_does_not_reinject_consumed_delegate_results(tmp_path: Path):

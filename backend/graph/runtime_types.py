@@ -187,6 +187,9 @@ class RuntimeGraphState(TypedDict, total=False):
     run_id: str
     active_model: str
     input_messages: list[BaseMessage]
+    compaction_applied: bool
+    compaction_degraded: bool
+    last_checkpoint_id: str | None
     model_messages: list[BaseMessage]
     pending_tool_calls: list[dict[str, Any]]
     pending_new_response: bool
