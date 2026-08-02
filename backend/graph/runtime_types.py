@@ -15,6 +15,7 @@ from tools.contracts import ErrorCode
 
 RuntimeEventType = Literal[
     "agent_update",
+    "compaction",
     "done",
     "error",
     "new_response",

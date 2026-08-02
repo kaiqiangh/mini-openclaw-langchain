@@ -251,6 +251,9 @@ class DefaultGraphRuntime(GraphRuntime):
             else:
                 await session_repository.fail_stream(prepared_request)
             return result
+        except Exception:
+            await session_repository.fail_stream(prepared_request)
+            raise
         finally:
             self._tool_runners.pop(id(prepared_request), None)
 

@@ -513,6 +513,11 @@ class CheckpointSessionRepository:
 
         key = self._stream_key(request)
         self._streams.pop(key, None)
+        pending_live_response = {
+            "run_id": "__pending__",
+            "content": "",
+            "timestamp_ms": int(time.time() * 1000),
+        }
 
         if request.resume_same_turn and messages:
             last = messages[-1]
@@ -525,7 +530,7 @@ class CheckpointSessionRepository:
                     session_id=request.session_id,
                     graph_name=request.graph_name,
                     values={
-                        "live_response": None,
+                        "live_response": pending_live_response,
                         "assistant_segments": [],
                         "selected_skill_names": [],
                     },
@@ -547,7 +552,7 @@ class CheckpointSessionRepository:
             values={
                 "messages": updated_messages,
                 "compressed_context": compressed_context,
-                "live_response": None,
+                "live_response": pending_live_response,
                 "assistant_segments": [],
                 "selected_skill_names": [],
                 "input_messages": [],
