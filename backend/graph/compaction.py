@@ -48,6 +48,7 @@ _MODEL_WINDOWS: dict[str, int] = {
     "qwen-plus": 131_072,
     "deepseek-v4-flash": 1_000_000,
 }
+_MAX_SUMMARY_MESSAGES = 200
 
 
 class CompactionSummary(BaseModel):
@@ -336,6 +337,19 @@ class CompactionPipeline:
 
         return remaining, dropped
 
+    @staticmethod
+    def _bounded_summary_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+        """Keep summarization bounded while preserving the full rewind checkpoint."""
+        if len(messages) <= _MAX_SUMMARY_MESSAGES:
+            return messages
+        system_messages = [
+            message for message in messages if isinstance(message, SystemMessage)
+        ]
+        non_system = [
+            message for message in messages if not isinstance(message, SystemMessage)
+        ]
+        return system_messages + non_system[-_MAX_SUMMARY_MESSAGES:]
+
     async def compact_round(
         self,
         messages: list[BaseMessage],
@@ -367,10 +381,11 @@ class CompactionPipeline:
         summary_text = ""
         degradation: CompactionDegradation | None = None
         try:
+            summary_messages = self._bounded_summary_messages(messages)
             if summarize_fn is not None:
-                summary = await summarize_fn(messages)
+                summary = await summarize_fn(summary_messages)
             else:
-                summary = await self.llm_summarize(messages)
+                summary = await self.llm_summarize(summary_messages)
             summary_text = summary.summary if summary else ""
         except Exception:
             summary_text = (

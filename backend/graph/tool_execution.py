@@ -197,6 +197,102 @@ class ToolExecutionService:
             },
         )
 
+    async def deny_pending(
+        self,
+        tool_calls: list[dict[str, Any]],
+        *,
+        reason: str,
+    ) -> tuple[list[ToolExecutionEnvelope], list[Any]]:
+        """Return policy denials while still running the shared pre-tool hook."""
+        from langchain_core.messages import ToolMessage
+
+        envelopes: list[ToolExecutionEnvelope] = []
+        tool_messages: list[Any] = []
+        for index, call in enumerate(tool_calls):
+            tool_name = str(call.get("name", "unknown")).strip() or "unknown"
+            tool_call_id = (
+                str(call.get("id", "")).strip()
+                or str(call.get("tool_call_id", "")).strip()
+                or f"{tool_name}-{index}"
+            )
+            args = call.get("args", {})
+            parsed_args = args if isinstance(args, dict) else {}
+            denial_reason = reason
+            if self.hook_engine and self.hook_engine.is_enabled:
+                hook_event = HookEvent(
+                    hook_type="pre_tool_use",
+                    agent_id=self.agent_id,
+                    session_id=self.session_id,
+                    run_id=self.run_id,
+                    timestamp=_hook_timestamp(),
+                    payload={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                        "policy_denial": reason,
+                    },
+                )
+                hook_result = self.hook_engine.dispatch_sync(hook_event)
+                self._append_hook_audit_event(
+                    hook_event=hook_event,
+                    hook_type="pre_tool_use",
+                    status="allow" if hook_result.allow else "deny",
+                    details={
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "input": parsed_args,
+                        "reason": hook_result.reason or reason,
+                    },
+                )
+                if not hook_result.allow:
+                    denial_reason = f"Hook denied: {hook_result.reason}"
+
+            message = f"Tool '{tool_name}' was skipped because {denial_reason}"
+            raw_output = _failure_payload(
+                tool_name=tool_name,
+                message=message,
+                code="E_POLICY_DENIED",
+                details={"tool_call_id": tool_call_id},
+            )
+            envelopes.append(
+                ToolExecutionEnvelope(
+                    tool=tool_name,
+                    tool_call_id=tool_call_id,
+                    args=parsed_args,
+                    output=raw_output,
+                    raw_output=raw_output,
+                    ok=False,
+                    duration_ms=0,
+                    error_code="E_POLICY_DENIED",
+                    error_message=message,
+                    details={"tool_call_id": tool_call_id, "reason": denial_reason},
+                )
+            )
+            tool_messages.append(
+                ToolMessage(
+                    content=raw_output,
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
+            )
+            if self.audit_store is not None:
+                self.audit_store.append_step(
+                    agent_id=self.agent_id,
+                    run_id=self.run_id,
+                    session_id=self.session_id,
+                    trigger_type=self.trigger_type,
+                    event="tool_policy_denied",
+                    hook_type="pre_tool_use",
+                    status="deny",
+                    details={
+                        "tool": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "reason": denial_reason,
+                    },
+                )
+        return envelopes, tool_messages
+
     async def execute_pending(
         self,
         tool_calls: list[dict[str, Any]],

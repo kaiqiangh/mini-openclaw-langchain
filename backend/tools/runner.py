@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from typing import Any
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -182,13 +183,18 @@ class ToolRunner:
             return result
         if bool(getattr(tool, "retry_safe", False)):
             return result
-        result.error.retryable = False
-        result.error.details = {
-            **result.error.details,
-            "outcome": "unresolved",
-            "retry_suppressed": True,
-        }
-        return result
+        return replace(
+            result,
+            error=replace(
+                result.error,
+                retryable=False,
+                details={
+                    **result.error.details,
+                    "outcome": "unresolved",
+                    "retry_suppressed": True,
+                },
+            ),
+        )
 
     def run_tool(
         self,

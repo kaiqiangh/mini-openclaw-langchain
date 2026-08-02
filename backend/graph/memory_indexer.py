@@ -17,7 +17,11 @@ from config import (
     load_runtime_config,
 )
 from graph.embedding_client import EmbeddingClient, cosine_similarity
-from graph.retrieval_store import RetrievalChunk, SQLiteRetrievalStore
+from graph.retrieval_store import (
+    RetrievalChunk,
+    SQLiteRetrievalStore,
+    normalize_query_terms,
+)
 
 _MAX_MEMORY_TOP_K = 20
 _MAX_MEMORY_BYTES = 5 * 1024 * 1024
@@ -341,7 +345,7 @@ class MemoryIndexer:
         )
         storage = self._resolve_storage_settings()
 
-        query_terms = {item for item in query.lower().split() if item}
+        query_terms = normalize_query_terms(query)
         query_embedding: list[float] = []
         try:
             config = load_config(self.config_base_dir)

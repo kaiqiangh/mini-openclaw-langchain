@@ -50,6 +50,30 @@ def test_memory_indexer_honors_top_k_and_chunk_settings(tmp_path: Path):
     assert len(rows) == 1
 
 
+def test_memory_indexer_normalizes_punctuation_in_lexical_queries(tmp_path: Path):
+    (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "storage").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.json").write_text(
+        '{"retrieval":{"storage":{"engine":"json"}}}\n', encoding="utf-8"
+    )
+    (tmp_path / "memory" / "MEMORY.md").write_text(
+        "BSC meme-token launch notes", encoding="utf-8"
+    )
+    settings = RetrievalDomainConfig(
+        top_k=1,
+        semantic_weight=0.0,
+        lexical_weight=1.0,
+        chunk_size=64,
+        chunk_overlap=0,
+    )
+    indexer = MemoryIndexer(tmp_path, config_base_dir=tmp_path)
+
+    rows = indexer.retrieve("meme-token", settings=settings)
+
+    assert rows
+    assert rows[0]["score"] == 2.0
+
+
 def test_memory_indexer_async_retrieval_is_bounded_and_offloads_work(tmp_path: Path):
     (tmp_path / "memory").mkdir(parents=True, exist_ok=True)
     (tmp_path / "storage").mkdir(parents=True, exist_ok=True)

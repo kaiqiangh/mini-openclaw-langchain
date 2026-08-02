@@ -277,6 +277,29 @@ class TestE2E:
         assert any("Fake summary" in str(m.content) for m in result.messages)
 
     @pytest.mark.asyncio
+    async def test_compaction_bounds_summarizer_input_but_preserves_checkpoint(
+        self, tmp_path: Path
+    ):
+        pipeline = CompactionPipeline(model_name="gpt-4o", checkpoint_dir=tmp_path)
+        long_content = "x" * 10_000
+        messages = [SystemMessage(content="sys")] + [
+            HumanMessage(content=f"msg {i}: {long_content}") for i in range(220)
+        ]
+        observed: list[int] = []
+
+        async def fake_summarize(msgs):
+            observed.append(len(msgs))
+            return CompactionSummary(summary="bounded")
+
+        result = await pipeline.compact_round(
+            messages, run_id="bounded-summary", summarize_fn=fake_summarize
+        )
+
+        assert observed == [201]
+        checkpoint = await pipeline.load_checkpoint(result.checkpoint_id or "")
+        assert len(checkpoint) == len(messages)
+
+    @pytest.mark.asyncio
     async def test_empty_summary_is_explicit_drop_only(self, tmp_path: Path):
         pipeline = CompactionPipeline(
             model_name="gpt-4o",

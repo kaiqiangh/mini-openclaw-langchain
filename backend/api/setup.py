@@ -1,5 +1,4 @@
 """Setup API with bootstrap access and post-configuration admin auth."""
-
 from __future__ import annotations
 
 import os
@@ -75,17 +74,9 @@ def _persist_provider_config(
     profiles[profile_id] = {
         "provider_id": provider,
         "driver": "openai_compatible",
-        "base_url": base_url
-        or (
-            "https://api.deepseek.com"
-            if provider == "deepseek"
-            else "https://api.openai.com/v1"
-        ),
-        "model": model
-        or ("deepseek-v4-flash" if provider == "deepseek" else "gpt-4o-mini"),
-        "api_key_env": (
-            "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
-        ),
+        "base_url": base_url or ("https://api.deepseek.com" if provider == "deepseek" else "https://api.openai.com/v1"),
+        "model": model or ("deepseek-v4-flash" if provider == "deepseek" else "gpt-4o-mini"),
+        "api_key_env": "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY",
         "default_headers": {},
         "timeout_seconds": 60,
     }
@@ -95,18 +86,14 @@ def _persist_provider_config(
         llm_defaults["default"] = profile_id
 
     tmp_path = config_path.with_suffix(config_path.suffix + ".tmp")
-    tmp_path.write_text(
-        json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8"
-    )
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
     tmp_path.replace(config_path)
 
 
 @router.get("/setup/status")
 async def get_setup_status() -> dict[str, Any]:
     if _BASE_DIR is None:
-        raise ApiError(
-            status_code=500, code="not_initialized", message="Base dir not set"
-        )
+        raise ApiError(status_code=500, code="not_initialized", message="Base dir not set")
 
     admin_token = (os.getenv("APP_ADMIN_TOKEN", "") or "").strip()
 
@@ -141,9 +128,7 @@ async def configure_system(
     response: Response = None,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     if _BASE_DIR is None:
-        raise ApiError(
-            status_code=500, code="not_initialized", message="Base dir not set"
-        )
+        raise ApiError(status_code=500, code="not_initialized", message="Base dir not set")
 
     _require_single_line("admin_token", req.admin_token)
     _require_single_line("llm_api_key", req.llm_api_key)

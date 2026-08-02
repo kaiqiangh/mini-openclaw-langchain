@@ -35,15 +35,16 @@ class PromptBuilder:
         return text[:max_chars] + "\n...[truncated]", True
 
     @staticmethod
-    def _read_or_missing(path: Path) -> tuple[str, bool, bool]:
+    def _read_or_missing(path: Path, max_chars: int) -> tuple[str, bool, bool]:
         if not path.exists():
             return f"[MISSING FILE: {path}]", False, True
-        text = path.read_text(encoding="utf-8")
-        return text, False, False
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read(max_chars + 1)
+        return text[:max_chars], len(text) > max_chars, False
 
     def _build_sections(
-        self, base_dir: Path, rag_mode: bool
-    ) -> list[tuple[str, str, str]]:
+        self, base_dir: Path, rag_mode: bool, max_chars: int
+    ) -> list[tuple[str, str, str, bool]]:
         components: list[tuple[str, str, Path | None]] = [
             ("Skills Snapshot", "SKILLS_SNAPSHOT.md", base_dir / "SKILLS_SNAPSHOT.md"),
             ("Soul", "workspace/SOUL.md", base_dir / "workspace" / "SOUL.md"),
@@ -76,17 +77,19 @@ class PromptBuilder:
                 )
             )
 
-        sections: list[tuple[str, str, str]] = []
+        sections: list[tuple[str, str, str, bool]] = []
         for label, rel_path, abs_path in components:
             if rag_mode and rel_path == "memory/MEMORY.md":
-                sections.append((label, rel_path, RAG_GUIDANCE.strip()))
+                sections.append((label, rel_path, RAG_GUIDANCE.strip(), False))
                 continue
 
             assert abs_path is not None
-            content, _, missing = self._read_or_missing(abs_path)
+            content, was_truncated, missing = self._read_or_missing(
+                abs_path, max_chars
+            )
             if missing:
                 content = f"[MISSING FILE: {rel_path}]"
-            sections.append((label, rel_path, content))
+            sections.append((label, rel_path, content, was_truncated))
 
         return sections
 
@@ -113,11 +116,15 @@ class PromptBuilder:
             )
             return empty_pack
 
-        sections = self._build_sections(base_dir=base_dir, rag_mode=rag_mode)
+        sections = self._build_sections(
+            base_dir=base_dir,
+            rag_mode=rag_mode,
+            max_chars=max(1, int(runtime.bootstrap_max_chars)),
+        )
 
         source_mtimes: dict[str, float] = {}
         source_sizes: dict[str, int] = {}
-        for _, rel_path, _ in sections:
+        for _, rel_path, _, _ in sections:
             abs_path = base_dir / rel_path
             try:
                 stat = abs_path.stat()
@@ -137,7 +144,7 @@ class PromptBuilder:
                 str(runtime.bootstrap_total_max_chars),
                 *(
                     f"{rel_path}:{source_mtimes.get(rel_path, -1.0)}:{source_sizes.get(rel_path, -1)}:{self._digest([content])}"
-                    for _, rel_path, content in sections
+                    for _, rel_path, content, _ in sections
                 ),
             ]
         )
@@ -150,10 +157,13 @@ class PromptBuilder:
         rendered_parts: list[str] = []
         truncated_files: list[str] = []
 
-        for label, rel_path, content in sections:
-            content, was_truncated = self.truncate_component(
-                content, runtime.bootstrap_max_chars
-            )
+        for label, rel_path, content, was_truncated in sections:
+            if was_truncated:
+                content = content + "\n...[truncated]"
+            else:
+                content, was_truncated = self.truncate_component(
+                    content, runtime.bootstrap_max_chars
+                )
             if was_truncated:
                 truncated_files.append(rel_path)
             rendered_parts.append(f"<!-- {label} -->\n{content}")

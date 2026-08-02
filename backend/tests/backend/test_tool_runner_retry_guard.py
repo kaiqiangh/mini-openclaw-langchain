@@ -117,6 +117,36 @@ def test_tool_runner_suppresses_ambiguous_retryable_failure(tmp_path: Path):
     }
 
 
+def test_tool_runner_does_not_mutate_tool_failure_when_suppressing_retry(
+    tmp_path: Path,
+):
+    runner = ToolRunner(policy_engine=ToolPolicyEngine())
+    context = ToolContext(
+        workspace_root=tmp_path,
+        trigger_type="chat",
+        run_id="run-immutable",
+        session_id="session-immutable",
+    )
+    original = ToolResult.failure(
+        tool_name="ambiguous_retry",
+        code="E_TIMEOUT",
+        message="completion is unknown",
+        duration_ms=1,
+        retryable=True,
+    )
+
+    class _CapturedTool(_AmbiguousRetryTool):
+        def run(self, args, context):  # type: ignore[no-untyped-def]
+            _ = args, context
+            return original
+
+    result = runner.run_tool(_CapturedTool(), args={}, context=context)
+
+    assert result is not original
+    assert result.error is not None and result.error.retryable is False
+    assert original.error is not None and original.error.retryable is True
+
+
 def test_tool_runner_preserves_declared_idempotent_retry(tmp_path: Path):
     runner = ToolRunner(policy_engine=ToolPolicyEngine())
     context = ToolContext(

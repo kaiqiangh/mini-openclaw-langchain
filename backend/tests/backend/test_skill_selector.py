@@ -189,3 +189,17 @@ def test_skill_selector_clamps_requested_result_count(tmp_path: Path):
     )
 
     assert len(selected) == 10
+
+
+def test_skill_selector_bounds_workspace_cache(tmp_path: Path):
+    roots = []
+    for index in range(3):
+        root = tmp_path / f"agent-{index}"
+        _write_skill(root, "skill", "BSC meme token discovery", "Use for BSC.")
+        roots.append(root)
+
+    selector = SkillSelector(max_cache_entries=2)
+    for root in roots:
+        selector.select(base_dir=root, message="BSC meme tokens", history=[])
+
+    assert len(selector._descriptor_cache) == 2

@@ -330,6 +330,7 @@ class AppConfig:
 
 from utils.dict_ops import deep_merge as _deep_merge, deep_diff as _deep_diff
 
+
 _LLM_ROUTE_KEYS = {
     "default",
     "fallbacks",
@@ -360,28 +361,15 @@ def _validate_runtime_payload_shape(payload: dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         raise ValueError("runtime config must be an object")
     sections = {
-        "agent_runtime",
-        "llm_runtime",
-        "retrieval",
-        "tool_retry_guard",
-        "tool_network",
-        "tool_timeouts",
-        "tool_output_limits",
-        "tool_execution",
-        "autonomous_tools",
-        "scheduler",
-        "heartbeat",
-        "cron",
-        "hooks",
-        "delegation",
+        "agent_runtime", "llm_runtime", "retrieval", "tool_retry_guard",
+        "tool_network", "tool_timeouts", "tool_output_limits", "tool_execution",
+        "autonomous_tools", "scheduler", "heartbeat", "cron", "hooks", "delegation",
     }
     for key in sections:
         if key in payload and not isinstance(payload[key], dict):
             raise ValueError(f"{key} must be an object")
     injection = payload.get("injection_mode")
-    if injection is not None and injection not in {
-        item.value for item in InjectionMode
-    }:
+    if injection is not None and injection not in {item.value for item in InjectionMode}:
         raise ValueError("injection_mode is invalid")
     retrieval = payload.get("retrieval", {})
     for domain in ("memory", "knowledge"):
@@ -389,9 +377,7 @@ def _validate_runtime_payload_shape(payload: dict[str, Any]) -> None:
         if not isinstance(section, dict):
             raise ValueError(f"retrieval.{domain} must be an object")
         for key in ("top_k", "chunk_size", "chunk_overlap"):
-            if key in section and (
-                not isinstance(section[key], int) or isinstance(section[key], bool)
-            ):
+            if key in section and (not isinstance(section[key], int) or isinstance(section[key], bool)):
                 raise ValueError(f"retrieval.{domain}.{key} must be an integer")
         if "top_k" in section and section["top_k"] < 1:
             raise ValueError(f"retrieval.{domain}.top_k must be positive")
@@ -404,9 +390,7 @@ def _validate_runtime_payload_shape(payload: dict[str, Any]) -> None:
             and "chunk_overlap" in section
             and section["chunk_overlap"] >= section["chunk_size"]
         ):
-            raise ValueError(
-                f"retrieval.{domain}.chunk_overlap must be smaller than chunk_size"
-            )
+            raise ValueError(f"retrieval.{domain}.chunk_overlap must be smaller than chunk_size")
         for key in ("semantic_weight", "lexical_weight"):
             if key in section and (
                 not isinstance(section[key], (int, float))
@@ -418,18 +402,12 @@ def _validate_runtime_payload_shape(payload: dict[str, Any]) -> None:
     terminal = tool_execution.get("terminal", {})
     if not isinstance(terminal, dict):
         raise ValueError("tool_execution.terminal must be an object")
-    if "sandbox_mode" in terminal and terminal["sandbox_mode"] not in {
-        item.value for item in TerminalSandboxMode
-    }:
+    if "sandbox_mode" in terminal and terminal["sandbox_mode"] not in {item.value for item in TerminalSandboxMode}:
         raise ValueError("tool_execution.terminal.sandbox_mode is invalid")
-    if "command_policy_mode" in terminal and terminal["command_policy_mode"] not in {
-        item.value for item in TerminalCommandPolicyMode
-    }:
+    if "command_policy_mode" in terminal and terminal["command_policy_mode"] not in {item.value for item in TerminalCommandPolicyMode}:
         raise ValueError("tool_execution.terminal.command_policy_mode is invalid")
     network = payload.get("tool_network", {})
-    if "block_private_networks" in network and not isinstance(
-        network["block_private_networks"], bool
-    ):
+    if "block_private_networks" in network and not isinstance(network["block_private_networks"], bool):
         raise ValueError("tool_network.block_private_networks must be boolean")
 
 
@@ -544,7 +522,9 @@ def _parse_llm_fallback_policy_patch(
     if strict:
         unknown = sorted(set(value.keys()) - _LLM_FALLBACK_POLICY_KEYS)
         if unknown:
-            raise ValueError(f"{context} has unknown keys: {', '.join(unknown)}")
+            raise ValueError(
+                f"{context} has unknown keys: {', '.join(unknown)}"
+            )
 
     def _normalize_policy_value(
         key: str,
@@ -557,7 +537,9 @@ def _parse_llm_fallback_policy_patch(
             return None
         if strict and normalized not in allowed:
             allowed_values = ", ".join(sorted(allowed))
-            raise ValueError(f"{context}.{key} must be one of: {allowed_values}")
+            raise ValueError(
+                f"{context}.{key} must be one of: {allowed_values}"
+            )
         if normalized in allowed:
             return normalized
         return None
@@ -597,7 +579,9 @@ def _parse_llm_route_patch(
     if strict:
         unknown = sorted(set(value.keys()) - _LLM_ROUTE_KEYS)
         if unknown:
-            raise ValueError(f"{context} has unknown keys: {', '.join(unknown)}")
+            raise ValueError(
+                f"{context} has unknown keys: {', '.join(unknown)}"
+            )
 
     default_profile: str | None = None
     if "default" in value:
@@ -674,7 +658,10 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
     command_policy_mode_value = (
         command_policy_mode.value
         if isinstance(command_policy_mode, TerminalCommandPolicyMode)
-        else (str(command_policy_mode).strip() or TerminalCommandPolicyMode.AUTO.value)
+        else (
+            str(command_policy_mode).strip()
+            or TerminalCommandPolicyMode.AUTO.value
+        )
     )
     payload = {
         "rag_mode": runtime.rag_mode,
@@ -786,7 +773,9 @@ def _runtime_to_payload(runtime: RuntimeConfig) -> dict[str, Any]:
             "max_timeout_seconds": runtime.delegation.max_timeout_seconds,
             "allowed_tool_scopes": {
                 str(role).strip(): [
-                    str(tool).strip() for tool in tools if str(tool).strip()
+                    str(tool).strip()
+                    for tool in tools
+                    if str(tool).strip()
                 ]
                 for role, tools in runtime.delegation.allowed_tool_scopes.items()
                 if str(role).strip()
@@ -863,7 +852,10 @@ def _runtime_from_payload(
         is_explicit: bool,
     ) -> TerminalCommandPolicyMode:
         if is_explicit:
-            raw = str(value).strip().lower() or TerminalCommandPolicyMode.AUTO.value
+            raw = (
+                str(value).strip().lower()
+                or TerminalCommandPolicyMode.AUTO.value
+            )
             try:
                 return TerminalCommandPolicyMode(raw)
             except ValueError:
@@ -1182,9 +1174,9 @@ def _coerce_group_model_payload(
     model_payload: Any,
 ) -> dict[str, Any] | None:
     shared_payload = {
-        "provider_id": str(provider_payload.get("provider_id", provider_key))
-        .strip()
-        .lower()
+        "provider_id": str(
+            provider_payload.get("provider_id", provider_key)
+        ).strip().lower()
         or provider_key.lower(),
         "driver": provider_payload.get("driver", LLMDriver.OPENAI_COMPATIBLE.value),
         "base_url": provider_payload.get("base_url", ""),
@@ -1442,7 +1434,9 @@ def save_runtime_config_overlay_to_path(
                 raw = json.loads(config_path.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     existing = {
-                        key: value for key, value in raw.items() if key not in candidate
+                        key: value
+                        for key, value in raw.items()
+                        if key not in candidate
                     }
             except (OSError, json.JSONDecodeError):
                 existing = {}

@@ -2,7 +2,9 @@
 
 ## Authentication
 
-All `/api/v1/*` routes (except `/health`, `/ready`) require `APP_ADMIN_TOKEN`.
+All `/api/v1/*` routes require `APP_ADMIN_TOKEN`, except `/health`, `/ready`, and
+`/setup/status`. `/setup/configure` is also public only until the first admin
+token has been configured.
 
 Accepted forms:
 - `Authorization: Bearer <token>`

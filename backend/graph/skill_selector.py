@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -85,8 +86,11 @@ class _SkillDescriptor:
 
 
 class SkillSelector:
-    def __init__(self) -> None:
-        self._descriptor_cache: dict[str, tuple[str, list[_SkillDescriptor]]] = {}
+    def __init__(self, max_cache_entries: int = 128) -> None:
+        self._max_cache_entries = max(1, int(max_cache_entries))
+        self._descriptor_cache: OrderedDict[
+            str, tuple[str, list[_SkillDescriptor]]
+        ] = OrderedDict()
 
     def invalidate(self, base_dir: Path | None = None) -> None:
         if base_dir is None:
@@ -151,8 +155,9 @@ class SkillSelector:
         base_dir = base_dir.resolve()
         cache_key = self._cache_key(base_dir)
         cache_id = str(base_dir)
-        cached = self._descriptor_cache.get(cache_id)
+        cached = self._descriptor_cache.pop(cache_id, None)
         if cached is not None and cached[0] == cache_key:
+            self._descriptor_cache[cache_id] = cached
             return cached[1]
 
         descriptors: list[_SkillDescriptor] = []
@@ -175,6 +180,8 @@ class SkillSelector:
                 )
             )
         self._descriptor_cache[cache_id] = (cache_key, descriptors)
+        while len(self._descriptor_cache) > self._max_cache_entries:
+            self._descriptor_cache.popitem(last=False)
         return descriptors
 
     @staticmethod

@@ -6,7 +6,6 @@ import json
 import re
 import time
 import uuid
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -52,7 +51,6 @@ from llm_routing import (
 )
 from tools import get_tool_runner
 from tools.base import ToolContext
-from tools.contracts import ToolResult
 from tools.delegate_tool import build_delegate_tool, build_delegate_status_tool
 from tools.runner import ToolRunner
 from usage.pricing import calculate_cost_breakdown, infer_provider
@@ -458,62 +456,6 @@ class DefaultGraphRuntime(GraphRuntime):
                 )
             )
         return refs
-
-    def _deny_tool_call_for_blocking_delegate(
-        self,
-        call: dict[str, Any],
-        *,
-        index: int,
-    ) -> tuple[ToolExecutionEnvelope, Any]:
-        from langchain_core.messages import ToolMessage
-
-        tool_name = str(call.get("name", "unknown")).strip() or "unknown"
-        tool_call_id = (
-            str(call.get("id", "")).strip()
-            or str(call.get("tool_call_id", "")).strip()
-            or f"{tool_name}-{index}"
-        )
-        args = call.get("args", {})
-        parsed_args = args if isinstance(args, dict) else {}
-        raw_output = json.dumps(
-            asdict(
-                ToolResult.failure(
-                    tool_name=tool_name,
-                    code="E_POLICY_DENIED",
-                    message=(
-                        f"Tool '{tool_name}' was skipped because a blocking delegate "
-                        "was launched in the same step"
-                    ),
-                    duration_ms=0,
-                    retryable=False,
-                    details={"tool_call_id": tool_call_id},
-                )
-            ),
-            ensure_ascii=False,
-        )
-        return (
-            ToolExecutionEnvelope(
-                tool=tool_name,
-                tool_call_id=tool_call_id,
-                args=parsed_args,
-                output=raw_output,
-                raw_output=raw_output,
-                ok=False,
-                duration_ms=0,
-                error_code="E_POLICY_DENIED",
-                error_message=(
-                    f"Tool '{tool_name}' was skipped because a blocking delegate "
-                    "was launched in the same step"
-                ),
-                details={"tool_call_id": tool_call_id},
-            ),
-            ToolMessage(
-                content=raw_output,
-                name=tool_name,
-                tool_call_id=tool_call_id,
-                status="error",
-            ),
-        )
 
     @staticmethod
     def _resolved_delegate_result(
@@ -1607,7 +1549,6 @@ class DefaultGraphRuntime(GraphRuntime):
                 await asyncio.sleep(min(2.0, 0.5 * (2**retry_index)))
                 return Command(
                     update={
-                        "run_id": "",
                         "attempt_number": attempt_number,
                         "retry_index": retry_index + 1,
                         "loop_count": 0,
@@ -1637,7 +1578,6 @@ class DefaultGraphRuntime(GraphRuntime):
                 )
                 return Command(
                     update={
-                        "run_id": "",
                         "candidate_index": candidate_index + 1,
                         "retry_index": 0,
                         "pending_new_response": True,
@@ -1708,26 +1648,15 @@ class DefaultGraphRuntime(GraphRuntime):
         envelopes, tool_messages = await tool_service.execute_pending(delegate_calls)
         blocking_refs = self._blocking_delegate_refs_from_envelopes(envelopes)
         if blocking_refs:
-            for index, call in enumerate(pending_tool_calls):
+            for call in pending_tool_calls:
                 if str(call.get("name", "")).strip() == "delegate":
                     continue
-                sibling_denials.append(
-                    self._deny_tool_call_for_blocking_delegate(call, index=index)
+                denied_envelopes, denied_messages = await tool_service.deny_pending(
+                    [call],
+                    reason="a blocking delegate was launched in the same step",
                 )
-            for envelope, _ in sibling_denials:
-                runtime_state.audit_store.append_step(
-                    agent_id=request.agent_id,
-                    run_id=str(state.get("run_id", "")),
-                    session_id=request.session_id,
-                    trigger_type=request.trigger_type,
-                    event="tool_policy_denied",
-                    hook_type="pre_tool_use",
-                    status="deny",
-                    details={
-                        "tool": envelope.tool,
-                        "tool_call_id": envelope.tool_call_id,
-                        "reason": "blocking delegate launched in the same step",
-                    },
+                sibling_denials.extend(
+                    zip(denied_envelopes, denied_messages, strict=True)
                 )
         else:
             other_envelopes, other_messages = await tool_service.execute_pending(other_calls)

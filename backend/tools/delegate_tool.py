@@ -223,6 +223,21 @@ def build_delegate_tool(
                 event_kind="delegate",
                 delegate=delegate_payload,
             )
+            runtime = _existing_runtime(agent_id)
+            audit_store = getattr(runtime, "audit_store", None)
+            if audit_store is not None:
+                audit_store.append_step(
+                    agent_id=agent_id,
+                    run_id=str(delegate_payload.get("parent_run_id", "")),
+                    session_id=session_id,
+                    trigger_type="delegate",
+                    event=(
+                        "delegate_"
+                        f"{str(delegate_payload.get('status', 'unknown')).strip() or 'unknown'}"
+                    ),
+                    status=str(delegate_payload.get("status", "")),
+                    details=dict(delegate_payload),
+                )
         except Exception:
             delegate_id = str(delegate_payload.get("delegate_id", "")).strip()
             if delegate_id:

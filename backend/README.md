@@ -119,6 +119,20 @@ The event model remains SSE-aligned:
 - `done`
 - `error`
 
+### Reliability and Replay Evidence
+
+- Transient LLM failures (`timeout`, network errors, rate limits, and 5xx responses)
+  use a bounded graph retry with capped backoff. Authentication and invalid-request
+  failures fail fast; fallback profiles are considered only when their configured
+  policy allows it.
+- Ambiguous non-idempotent tool failures are returned as unresolved and are not
+  retried. A tool must declare retry safety before the runner will retry it.
+- Run audit records keep the parent `run_id` across retries and fallbacks. Delegate
+  lifecycle events are written to the same audit step stream, so trace and replay
+  evidence can correlate child work with the parent run.
+- Replay uses the saved input/config/skill digests and disables tools by default;
+  its response includes provenance and evidence for comparison with the source run.
+
 `stream_orchestrator` utilities still own token extraction and reasoning parsing so
 event ordering/content remain stable across providers.
 
@@ -427,6 +441,17 @@ Run all evals:
 ```bash
 python -m evals.runner
 ```
+
+Run the deterministic five-workload performance corpus (tool loop, blocking and
+background delegation, skill loading, and compaction plus retrieval) to collect
+local p50/p95 evidence before setting numeric thresholds:
+
+```bash
+python -m evals.workloads
+```
+
+`evals/workload_baseline.json` records the initial local p50/p95 snapshot; it is
+evidence only, not a CI threshold.
 
 Output: JSON report with pass/fail per case and overall safety score.
 
