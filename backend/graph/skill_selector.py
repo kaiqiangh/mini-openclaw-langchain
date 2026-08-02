@@ -87,6 +87,12 @@ class SkillSelector:
     def __init__(self) -> None:
         self._descriptor_cache: dict[str, tuple[str, list[_SkillDescriptor]]] = {}
 
+    def invalidate(self, base_dir: Path | None = None) -> None:
+        if base_dir is None:
+            self._descriptor_cache.clear()
+            return
+        self._descriptor_cache.pop(str(base_dir.resolve()), None)
+
     @staticmethod
     def _normalize_text(value: str) -> str:
         lowered = value.lower().strip()
@@ -133,14 +139,19 @@ class SkillSelector:
         for path in sorted(skills_dir.glob("*/SKILL.md")):
             try:
                 relative_path = path.relative_to(base_dir).as_posix()
-                entries.append(f"{relative_path}:{path.stat().st_mtime_ns}")
+                stat = path.stat()
+                entries.append(
+                    f"{relative_path}:{stat.st_mtime_ns}:{stat.st_size}:{stat.st_ino}"
+                )
             except FileNotFoundError:
                 continue
         return "|".join(entries)
 
     def _load_descriptors(self, base_dir: Path) -> list[_SkillDescriptor]:
+        base_dir = base_dir.resolve()
         cache_key = self._cache_key(base_dir)
-        cached = self._descriptor_cache.get(str(base_dir))
+        cache_id = str(base_dir)
+        cached = self._descriptor_cache.get(cache_id)
         if cached is not None and cached[0] == cache_key:
             return cached[1]
 
@@ -165,7 +176,7 @@ class SkillSelector:
                     full_text=self._normalize_text(full_text),
                 )
             )
-        self._descriptor_cache[str(base_dir)] = (cache_key, descriptors)
+        self._descriptor_cache[cache_id] = (cache_key, descriptors)
         return descriptors
 
     @staticmethod

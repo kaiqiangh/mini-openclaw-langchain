@@ -445,6 +445,7 @@ class AgentManager:
         if not root.exists():
             return False
         self._runtimes.pop(normalized, None)
+        self.skill_selector.invalidate(root)
         shutil.rmtree(root)
         return True
 
